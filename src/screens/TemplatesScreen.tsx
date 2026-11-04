@@ -2,23 +2,26 @@ import React, { useEffect, useState } from 'react';
 import { Alert, ScrollView, View } from 'react-native';
 import { useApp } from '../app/context.tsx';
 import {
-  deleteTemplate, getTemplateExercises, listTemplates, saveTemplate, type TemplateExerciseInput, type TemplateRow,
+  deleteTemplate, getTemplateExercises, listTemplates, saveTemplate, startSessionFromTemplate,
+  type TemplateExerciseInput, type TemplateRow,
 } from '../db/repo.ts';
 import type { Intensity } from '../domain/types.ts';
-import { Btn, Card, Empty, Header, IntensityPicker, NumInput, Row, T, TextField } from '../ui/components.tsx';
+import { Btn, Card, Empty, Header, NumInput, Row, T, TextField } from '../ui/components.tsx';
 import { ExercisePicker } from '../ui/ExercisePicker.tsx';
 import { C, S } from '../ui/theme.ts';
 
 interface EditEx extends TemplateExerciseInput { name: string }
 interface Draft { id?: string; name: string; intensity: Intensity; postCardio: number | null; exercises: EditEx[] }
 
-export function TemplatesScreen() {
-  const { db, version, nav, bump } = useApp();
+export function TemplatesScreen({ startNew }: { startNew?: boolean }) {
+  const { db, today, version, nav, bump } = useApp();
   const [list, setList] = useState<TemplateRow[]>([]);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [picker, setPicker] = useState(false);
 
   useEffect(() => { listTemplates(db).then(setList); }, [db, version]);
+  // 홈의 '루틴 만들기'로 들어오면 바로 새 루틴 편집 화면에서 시작
+  useEffect(() => { if (startNew) setDraft({ name: '새 루틴', intensity: 'none', postCardio: null, exercises: [] }); }, [startNew]);
 
   const edit = async (t: TemplateRow | null) => {
     if (!t) return setDraft({ name: '새 루틴', intensity: 'none', postCardio: null, exercises: [] });
@@ -51,8 +54,6 @@ export function TemplatesScreen() {
         <ScrollView contentContainerStyle={{ padding: S.lg, paddingBottom: 100 }} keyboardShouldPersistTaps="handled">
           <Card>
             <TextField value={draft.name} onChangeText={(v) => setDraft({ ...draft, name: v })} placeholder="루틴 이름" />
-            <T muted style={{ fontSize: 12, marginVertical: 6 }}>운동일 기본 강도</T>
-            <IntensityPicker value={draft.intensity} compact onChange={(v) => setDraft({ ...draft, intensity: v ?? 'none' })} />
             <Row style={{ marginTop: S.md }}>
               <T muted style={{ flex: 1 }}>웨이트 후 유산소(분, 비우면 없음)</T>
               <NumInput value={draft.postCardio} decimal={false} width={64} onCommit={(v) => setDraft((d) => d && { ...d, postCardio: v })} />
@@ -72,8 +73,6 @@ export function TemplatesScreen() {
                 <T muted>횟수</T><NumInput value={e.targetReps ?? null} decimal={false} width={52} onCommit={(v) => patchEx(i, { targetReps: v })} />
                 <T muted>kg</T><NumInput value={e.targetWeight ?? null} width={64} onCommit={(v) => patchEx(i, { targetWeight: v })} />
               </Row>
-              <T muted style={{ fontSize: 12, marginTop: 8, marginBottom: 4 }}>종목 강도</T>
-              <IntensityPicker value={e.intensity ?? null} allowInherit compact onChange={(v) => patchEx(i, { intensity: v })} />
             </Card>
           ))}
           <Btn label="+ 종목 추가" kind="ghost" onPress={() => setPicker(true)} />
@@ -83,12 +82,20 @@ export function TemplatesScreen() {
             label="저장"
             onPress={async () => {
               if (!draft.name.trim()) return Alert.alert('루틴 이름을 입력하세요');
-              await saveTemplate(db, {
+              const wasNew = !draft.id;
+              const id = await saveTemplate(db, {
                 id: draft.id, name: draft.name.trim(), defaultIntensity: draft.intensity, postCardioMin: draft.postCardio,
                 exercises: draft.exercises.map(({ name: _n, ...rest }) => rest),
               });
               bump();
               setDraft(null);
+              if (startNew && wasNew && draft.exercises.length) {
+                // 홈에서 '루틴 만들기'로 들어온 경우: 바로 시작하거나 일정에 넣을 수 있게 안내
+                Alert.alert('루틴을 저장했어요', '지금 이 루틴으로 운동을 시작할까요? 요일·주기 일정은 ‘일정’에서 정할 수 있어요.', [
+                  { text: '나중에', onPress: nav.close },
+                  { text: '지금 시작', onPress: async () => { const sid = await startSessionFromTemplate(db, id, today); bump(); nav.close(); nav.openSession(sid); } },
+                ]);
+              }
             }}
           />
         </View>

@@ -2,9 +2,9 @@ import React, { useEffect, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { useApp } from '../app/context.tsx';
 import { deleteCardio, listCardio, monthMarks, sessionsOnDate, type SessionMeta } from '../db/repo.ts';
-import { Btn, Card, H, IntensityBadge, Row, T } from '../ui/components.tsx';
+import { Btn, Card, H, Row, T } from '../ui/components.tsx';
 import { C, S } from '../ui/theme.ts';
-import { resolveIntensity } from '../domain/intensity.ts';
+import { fmtClock, fmtDuration } from '../domain/format.ts';
 
 const DAY = ['일', '월', '화', '수', '목', '금', '토'];
 
@@ -91,10 +91,11 @@ export function CalendarScreen() {
               <View style={{ flex: 1 }}>
                 <T bold>{s.title}</T>
                 <T muted style={{ fontSize: 12 }}>
-                  {s.status === 'done' ? '완료' : '진행 중'}{s.duration_sec ? ` · ${Math.round(s.duration_sec / 60)}분` : ''}
+                  {s.status === 'done'
+                    ? `완료 · ${fmtClock(s.started_at)}–${fmtClock(s.ended_at)}${s.duration_sec != null ? ` · ${fmtDuration(s.duration_sec)}` : ''}`
+                    : `진행 중 · 시작 ${fmtClock(s.started_at)}`}
                 </T>
               </View>
-              <IntensityBadge value={resolveIntensity(null, null, s.intensity)} />
             </Row>
           </Card>
         </Pressable>
@@ -104,7 +105,7 @@ export function CalendarScreen() {
           <Row>
             <View style={{ flex: 1 }}>
               <T bold>{c.kind === 'post_weights' ? '웨이트 후 유산소' : '유산소'}</T>
-              <T muted style={{ fontSize: 12 }}>{c.duration_min}분 · {c.intensity === 'low' ? '저강도' : c.intensity === 'mid' ? '중강도' : '고강도'}</T>
+              <T muted style={{ fontSize: 12 }}>{c.duration_min}분</T>
             </View>
             <Btn label="삭제" kind="danger" small onPress={async () => { await deleteCardio(db, c.id); bump(); }} />
           </Row>

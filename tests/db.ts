@@ -57,7 +57,7 @@ await test('12개 테이블 생성', async () => {
   assert.deepEqual(names, [...TABLE_ORDER].sort());
   assert.equal(TABLE_ORDER.length, 12);
 });
-await test('기본 루틴: 월 10종목, 수·금·일 8종목, 요일 규칙 7개, 기본 3세트, 금요일 고중량', async () => {
+await test('기본 루틴: 월 10종목, 수·금·일 8종목, 요일 규칙 7개, 기본 3세트, 강도 없음', async () => {
   const db = await freshDb();
   const tpls = await repo.listTemplates(db);
   assert.equal(tpls.length, 4);
@@ -71,7 +71,8 @@ await test('기본 루틴: 월 10종목, 수·금·일 8종목, 요일 규칙 7�
   assert.equal((await count('수요일')).n, 8);
   const fri = await count('금요일');
   assert.equal(fri.n, 8);
-  assert.equal(fri.t.default_intensity, 'high');
+  assert.equal(fri.t.default_intensity, 'none');
+  assert.ok(!(await repo.getSchedule(db)).some((r) => r.default_intensity !== 'none' && r.kind === 'weights'), '웨이트 요일에 강도 지정이 없어야 함');
   assert.equal((await count('일요일')).n, 8);
   const rules = await repo.getSchedule(db);
   assert.equal(rules.length, 7);
@@ -98,7 +99,7 @@ await test('루틴으로 시작 → 입력 즉시 저장 → 완료 후 통계 �
   const sid = await repo.startSessionFromTemplate(db, fri.id, '2026-11-06');
   let s = (await repo.loadSession(db, sid))!;
   assert.equal(s.exercises.length, 8);
-  assert.equal(s.intensity, 'high');
+  assert.equal(s.intensity, null);
   const bench = s.exercises.find((e) => e.exercise_name === '벤치프레스')!;
   assert.equal(bench.sets.length, 3);
   await repo.updateSet(db, bench.sets[0].id, { weight: 100, reps: 5, done: true });
@@ -115,7 +116,6 @@ await test('루틴으로 시작 → 입력 즉시 저장 → 완료 후 통계 �
   const benchPts = dailyPoints(filterSets(flat, { exerciseId: bench.exercise_id }));
   assert.equal(benchPts.length, 1);
   assert.equal(benchPts[0].best, 100);
-  assert.equal(benchPts[0].bestIntensity, 'high'); // 금요일 운동일 강도 상속
 });
 await test('SQL 상속 결과 == 도메인 flatten 결과 (세트→종목→운동일)', async () => {
   const db = await freshDb();
@@ -319,6 +319,157 @@ await test('CSV 내보내기: BOM, 따옴표/쉼표 이스케이프, 강도 한�
   assert.ok(csv.includes('중간중량'));
   const body = await exportBodyCsv(db);
   assert.ok(body.includes('2026-11-01,78.5,,,,manual'));
+});
+
+console.log('루틴 일정 · 앱 시작 팝업 · 타이머 · 세트 입력');
+await test('요일별 일정: 날짜 → 요일 규칙, 삭제된 루틴은 연결 없음으로 취급', async () => {
+  const db = await freshDb();
+  // 2026-11-02 = 월요일
+  const mon = (await repo.slotForDate(db, '2026-11-02'))!;
+  assert.equal(mon.kind, 'weights');
+  assert.ok(mon.template_id);
+  assert.equal((await repo.slotForDate(db, '2026-11-03'))!.kind, 'rest');
+  assert.equal(mon.cycleDay, undefined);
+  await repo.deleteTemplate(db, mon.template_id!);
+  assert.equal((await repo.slotForDate(db, '2026-11-02'))!.template_id, null);
+});
+await test('N일 주기: 3일 주기(A·B·휴식)가 시작일 기준으로 순환, 몇 일차인지 표시', async () => {
+  const db = await freshDb();
+  const [a, b] = await repo.listTemplates(db);
+  await repo.savePlan(db, {
+    mode: 'cycle', startDate: '2026-11-01',
+    slots: [
+      { kind: 'weights', templateId: a.id, label: a.name },
+      { kind: 'weights', templateId: b.id, label: b.name },
+      { kind: 'rest', templateId: null, label: '휴식' },
+    ],
+  });
+  const kinds: string[] = [];
+  const ids: (string | null)[] = [];
+  for (let d = 1; d <= 6; d++) {
+    const s = (await repo.slotForDate(db, `2026-11-0${d}`))!;
+    kinds.push(s.kind); ids.push(s.template_id);
+    assert.equal(s.cycleDay, ((d - 1) % 3) + 1);
+    assert.equal(s.cycleLength, 3);
+  }
+  assert.deepEqual(kinds, ['weights', 'weights', 'rest', 'weights', 'weights', 'rest']);
+  assert.deepEqual(ids, [a.id, b.id, null, a.id, b.id, null]);
+  // 저장 후 다시 읽어도 동일 (백업 복원 시 app_settings로 함께 보존)
+  const backup = await exportBackup(db);
+  const db2 = await freshDb();
+  await restoreBackup(db2, backup);
+  assert.equal((await repo.slotForDate(db2, '2026-11-02'))!.template_id, b.id);
+});
+await test('앱 시작 팝업: 처음에는 묻지 않고, 놓친 지난 루틴이 있을 때만 묻고, 같은 날 다시 묻지 않음', async () => {
+  const db = await freshDb();
+  // 처음 실행: 기준만 저장하고 묻지 않음 (기본 시드에 월요일 루틴이 있어도)
+  assert.equal(await repo.findMissedRoutine(db, '2026-11-03'), null);
+  // 이틀 뒤(수 11/04): 월요일(11/02) 루틴은 기준일 이전이라 대상 아님, 화요일은 휴식
+  assert.equal(await repo.findMissedRoutine(db, '2026-11-04'), null);
+  // 다음 주 화요일(11/10)에 열었는데 월요일(11/09) 루틴을 안 했다면 묻는다
+  const m = await repo.findMissedRoutine(db, '2026-11-10');
+  assert.equal(m?.date, '2026-11-09');
+  assert.ok(m!.templateName.includes('월요일'));
+  // 선택하면(넘어가기) 같은 날 다시 묻지 않고, 다음 날에도 같은 날짜를 다시 묻지 않음
+  assert.equal(await repo.resolveMissed(db, '2026-11-10', m!, 'skip'), null);
+  assert.equal(await repo.findMissedRoutine(db, '2026-11-10'), null);
+  assert.equal(await repo.findMissedRoutine(db, '2026-11-11'), null);
+});
+await test('앱 시작 팝업: 그날 다른 운동이라도 완료한 기록이 있으면 묻지 않음, 오늘의 루틴·진행 중 운동도 대상 아님', async () => {
+  const db = await freshDb();
+  assert.equal(await repo.findMissedRoutine(db, '2026-11-09'), null); // 기준일 저장 (11/08까지는 묻지 않음)
+  const ex = await repo.getOrCreateExercise(db, '벤치프레스');
+  await logSession(db, '2026-11-09', ex.id, [{ w: 50, r: 10 }]); // 월요일에 (자유 운동이라도) 운동함
+  assert.equal(await repo.findMissedRoutine(db, '2026-11-10'), null);
+  // 수요일(오늘)의 루틴은 아직 안 했어도 묻지 않는다 (지난 날짜만 대상: 화=휴식, 월=완료)
+  assert.equal(await repo.findMissedRoutine(db, '2026-11-11'), null);
+  // 월요일(오늘) 열었을 때 어제(일) 루틴을 못 했으면 묻는다. 단, 진행 중인 운동이 있으면 묻지 않는다.
+  assert.equal((await repo.findMissedRoutine(db, '2026-11-16'))?.date, '2026-11-15');
+  await repo.startFreeSession(db, '2026-11-16');
+  assert.equal(await repo.findMissedRoutine(db, '2026-11-16'), null);
+});
+await test('앱 시작 팝업 선택: 루틴대로 하기(주기 모드는 일정이 밀림), 오늘만 자유 운동(일정 그대로)', async () => {
+  const db = await freshDb();
+  const [a, b] = await repo.listTemplates(db);
+  await repo.savePlan(db, {
+    mode: 'cycle', startDate: '2026-11-01',
+    slots: [
+      { kind: 'weights', templateId: a.id, label: a.name }, // 11/01, 11/04, 11/07
+      { kind: 'weights', templateId: b.id, label: b.name }, // 11/02, 11/05
+      { kind: 'rest', templateId: null, label: '휴식' }, // 11/03, 11/06
+    ],
+  });
+  assert.equal(await repo.findMissedRoutine(db, '2026-11-02'), null); // 기준일 저장 (11/01)
+  // 11/02: 어제(11/01)의 A를 못 했고 오늘은 B 예정
+  const m = (await repo.findMissedRoutine(db, '2026-11-03'))!; // 11/02의 B를 못 함 (11/01은 기준일 이전)
+  assert.equal(m.date, '2026-11-02');
+  assert.equal(m.templateId, b.id);
+  const sid = (await repo.resolveMissed(db, '2026-11-03', m, 'follow'))!;
+  const ses = (await repo.loadSession(db, sid))!;
+  assert.equal(ses.template_id, b.id);
+  assert.equal(ses.date, '2026-11-03');
+  assert.equal((await repo.slotForDate(db, '2026-11-03'))!.template_id, b.id); // 오늘이 그 칸이 됨
+  assert.equal((await repo.slotForDate(db, '2026-11-04'))!.kind, 'rest'); // 이후 일정이 하루 밀림
+
+  // 오늘만 자유 운동: 일정은 그대로
+  const db2 = await freshDb();
+  await repo.savePlan(db2, { mode: 'cycle', startDate: '2026-11-01', slots: [
+    { kind: 'weights', templateId: a.id, label: null }, { kind: 'weights', templateId: b.id, label: null }, { kind: 'rest', templateId: null, label: null }] });
+  await repo.findMissedRoutine(db2, '2026-11-02');
+  const m2 = (await repo.findMissedRoutine(db2, '2026-11-03'))!;
+  const fsid = (await repo.resolveMissed(db2, '2026-11-03', m2, 'free'))!;
+  const fs = (await repo.loadSession(db2, fsid))!;
+  assert.equal(fs.is_free, 1);
+  assert.equal((await repo.slotForDate(db2, '2026-11-03'))!.kind, 'rest'); // 변화 없음
+  assert.equal((await repo.getPlan(db2, '2026-11-03')).startDate, '2026-11-01');
+});
+await test('세트 입력: 새 종목/세트는 비어 있고(앞 세트 값에서 시작), 지난 기록은 완료한 본 세트에서 가져옴', async () => {
+  const db = await freshDb();
+  const ex = await repo.getOrCreateExercise(db, '벤치프레스');
+  assert.equal(await repo.lastPerformance(db, ex.id), null);
+  await logSession(db, '2026-11-01', ex.id, [{ w: 40, r: 10 }, { w: 45, r: 8 }]);
+  const last = await repo.lastPerformance(db, ex.id);
+  assert.deepEqual([last!.weight, last!.reps], [45, 8]);
+  const sid = await repo.startFreeSession(db, '2026-11-05');
+  const seId = await repo.addSessionExercise(db, sid, ex.id, 3);
+  await repo.addSet(db, seId, 'working');
+  const sets = (await repo.loadSession(db, sid))!.exercises[0].sets;
+  assert.equal(sets.length, 4);
+  assert.ok(sets.every((x) => x.weight == null && x.reps == null && x.done === 0));
+});
+await test('중량 단위(±) 설정: 기본 2.5kg, 저장한 값을 읽음, 잘못된 값은 기본값', async () => {
+  const db = await freshDb();
+  assert.equal(await repo.getWeightStep(db), 2.5);
+  await repo.setSetting(db, 'weight_step', '5');
+  assert.equal(await repo.getWeightStep(db), 5);
+  await repo.setSetting(db, 'weight_step', 'abc');
+  assert.equal(await repo.getWeightStep(db), 2.5);
+});
+await test('타이머: 시작 시각·종료 시각·총 시간이 기록되고, 다시 열면 시간이 이어짐', async () => {
+  const db = await freshDb();
+  const sid = await repo.startFreeSession(db, '2026-11-05');
+  // 20분 전에 시작한 것으로 맞춘 뒤 종료
+  await db.run('UPDATE workout_sessions SET started_at = ? WHERE id = ?', [new Date(Date.now() - 20 * 60000).toISOString(), sid]);
+  await repo.finishSession(db, sid);
+  let s = (await repo.loadSession(db, sid))!;
+  assert.equal(s.status, 'done');
+  assert.ok(s.ended_at);
+  assert.ok(s.duration_sec! >= 1199 && s.duration_sec! <= 1202);
+  // 완료 후 한참 뒤에 수정하러 다시 열어도, 타이머는 종료 이후 공백을 세지 않고 20분부터 이어짐
+  await repo.reopenSession(db, sid);
+  s = (await repo.loadSession(db, sid))!;
+  assert.equal(s.status, 'active');
+  assert.equal(s.ended_at, null);
+  const elapsed = (Date.now() - new Date(s.started_at).getTime()) / 1000;
+  assert.ok(elapsed >= 1199 && elapsed <= 1203, `elapsed ${elapsed}`);
+});
+await test('루틴 브리프: 홈 카드용 이름·종목 수·앞 3개 종목', async () => {
+  const db = await freshDb();
+  const mon = (await repo.listTemplates(db)).find((t) => t.name.includes('월요일'))!;
+  const b = (await repo.getTemplateBrief(db, mon.id))!;
+  assert.equal(b.count, 10);
+  assert.deepEqual(b.names, ['렛풀다운', '시티드로우', '숄더프레스 머신']);
+  assert.equal(await repo.getTemplateBrief(db, 'nope'), null);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

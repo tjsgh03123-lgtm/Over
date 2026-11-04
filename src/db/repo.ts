@@ -1,7 +1,10 @@
 import { nowIso, uid, type Db, type SqlParam } from './adapter.ts';
 import type { FlatSet, Intensity, SetType, WeightMode } from '../domain/types.ts';
 import type { ParsedDay } from '../domain/parser.ts';
-import { addDays, weekStart } from '../domain/stats.ts';
+import { addDays, weekStart, weekdayOf } from '../domain/stats.ts';
+import {
+  cycleIndex, sanitizePlan, shiftStartForMissed, type CyclePlan, type PlanSlot, type SlotKind,
+} from '../domain/cycle.ts';
 
 /* ============================== 종목 ============================== */
 
@@ -192,6 +195,114 @@ export async function setScheduleRule(
   );
 }
 
+/* ============================== 루틴 일정 (요일별 / N일 주기) ============================== */
+
+export interface DaySlot {
+  kind: SlotKind;
+  template_id: string | null;
+  label: string | null;
+  /** 주기 모드일 때만: 몇 일차 / 전체 일수 */
+  cycleDay?: number;
+  cycleLength?: number;
+}
+
+export async function getPlan(db: Db, today: string): Promise<CyclePlan> {
+  return sanitizePlan(await getSetting(db, 'plan'), today);
+}
+export async function savePlan(db: Db, plan: CyclePlan): Promise<void> {
+  await setSetting(db, 'plan', JSON.stringify(plan));
+}
+
+async function templateExists(db: Db, id: string | null): Promise<string | null> {
+  if (!id) return null;
+  const t = await db.first<{ id: string }>('SELECT id FROM workout_templates WHERE id = ?', [id]);
+  return t ? id : null;
+}
+
+/** 그 날짜에 해당하는 일정 칸. 일정이 없으면 null. 삭제된 루틴은 연결 없음(null)으로 취급한다. */
+export async function slotForDate(db: Db, date: string): Promise<DaySlot | null> {
+  const plan = await getPlan(db, date);
+  if (plan.mode === 'cycle' && plan.slots.length) {
+    const idx = cycleIndex(plan.startDate, date, plan.slots.length);
+    const s: PlanSlot = plan.slots[idx];
+    return {
+      kind: s.kind, template_id: s.kind === 'weights' ? await templateExists(db, s.templateId) : null, label: s.label,
+      cycleDay: idx + 1, cycleLength: plan.slots.length,
+    };
+  }
+  const r = await getRuleForWeekday(db, weekdayOf(date));
+  if (!r) return null;
+  return { kind: r.kind, template_id: r.kind === 'weights' ? await templateExists(db, r.template_id) : null, label: r.label };
+}
+
+export interface TemplateBrief { id: string; name: string; count: number; names: string[]; post_cardio_min: number | null }
+export async function getTemplateBrief(db: Db, id: string): Promise<TemplateBrief | null> {
+  const t = await db.first<TemplateRow>('SELECT * FROM workout_templates WHERE id = ?', [id]);
+  if (!t) return null;
+  const ex = await getTemplateExercises(db, id);
+  return { id, name: t.name, count: ex.length, names: ex.slice(0, 3).map((e) => e.name), post_cardio_min: t.post_cardio_min };
+}
+
+/* -------- 앱을 켰을 때: 완료하지 못한 지난 루틴 확인 -------- */
+
+export interface MissedRoutine { date: string; templateId: string; templateName: string }
+export type MissedChoice = 'skip' | 'follow' | 'free';
+
+const MISSED_LOOKBACK_DAYS = 7;
+
+/**
+ * 오늘 이전에 예정돼 있었는데 완료한 운동이 없는 가장 최근 웨이트 루틴을 찾는다.
+ * - 처음 실행할 때는 기준일만 저장하고 묻지 않는다.
+ * - 오늘 이미 물었거나, 진행 중인 운동이 있으면 묻지 않는다.
+ * - 오늘의 (아직 안 한) 루틴은 대상이 아니다.
+ */
+export async function findMissedRoutine(db: Db, today: string): Promise<MissedRoutine | null> {
+  const handled = await getSetting(db, 'missed_handled_through');
+  if (!handled) {
+    await setSetting(db, 'missed_handled_through', addDays(today, -1));
+    return null;
+  }
+  if ((await getSetting(db, 'missed_prompt_date')) === today) return null;
+  if (await getActiveSession(db)) return null;
+  const earliest = addDays(today, -MISSED_LOOKBACK_DAYS);
+  let d = addDays(today, -1);
+  while (d > handled && d >= earliest) {
+    const slot = await slotForDate(db, d);
+    if (slot && slot.kind === 'weights' && slot.template_id) {
+      const done = await db.first<{ n: number }>("SELECT COUNT(*) AS n FROM workout_sessions WHERE date = ? AND status = 'done'", [d]);
+      if (!done || done.n === 0) {
+        const t = await db.first<{ name: string }>('SELECT name FROM workout_templates WHERE id = ?', [slot.template_id]);
+        if (t) return { date: d, templateId: slot.template_id, templateName: t.name };
+      }
+    }
+    d = addDays(d, -1);
+  }
+  return null;
+}
+
+/**
+ * 선택 결과를 적용한다. 같은 날 다시 묻지 않고, 지난 날짜는 다시 묻지 않는다.
+ * skip: 일정 그대로 · follow: 놓친 루틴을 오늘 시작 (주기 모드면 이후 일정을 밀어 이어감) · free: 오늘만 자유 운동
+ * 운동을 시작한 경우 세션 id를 돌려준다.
+ */
+export async function resolveMissed(db: Db, today: string, missed: MissedRoutine, choice: MissedChoice): Promise<string | null> {
+  await setSetting(db, 'missed_handled_through', addDays(today, -1));
+  await setSetting(db, 'missed_prompt_date', today);
+  if (choice === 'skip') return null;
+  if (choice === 'free') return startFreeSession(db, today);
+  const plan = await getPlan(db, today);
+  if (plan.mode === 'cycle' && plan.slots.length) {
+    await savePlan(db, { ...plan, startDate: shiftStartForMissed(plan, missed.date, today) });
+  }
+  return startSessionFromTemplate(db, missed.templateId, today);
+}
+
+/** 세트 입력의 ± 버튼 단위 (kg) */
+export async function getWeightStep(db: Db): Promise<number> {
+  const v = Number(await getSetting(db, 'weight_step'));
+  return Number.isFinite(v) && v > 0 ? v : 2.5;
+}
+
 /* ============================== 운동 세션 ============================== */
 
 export interface SessionMeta {
@@ -305,13 +416,13 @@ export async function addSessionExercise(db: Db, sessionId: string, exerciseId: 
   if (!ex) throw new Error('종목을 찾을 수 없습니다');
   const pos = await db.first<{ p: number | null }>('SELECT MAX(position) AS p FROM workout_session_exercises WHERE session_id = ?', [sessionId]);
   const seId = uid('se');
-  const last = await lastPerformance(db, exerciseId);
   await db.transaction(async () => {
     await db.run(
       'INSERT INTO workout_session_exercises (id, session_id, exercise_id, exercise_name, weight_mode, position, intensity) VALUES (?,?,?,?,?,?,NULL)',
       [seId, sessionId, exerciseId, ex.name, ex.weight_mode, (pos?.p ?? -1) + 1],
     );
-    for (let i = 1; i <= sets; i++) await newSet(db, seId, i, 'working', last?.weight ?? null, last?.reps ?? null);
+    // 중량·횟수는 비워 둔다. 입력 칸을 누르면 앞 세트(첫 세트는 지난 기록) 값에서 시작한다.
+    for (let i = 1; i <= sets; i++) await newSet(db, seId, i, 'working', null, null);
   });
   return seId;
 }
@@ -321,13 +432,8 @@ export async function removeSessionExercise(db: Db, seId: string): Promise<void>
 }
 
 export async function addSet(db: Db, seId: string, type: SetType = 'working'): Promise<void> {
-  const prev = await db.first<{ n: number | null; w: number | null; r: number | null }>(
-    `SELECT MAX(set_no) AS n,
-       (SELECT weight FROM workout_sets WHERE session_exercise_id = ? ORDER BY set_no DESC LIMIT 1) AS w,
-       (SELECT reps FROM workout_sets WHERE session_exercise_id = ? ORDER BY set_no DESC LIMIT 1) AS r
-     FROM workout_sets WHERE session_exercise_id = ?`, [seId, seId, seId],
-  );
-  await newSet(db, seId, (prev?.n ?? 0) + 1, type, prev?.w ?? null, prev?.r ?? null);
+  const prev = await db.first<{ n: number | null }>('SELECT MAX(set_no) AS n FROM workout_sets WHERE session_exercise_id = ?', [seId]);
+  await newSet(db, seId, (prev?.n ?? 0) + 1, type, null, null);
 }
 
 export async function deleteSet(db: Db, setId: string): Promise<void> {
@@ -373,7 +479,13 @@ export async function finishSession(db: Db, id: string): Promise<void> {
 
 /** 완료된 기록 다시 수정하기 */
 export async function reopenSession(db: Db, id: string): Promise<void> {
-  await db.run("UPDATE workout_sessions SET status='active', ended_at=NULL WHERE id=?", [id]);
+  // 다시 열면 타이머가 '종료 이후 공백'을 세지 않도록, 기존 운동 시간을 이어서 흐르게 시작 시각을 맞춘다
+  const s = await db.first<{ duration_sec: number | null }>('SELECT duration_sec FROM workout_sessions WHERE id = ?', [id]);
+  const startedAt = s?.duration_sec != null ? new Date(Date.now() - s.duration_sec * 1000).toISOString() : null;
+  await db.run(
+    "UPDATE workout_sessions SET status='active', ended_at=NULL, started_at=COALESCE(?, started_at) WHERE id=?",
+    [startedAt, id],
+  );
 }
 
 export async function deleteSession(db: Db, id: string): Promise<void> {

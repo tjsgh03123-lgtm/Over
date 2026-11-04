@@ -8,7 +8,9 @@ export interface Nav {
   openSession(id: string): void;
   openImport(): void;
   openBody(): void;
-  openTemplates(): void;
+  /** create=true면 새 루틴 만들기 화면으로 바로 들어간다 */
+  openTemplates(create?: boolean): void;
+  openPlan(): void;
   openExercises(): void;
   goTab(t: Tab): void;
   close(): void;

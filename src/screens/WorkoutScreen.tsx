@@ -4,9 +4,9 @@ import { useApp } from '../app/context.tsx';
 import {
   getActiveSession, listTemplates, startFreeSession, startSessionFromTemplate, type SessionMeta, type TemplateRow,
 } from '../db/repo.ts';
-import { Btn, Card, Empty, H, IntensityBadge, Row, T } from '../ui/components.tsx';
+import { Btn, Card, Empty, H, Row, T } from '../ui/components.tsx';
 import { C, S } from '../ui/theme.ts';
-import { resolveIntensity } from '../domain/intensity.ts';
+import { fmtClock, fmtDuration } from '../domain/format.ts';
 
 export function WorkoutScreen() {
   const { db, today, version, nav, bump } = useApp();
@@ -42,9 +42,11 @@ export function WorkoutScreen() {
 
       <Row style={{ marginBottom: S.sm }}>
         <H style={{ fontSize: 16, flex: 1 }}>내 루틴</H>
-        <Btn label="루틴 관리" kind="ghost" small onPress={nav.openTemplates} />
+        <Btn label="일정" kind="ghost" small onPress={nav.openPlan} />
+        <Btn label="관리" kind="ghost" small onPress={() => nav.openTemplates()} />
+        <Btn label="+ 새 루틴" small onPress={() => nav.openTemplates(true)} />
       </Row>
-      {tpls.length === 0 && <Empty text="루틴이 없습니다. 루틴 관리에서 만들거나 AI 루틴을 가져오세요." />}
+      {tpls.length === 0 && <Empty text="루틴이 없습니다. ‘+ 새 루틴’으로 만들거나 AI 루틴을 가져오세요." />}
       {tpls.map((t) => (
         <Card key={t.id}>
           <Row>
@@ -52,7 +54,6 @@ export function WorkoutScreen() {
               <T bold>{t.name}</T>
               {t.post_cardio_min ? <T muted style={{ fontSize: 12 }}>후 유산소 {t.post_cardio_min}분 선택</T> : null}
             </View>
-            {t.default_intensity !== 'none' && <IntensityBadge value={t.default_intensity} />}
             <Btn
               label="시작" small
               onPress={async () => { nav.openSession(await startSessionFromTemplate(db, t.id, today)); bump(); }}
@@ -69,9 +70,10 @@ export function WorkoutScreen() {
             <Row>
               <View style={{ flex: 1 }}>
                 <T bold>{s.title}</T>
-                <T muted style={{ fontSize: 12 }}>{s.date}{s.duration_sec ? ` · ${Math.round(s.duration_sec / 60)}분` : ''}</T>
+                <T muted style={{ fontSize: 12 }}>
+                  {s.date} · {fmtClock(s.started_at)}–{fmtClock(s.ended_at)}{s.duration_sec != null ? ` · ${fmtDuration(s.duration_sec)}` : ''}
+                </T>
               </View>
-              <IntensityBadge value={resolveIntensity(null, null, s.intensity)} />
             </Row>
           </Card>
         </Pressable>

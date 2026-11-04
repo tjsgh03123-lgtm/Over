@@ -3,25 +3,17 @@ import { Pressable, ScrollView, View } from 'react-native';
 import { useApp } from '../app/context.tsx';
 import { listTrackedExercises, loadFlatSets } from '../db/repo.ts';
 import {
-  dailyPoints, estimate1RM, EST_1RM_NOTE, filterSets, rangeFor, sameRepsTrend, seriesByIntensity, summarize,
-  type Change, type DateRange, type DayPoint, type IntensityFilter, type RangeKey,
+  dailyPoints, estimate1RM, EST_1RM_NOTE, filterSets, rangeFor, sameRepsTrend, summarize,
+  type Change, type DateRange, type DayPoint, type RangeKey,
 } from '../domain/stats.ts';
-import { INTENSITIES, INTENSITY_LABEL, type FlatSet, type Intensity, type WeightMode } from '../domain/types.ts';
-import { Card, Chip, Empty, H, IntensityBadge, NumInput, Row, Segmented, T } from '../ui/components.tsx';
+import type { FlatSet, WeightMode } from '../domain/types.ts';
+import { Card, Chip, Empty, H, NumInput, Row, T } from '../ui/components.tsx';
 import { LineChart, type ChartSeries } from '../ui/LineChart.tsx';
 import { RangePicker } from '../ui/RangePicker.tsx';
 import { C, GC, S } from '../ui/theme.ts';
 
 type Tracked = Awaited<ReturnType<typeof listTrackedExercises>>[number];
 type Metric = 'best' | 'avg' | 'volume';
-
-const FILTERS: { key: IntensityFilter; label: string }[] = [
-  { key: 'all', label: '전체' },
-  { key: 'high', label: INTENSITY_LABEL.high },
-  { key: 'mid', label: INTENSITY_LABEL.mid },
-  { key: 'low', label: INTENSITY_LABEL.low },
-  { key: 'none', label: INTENSITY_LABEL.none },
-];
 
 const fmtChange = (c: Change | null) =>
   c == null ? '—' : `${c.kg > 0 ? '+' : ''}${c.kg}kg${c.pct != null ? ` (${c.pct > 0 ? '+' : ''}${c.pct}%)` : ''}`;
@@ -36,8 +28,6 @@ export function WeightGrowth() {
   const [tracked, setTracked] = useState<Tracked[]>([]);
   const [flat, setFlat] = useState<FlatSet[]>([]);
   const [exId, setExId] = useState<string | null>(null);
-  const [filter, setFilter] = useState<IntensityFilter>('all');
-  const [compare, setCompare] = useState(false); // 전체 선택 시: 전체 최고 추이 vs 강도별 비교
   const [metric, setMetric] = useState<Metric>('best');
   const [warmupView, setWarmupView] = useState(false);
   const [rangeKey, setRangeKey] = useState<RangeKey>('3m');
@@ -66,26 +56,21 @@ export function WeightGrowth() {
     const toSeries = (key: string, label: string, color: string, pts: DayPoint[]): ChartSeries<DayPoint> => ({
       key, label, color, points: pts.map((p) => ({ date: p.date, value: val(p), meta: p })),
     });
-    if (filter === 'all' && compare && !warmupView) {
-      const by = seriesByIntensity(flat, ex.id, mode, range);
-      return (['high', 'mid', 'low'] as Intensity[]).map((i) => toSeries(i, INTENSITY_LABEL[i], GC[i as 'high' | 'mid' | 'low'], by[i]));
-    }
-    const pts = dailyPoints(filterSets(flat, { exerciseId: ex.id, intensity: filter, range, onlyWarmup: warmupView }), mode);
-    const label = (filter === 'all' ? '전체 최고' : INTENSITY_LABEL[filter]) + (warmupView ? ' (준비 세트)' : '');
-    return [toSeries(filter, label, filter === 'high' || filter === 'mid' || filter === 'low' ? GC[filter] : GC.all, pts)];
-  }, [flat, ex, filter, compare, metric, warmupView, range, mode]);
+    const pts = dailyPoints(filterSets(flat, { exerciseId: ex.id, range, onlyWarmup: warmupView }), mode);
+    return [toSeries('all', warmupView ? '준비 세트' : '최고 중량', GC.all, pts)];
+  }, [flat, ex, metric, warmupView, range, mode]);
 
   const summary = useMemo(
-    () => (ex ? summarize(flat, ex.id, mode, { intensity: filter, range }) : null),
-    [flat, ex, mode, filter, range],
+    () => (ex ? summarize(flat, ex.id, mode, { range }) : null),
+    [flat, ex, mode, range],
   );
   const tableRows = useMemo(
-    () => (ex ? dailyPoints(filterSets(flat, { exerciseId: ex.id, intensity: filter, range, onlyWarmup: warmupView }), mode).reverse() : []),
-    [flat, ex, filter, range, warmupView, mode],
+    () => (ex ? dailyPoints(filterSets(flat, { exerciseId: ex.id, range, onlyWarmup: warmupView }), mode).reverse() : []),
+    [flat, ex, range, warmupView, mode],
   );
   const sameReps = useMemo(
-    () => (ex && reps ? sameRepsTrend(flat, ex.id, reps, mode, filter).slice(-8).reverse() : []),
-    [flat, ex, reps, mode, filter],
+    () => (ex && reps ? sameRepsTrend(flat, ex.id, reps, mode).slice(-8).reverse() : []),
+    [flat, ex, reps, mode],
   );
 
   if (!ex) {
@@ -105,22 +90,6 @@ export function WeightGrowth() {
         ))}
       </ScrollView>
 
-      <Row style={{ flexWrap: 'wrap', marginBottom: S.sm }}>
-        {FILTERS.map((f) => (
-          <Chip key={f.key} label={f.label} active={filter === f.key} onPress={() => { setFilter(f.key); setSelected(null); }} />
-        ))}
-      </Row>
-
-      {filter === 'all' && !warmupView && (
-        <View style={{ marginBottom: S.sm }}>
-          <Segmented
-            options={[{ key: 'single', label: '전체 최고 중량' }, { key: 'compare', label: '강도별 비교' }]}
-            value={compare ? 'compare' : 'single'}
-            onChange={(k) => { setCompare(k === 'compare'); setSelected(null); }}
-          />
-        </View>
-      )}
-
       <Card>
         <LineChart
           series={series}
@@ -133,10 +102,7 @@ export function WeightGrowth() {
 
       {selected && (
         <Card style={{ borderColor: C.accent }}>
-          <Row style={{ marginBottom: 6 }}>
-            <T bold style={{ flex: 1 }}>{selected.date} · {ex.name}</T>
-            <IntensityBadge value={selected.point.bestIntensity} />
-          </Row>
+          <T bold style={{ marginBottom: 6 }}>{selected.date} · {ex.name}</T>
           <T>
             {selected.point.best}kg × {selected.point.bestReps ?? '-'}회 · {selected.point.bestSetNo}세트 ·{' '}
             {selected.point.bestSetType === 'warmup' ? '준비 세트' : '본 세트'}
@@ -175,15 +141,6 @@ export function WeightGrowth() {
           <Card>
             <Kv k="선택 기간 최고" v={summary.rangeBest != null ? `${summary.rangeBest}kg` : '—'} />
             <Kv k="선택 기간 평균" v={summary.rangeAvg != null ? `${summary.rangeAvg}kg` : '—'} />
-            <T muted style={{ marginTop: S.sm, marginBottom: 4, fontSize: 12 }}>강도별 최고 기록</T>
-            <Row style={{ flexWrap: 'wrap', gap: 14 }}>
-              {INTENSITIES.map((i) => (
-                <View key={i}>
-                  <T muted style={{ fontSize: 12 }}>{INTENSITY_LABEL[i]}</T>
-                  <T bold>{summary.bestByIntensity[i] != null ? `${summary.bestByIntensity[i]}kg` : '—'}</T>
-                </View>
-              ))}
-            </Row>
             {est != null && (
               <View style={{ marginTop: S.md }}>
                 <T bold>추정 1RM {est}kg <T muted style={{ fontSize: 12 }}>(실측 아님)</T></T>
@@ -212,7 +169,6 @@ export function WeightGrowth() {
                 <Row>
                   <T muted style={{ width: 92 }}>{p.date}</T>
                   <T bold style={{ flex: 1 }}>{p.best}kg × {p.bestReps ?? '-'}회</T>
-                  <IntensityBadge value={p.bestIntensity} />
                 </Row>
                 <T muted style={{ fontSize: 11, marginLeft: 100 }}>평균 {Math.round(p.avg * 10) / 10}kg · 볼륨 {Math.round(p.volume)} · {p.setCount}세트</T>
               </View>

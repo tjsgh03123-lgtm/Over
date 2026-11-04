@@ -5,7 +5,7 @@ import { useApp } from '../app/context.tsx';
 import { applyImportedRoutine } from '../db/repo.ts';
 import { AI_IMPORT_PROMPT, ROUTINE_JSON_SCHEMA } from '../domain/importSchema.ts';
 import { parseRoutine, type ParsedDay, type ParseResult } from '../domain/parser.ts';
-import { Btn, Card, Chip, Header, IntensityPicker, NumInput, Row, T, TextField } from '../ui/components.tsx';
+import { Btn, Card, Chip, Header, NumInput, Row, T, TextField } from '../ui/components.tsx';
 import { C, S } from '../ui/theme.ts';
 
 const WD = ['일', '월', '화', '수', '목', '금', '토'];
@@ -82,8 +82,6 @@ export function ImportScreen() {
                   <Chip label="요일 없음" active={d.weekday == null} onPress={() => patchDay(i, { weekday: null })} color={C.muted} />
                   {WD.map((w, k) => <Chip key={w} label={w} active={d.weekday === k} onPress={() => patchDay(i, { weekday: k })} />)}
                 </Row>
-                <T muted style={{ fontSize: 12, marginBottom: 4 }}>운동일 강도</T>
-                <IntensityPicker value={d.intensity ?? 'none'} compact onChange={(v) => patchDay(i, { intensity: v === 'none' ? null : v })} />
                 <Row style={{ marginTop: S.sm }}>
                   <Chip label={d.isRest ? '휴식일 ✓' : '휴식일로 표시'} active={d.isRest} onPress={() => patchDay(i, { isRest: !d.isRest })}  />
                 </Row>

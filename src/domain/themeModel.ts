@@ -2,15 +2,12 @@ export type ThemeMode = 'dark' | 'light';
 
 /** 색을 쓰는 곳은 그래프뿐. 그래프 선마다 색을 고를 수 있다. */
 export const GRAPH_KEYS = [
-  'all', 'high', 'mid', 'low', 'weight', 'skeletal_muscle', 'body_fat_mass', 'body_fat_pct',
+  'all', 'weight', 'skeletal_muscle', 'body_fat_mass', 'body_fat_pct',
 ] as const;
 export type GraphKey = (typeof GRAPH_KEYS)[number];
 
 export const GRAPH_LABEL: Record<GraphKey, string> = {
-  all: '전체 최고 중량',
-  high: '고중량',
-  mid: '중간중량',
-  low: '저중량',
+  all: '중량 그래프',
   weight: '몸무게',
   skeletal_muscle: '골격근량',
   body_fat_mass: '체지방량',
@@ -30,9 +27,6 @@ export const GRAPH_PRESETS: { name: string; hex: string }[] = [
 
 export const DEFAULT_GRAPH_COLORS: Record<GraphKey, string> = {
   all: '#1E88E5',
-  high: '#E53935',
-  mid: '#FB8C00',
-  low: '#43A047',
   weight: '#1E88E5',
   skeletal_muscle: '#43A047',
   body_fat_mass: '#FB8C00',

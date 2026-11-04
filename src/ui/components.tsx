@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import { Pressable, Text, TextInput, View, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
-import { INTENSITIES, INTENSITY_LABEL, type Intensity } from '../domain/types.ts';
 import { C, S, themed } from './theme.ts';
 
 export function Card({ children, style }: { children: React.ReactNode; style?: StyleProp<ViewStyle> }) {
@@ -51,40 +50,16 @@ export function Segmented<K extends string>({ options, value, onChange }: { opti
   );
 }
 
-/** 강도 선택: allowInherit이면 '상속(기본)' 옵션을 함께 제공 (세트/종목 단계에서 상위 강도를 따를 때) */
-export function IntensityPicker({
-  value, onChange, allowInherit, compact,
-}: { value: Intensity | null; onChange: (v: Intensity | null) => void; allowInherit?: boolean; compact?: boolean }) {
-  return (
-    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-      {allowInherit && <Chip label="상속" active={value == null} onPress={() => onChange(null)} />}
-      {INTENSITIES.map((i) => (
-        <Chip
-          key={i}
-          label={compact && i === 'none' ? '미지정' : INTENSITY_LABEL[i]}
-          active={value === i}
-          onPress={() => onChange(i)}
-        />
-      ))}
-    </View>
-  );
-}
-
-/** 흑백 UI: 고중량=채움, 중간중량=진한 테두리, 저중량=옅은 테두리, 미지정=글자만 */
-export function IntensityBadge({ value }: { value: Intensity }) {
-  const filled = value === 'high';
-  const border = value === 'mid' ? C.text : value === 'low' ? C.line : 'transparent';
-  return (
-    <View style={[st.badge, { backgroundColor: filled ? C.accent : 'transparent', borderWidth: 1, borderColor: filled ? C.accent : border }]}>
-      <Text style={{ color: filled ? C.onAccent : value === 'none' ? C.muted : C.text, fontSize: 11, fontWeight: '700' }}>{INTENSITY_LABEL[value]}</Text>
-    </View>
-  );
-}
-
-/** 숫자 입력: 입력 중에는 문자열을 유지하고, 유효한 값만 상위로 전달 (소수점 입력 중 깨짐 방지) */
+/**
+ * 숫자 입력: 입력 중에는 문자열을 유지하고, 유효한 값만 상위로 전달 (소수점 입력 중 깨짐 방지).
+ * suggest: 값이 비어 있을 때 흐리게 보여 주는 시작값. 칸을 누르면 그 숫자가 입력되어 거기서부터 고칠 수 있다.
+ */
 export function NumInput({
-  value, onCommit, placeholder, width = 72, decimal = true, style,
-}: { value: number | null; onCommit: (v: number | null) => void; placeholder?: string; width?: number; decimal?: boolean; style?: StyleProp<TextStyle> }) {
+  value, onCommit, placeholder, width = 72, decimal = true, style, suggest, onFocus,
+}: {
+  value: number | null; onCommit: (v: number | null) => void; placeholder?: string; width?: number; decimal?: boolean;
+  style?: StyleProp<TextStyle>; suggest?: number | null; onFocus?: () => void;
+}) {
   const [text, setText] = useState(value == null ? '' : String(value));
   useEffect(() => {
     setText((prev) => (parseNum(prev) === value ? prev : value == null ? '' : String(value)));
@@ -97,8 +72,15 @@ export function NumInput({
         setText(clean);
         onCommit(parseNum(clean));
       }}
+      onFocus={() => {
+        if (value == null && suggest != null) {
+          setText(String(suggest));
+          onCommit(suggest);
+        }
+        onFocus?.();
+      }}
       keyboardType={decimal ? 'decimal-pad' : 'number-pad'}
-      placeholder={placeholder}
+      placeholder={suggest != null ? String(suggest) : placeholder}
       placeholderTextColor={C.muted}
       selectTextOnFocus
       style={[st.input, { width }, style]}
@@ -160,7 +142,6 @@ const st = themed(() => ({
   chip: { paddingHorizontal: 11, paddingVertical: 7, borderRadius: 18, borderWidth: 1, borderColor: C.line, backgroundColor: C.card2 },
   seg: { flexDirection: 'row', backgroundColor: C.card2, borderRadius: 12, padding: 3 },
   segItem: { flex: 1, paddingVertical: 9, alignItems: 'center', borderRadius: 10 },
-  badge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, alignSelf: 'flex-start' },
   input: {
     height: 44, borderRadius: 10, backgroundColor: C.card2, color: C.text, textAlign: 'center',
     fontSize: 16, fontWeight: '700', borderWidth: 1, borderColor: C.line,

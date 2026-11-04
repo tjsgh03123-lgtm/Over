@@ -5,6 +5,10 @@ import {
 } from '../src/domain/stats.ts';
 import { parseRoutine } from '../src/domain/parser.ts';
 import { parseInBodyText } from '../src/domain/inbody.ts';
+import {
+  cycleIndex, dayNumberOf, daysBetween, resizeSlots, sanitizePlan, shiftStartForMissed, startForDayNumber, MAX_CYCLE,
+} from '../src/domain/cycle.ts';
+import { fmtDuration, fmtElapsed, suggestFor } from '../src/domain/format.ts';
 import { DEFAULT_GRAPH_COLORS, GRAPH_KEYS, sanitizeGraphColors, sanitizeMode } from '../src/domain/themeModel.ts';
 import type { SessionRecord, SetRecord } from '../src/domain/types.ts';
 
@@ -273,15 +277,73 @@ test('저장값이 없거나 깨져도 기본 색으로 복구', () => {
   assert.deepEqual(sanitizeGraphColors('{not json'), DEFAULT_GRAPH_COLORS);
 });
 test('유효한 #RRGGBB만 반영하고 나머지 키는 기본값 유지', () => {
-  const c = sanitizeGraphColors(JSON.stringify({ high: '#8e24aa', mid: 'red', bogus: '#000000' }));
-  assert.equal(c.high, '#8E24AA');
-  assert.equal(c.mid, DEFAULT_GRAPH_COLORS.mid);
+  const c = sanitizeGraphColors(JSON.stringify({ weight: '#8e24aa', skeletal_muscle: 'red', high: '#000000' }));
+  assert.equal(c.weight, '#8E24AA');
+  assert.equal(c.skeletal_muscle, DEFAULT_GRAPH_COLORS.skeletal_muscle);
   assert.equal(Object.keys(c).length, GRAPH_KEYS.length);
+  assert.ok(!('high' in c), '강도별 그래프 색상은 더 이상 없음');
 });
 test('화면 모드: light만 라이트, 그 외는 다크(기본)', () => {
   assert.equal(sanitizeMode('light'), 'light');
   assert.equal(sanitizeMode('dark'), 'dark');
   assert.equal(sanitizeMode(null), 'dark');
+});
+
+console.log('루틴 일정 (요일별 / N일 주기)');
+test('주기 순환: 시작일 기준으로 N일마다 반복, 시작일 이전 날짜도 정상', () => {
+  assert.equal(daysBetween('2026-11-01', '2026-11-05'), 4);
+  assert.deepEqual([0, 1, 2, 3, 4, 5, 6].map((i) => cycleIndex('2026-11-01', `2026-11-0${i + 1}`, 3)), [0, 1, 2, 0, 1, 2, 0]);
+  assert.equal(cycleIndex('2026-11-05', '2026-11-04', 3), 2); // 하루 전 = 마지막 칸
+  assert.equal(cycleIndex('2026-11-05', '2026-10-31', 4), 3); // 월을 넘겨도 정상
+});
+test('오늘이 N일차가 되도록 시작일 계산', () => {
+  const start = startForDayNumber('2026-11-05', 3, 4);
+  assert.equal(start, '2026-11-03');
+  const plan = sanitizePlan({ mode: 'cycle', startDate: start, slots: resizeSlots([], 4) }, '2026-11-05');
+  assert.equal(dayNumberOf(plan, '2026-11-05'), 3);
+  assert.equal(dayNumberOf(plan, '2026-11-06'), 4);
+  assert.equal(dayNumberOf(plan, '2026-11-07'), 1);
+});
+test('주기 길이 변경: 늘리면 휴식 칸 추가, 줄이면 뒤쪽이 잘림, 1~28 범위', () => {
+  const a = resizeSlots([{ kind: 'weights', templateId: 't1', label: 'A' }], 3);
+  assert.deepEqual(a.map((x) => x.kind), ['weights', 'rest', 'rest']);
+  assert.equal(resizeSlots(a, 1).length, 1);
+  assert.equal(resizeSlots(a, 0).length, 1);
+  assert.equal(resizeSlots(a, 99).length, MAX_CYCLE);
+});
+test('저장값이 깨져도 안전한 기본 계획(요일별)으로 복구', () => {
+  assert.deepEqual(sanitizePlan(null, '2026-11-05'), { mode: 'weekday', startDate: '2026-11-05', slots: [] });
+  assert.equal(sanitizePlan('{bad', '2026-11-05').mode, 'weekday');
+  const p = sanitizePlan({ mode: 'cycle', startDate: 'x', slots: [{ kind: 'weights', templateId: 7 }, { kind: 'zzz' }, null] }, '2026-11-05');
+  assert.equal(p.mode, 'cycle');
+  assert.equal(p.startDate, '2026-11-05');
+  assert.deepEqual(p.slots.map((s) => [s.kind, s.templateId]), [['weights', null], ['rest', null], ['rest', null]]);
+});
+test('루틴대로 하기: 놓친 날만큼 시작일이 밀려 오늘이 그 칸이 됨', () => {
+  const plan = sanitizePlan({ mode: 'cycle', startDate: '2026-11-01', slots: resizeSlots([], 3) }, '2026-11-05');
+  // 11/03(1일 칸 아님: idx 2)을 놓쳤고 오늘 11/05
+  const missedIdx = cycleIndex(plan.startDate, '2026-11-03', 3);
+  const start2 = shiftStartForMissed(plan, '2026-11-03', '2026-11-05');
+  assert.equal(cycleIndex(start2, '2026-11-05', 3), missedIdx);
+});
+
+console.log('시간 표시 / 세트 입력 시작값');
+test('경과 시간·총 시간 표시', () => {
+  assert.equal(fmtElapsed(65), '01:05');
+  assert.equal(fmtElapsed(3725), '1:02:05');
+  assert.equal(fmtDuration(2520), '42분');
+  assert.equal(fmtDuration(3900), '1시간 5분');
+  assert.equal(fmtDuration(null), '');
+});
+test('다음 세트는 앞 세트 값에서 시작, 첫 세트는 지난 기록, 준비/본 세트는 서로 섞이지 않음', () => {
+  const sets = [
+    { set_type: 'warmup', weight: 20 }, { set_type: 'working', weight: null }, { set_type: 'working', weight: 45 }, { set_type: 'working', weight: null },
+  ];
+  const w = (i: number, last: number | null) => suggestFor(sets, i, (x) => x.weight, last);
+  assert.equal(w(1, 40), 40); // 첫 본 세트: 준비 세트(20)가 아니라 지난 기록
+  assert.equal(w(1, null), null); // 지난 기록 없음 → 빈 칸
+  assert.equal(w(3, 40), 45); // 앞 세트를 45로 바꿨다면 거기서 시작
+  assert.equal(w(0, 40), null); // 첫 준비 세트는 제안 없음
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

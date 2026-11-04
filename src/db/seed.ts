@@ -24,7 +24,7 @@ const TEMPLATES: SeedTemplate[] = [
   { name: '월요일 · 머신 중심 웨이트', weekday: 1, intensity: 'none', exercises: MONDAY, postCardio: false },
   { name: '수요일 · 전신 웨이트', weekday: 3, intensity: 'none', exercises: [
     E('어시스트 풀업', '등', 'assisted'), E('T바 로우', '등'), ...FULLBODY('').slice(2)], postCardio: true },
-  { name: '금요일 · 고중량 전신 웨이트', weekday: 5, intensity: 'high', exercises: FULLBODY('시티드 로우'), postCardio: true },
+  { name: '금요일 · 전신 웨이트', weekday: 5, intensity: 'none', exercises: FULLBODY('시티드 로우'), postCardio: true },
   { name: '일요일 · 전신 웨이트', weekday: 0, intensity: 'none', exercises: FULLBODY('와이드 풀다운'), postCardio: true },
 ];
 
@@ -63,14 +63,14 @@ export async function seedDefaults(db: Db): Promise<boolean> {
       tplByWeekday.set(t.weekday, tid);
     }
 
-    // 요일 규칙: 월 웨이트 / 화 휴식 / 수 웨이트 / 목 중강도 유산소 / 금 고중량 / 토 중강도 유산소 / 일 웨이트
+    // 요일 규칙: 월 웨이트 / 화 휴식 / 수 웨이트 / 목 유산소 / 금 웨이트 / 토 유산소 / 일 웨이트
     const rules: { wd: number; kind: 'weights' | 'cardio' | 'rest'; intensity: Intensity; label: string }[] = [
       { wd: 1, kind: 'weights', intensity: 'none', label: '머신 중심 웨이트' },
       { wd: 2, kind: 'rest', intensity: 'none', label: '휴식' },
       { wd: 3, kind: 'weights', intensity: 'none', label: '전신 웨이트' },
-      { wd: 4, kind: 'cardio', intensity: 'mid', label: '중강도 유산소' },
-      { wd: 5, kind: 'weights', intensity: 'high', label: '고중량 전신 웨이트' },
-      { wd: 6, kind: 'cardio', intensity: 'mid', label: '중강도 유산소' },
+      { wd: 4, kind: 'cardio', intensity: 'mid', label: '유산소' },
+      { wd: 5, kind: 'weights', intensity: 'none', label: '전신 웨이트' },
+      { wd: 6, kind: 'cardio', intensity: 'mid', label: '유산소' },
       { wd: 0, kind: 'weights', intensity: 'none', label: '전신 웨이트' },
     ];
     for (const r of rules) {

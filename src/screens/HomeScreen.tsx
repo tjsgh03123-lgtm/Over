@@ -2,13 +2,14 @@ import React, { useEffect, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { useApp } from '../app/context.tsx';
 import {
-  addCardio, getActiveSession, getRuleForWeekday, listTrackedExercises, loadFlatSets, startFreeSession,
-  startSessionFromTemplate, weekStats, type ScheduleRule, type SessionMeta, type WeekStats,
+  addCardio, getActiveSession, getTemplateBrief, listTrackedExercises, loadFlatSets, sessionsOnDate, slotForDate,
+  startFreeSession, startSessionFromTemplate, weekStats, type DaySlot, type SessionMeta, type TemplateBrief, type WeekStats,
 } from '../db/repo.ts';
+import { fmtDuration, fmtElapsed } from '../domain/format.ts';
 import { summarize, weekdayOf } from '../domain/stats.ts';
-import { INTENSITY_LABEL } from '../domain/types.ts';
-import { Btn, Card, H, IntensityBadge, NumInput, Row, T } from '../ui/components.tsx';
+import { Btn, Card, H, NumInput, Row, T } from '../ui/components.tsx';
 import { C, S } from '../ui/theme.ts';
+import { useElapsed } from '../ui/useElapsed.ts';
 
 const DAY = ['일', '월', '화', '수', '목', '금', '토'];
 
@@ -16,16 +17,22 @@ interface Growth { id: string; name: string; best: number; kg: number | null; pc
 
 export function HomeScreen() {
   const { db, today, version, nav, bump } = useApp();
-  const [rule, setRule] = useState<ScheduleRule | null>(null);
+  const [slot, setSlot] = useState<DaySlot | null>(null);
+  const [tpl, setTpl] = useState<TemplateBrief | null>(null);
   const [active, setActive] = useState<SessionMeta | null>(null);
+  const [doneToday, setDoneToday] = useState<SessionMeta[]>([]);
   const [week, setWeek] = useState<WeekStats | null>(null);
   const [growth, setGrowth] = useState<Growth[]>([]);
   const [cardioMin, setCardioMin] = useState<number | null>(30);
+  const elapsed = useElapsed(active?.started_at, !!active);
 
   useEffect(() => {
     (async () => {
-      setRule(await getRuleForWeekday(db, weekdayOf(today)));
+      const sl = await slotForDate(db, today);
+      setSlot(sl);
+      setTpl(sl?.kind === 'weights' && sl.template_id ? await getTemplateBrief(db, sl.template_id) : null);
       setActive(await getActiveSession(db));
+      setDoneToday((await sessionsOnDate(db, today)).filter((x) => x.status === 'done'));
       setWeek(await weekStats(db, today));
       const tracked = (await listTrackedExercises(db)).slice(0, 5);
       const flat = await loadFlatSets(db);
@@ -37,71 +44,92 @@ export function HomeScreen() {
     })();
   }, [db, today, version]);
 
-  const startToday = async () => {
-    if (!rule?.template_id) return;
-    nav.openSession(await startSessionFromTemplate(db, rule.template_id, today));
+  const startRoutine = async () => {
+    if (!tpl) return;
+    nav.openSession(await startSessionFromTemplate(db, tpl.id, today));
     bump();
   };
+  const startFree = async () => {
+    nav.openSession(await startFreeSession(db, today));
+    bump();
+  };
+
+  const cycleNote = slot?.cycleDay ? `${slot.cycleDay}/${slot.cycleLength}일차` : null;
 
   return (
     <ScrollView contentContainerStyle={{ padding: S.lg, paddingBottom: 40 }}>
       <H style={{ fontSize: 24, marginBottom: 2 }}>OVERDRIVE</H>
       <T muted style={{ marginBottom: S.lg }}>{today} ({DAY[weekdayOf(today)]})</T>
 
-      {active && (
+      {active ? (
         <Card style={{ borderColor: C.accent }}>
-          <T bold>진행 중인 운동</T>
-          <T muted style={{ marginBottom: S.sm }}>{active.title} · {active.date}</T>
+          <T muted>진행 중인 운동</T>
+          <Row style={{ marginTop: 2, marginBottom: S.sm }}>
+            <T bold style={{ flex: 1, fontSize: 16 }}>{active.title}</T>
+            <T bold style={{ fontSize: 26 }}>{fmtElapsed(elapsed)}</T>
+          </Row>
           <Btn label="이어서 기록하기" onPress={() => nav.openSession(active.id)} />
+        </Card>
+      ) : (
+        <Card>
+          <Row style={{ marginBottom: 6 }}>
+            <T muted style={{ flex: 1 }}>오늘의 운동{cycleNote ? ` · ${cycleNote}` : ''}</T>
+            <Btn label="일정" kind="ghost" small onPress={nav.openPlan} />
+          </Row>
+
+          {doneToday.length > 0 && (
+            <T muted style={{ marginBottom: S.sm }}>
+              오늘 {doneToday.length}회 완료{doneToday[0].duration_sec ? ` · ${fmtDuration(doneToday.reduce((n, x) => n + (x.duration_sec ?? 0), 0))}` : ''}
+            </T>
+          )}
+
+          {slot?.kind === 'weights' && tpl ? (
+            <>
+              <H>{tpl.name}</H>
+              <T muted style={{ marginTop: 4, marginBottom: S.md }}>
+                {tpl.count}종목{tpl.names.length ? ` · ${tpl.names.join(', ')}${tpl.count > tpl.names.length ? ' …' : ''}` : ''}
+              </T>
+              <Btn label="운동 시작" onPress={startRoutine} style={{ marginBottom: S.sm }} />
+              <Btn label="자유 운동" kind="ghost" onPress={startFree} />
+            </>
+          ) : slot?.kind === 'cardio' ? (
+            <>
+              <H>{slot.label ?? '유산소'}</H>
+              <T muted style={{ marginTop: 4, marginBottom: S.sm }}>시간(분) 입력 후 기록</T>
+              <Row style={{ marginBottom: S.sm }}>
+                <NumInput value={cardioMin} onCommit={setCardioMin} width={80} placeholder="분" />
+                <Btn
+                  label="유산소 기록" style={{ flex: 1 }}
+                  onPress={async () => {
+                    if (!cardioMin) return;
+                    await addCardio(db, { date: today, durationMin: cardioMin, intensity: 'mid' });
+                    bump();
+                  }}
+                />
+              </Row>
+              <Btn label="자유 운동" kind="ghost" onPress={startFree} />
+            </>
+          ) : slot?.kind === 'rest' ? (
+            <>
+              <H>휴식일</H>
+              <T muted style={{ marginTop: 4, marginBottom: S.md }}>회복도 훈련의 일부입니다.</T>
+              <Btn label="자유 운동" kind="ghost" onPress={startFree} />
+            </>
+          ) : (
+            <>
+              <H>오늘 정해진 루틴이 없어요</H>
+              <T muted style={{ marginTop: 4, marginBottom: S.md }}>루틴을 만들어 두면 여기서 바로 시작할 수 있어요.</T>
+              <Btn label="루틴 만들기" onPress={() => nav.openTemplates(true)} style={{ marginBottom: S.sm }} />
+              <Btn label="자유 운동" kind="ghost" onPress={startFree} />
+            </>
+          )}
         </Card>
       )}
 
-      <Card>
-        <Row style={{ marginBottom: 6 }}>
-          <T muted style={{ flex: 1 }}>오늘의 운동</T>
-          {rule && rule.default_intensity !== 'none' && <IntensityBadge value={rule.default_intensity} />}
-        </Row>
-        {!rule ? (
-          <T muted>요일 루틴이 설정되지 않았습니다. 설정에서 지정하세요.</T>
-        ) : rule.kind === 'rest' ? (
-          <>
-            <H>휴식일</H>
-            <T muted style={{ marginTop: 4 }}>회복도 훈련의 일부입니다.</T>
-          </>
-        ) : rule.kind === 'cardio' ? (
-          <>
-            <H>{rule.label ?? '유산소'}</H>
-            <T muted style={{ marginTop: 4, marginBottom: S.sm }}>
-              강도: {INTENSITY_LABEL[rule.default_intensity]} · 시간(분) 입력 후 기록
-            </T>
-            <Row>
-              <NumInput value={cardioMin} onCommit={setCardioMin} width={80} placeholder="분" />
-              <Btn
-                label="유산소 기록" style={{ flex: 1 }}
-                onPress={async () => {
-                  if (!cardioMin) return;
-                  await addCardio(db, { date: today, durationMin: cardioMin, intensity: rule.default_intensity === 'none' ? 'mid' : (rule.default_intensity as 'low' | 'mid' | 'high') });
-                  bump();
-                }}
-              />
-            </Row>
-          </>
-        ) : (
-          <>
-            <H>{rule.label ?? '웨이트'}</H>
-            <T muted style={{ marginTop: 4, marginBottom: S.sm }}>
-              오늘의 강도: {INTENSITY_LABEL[rule.default_intensity]}
-            </T>
-            <Btn label={rule.template_id ? '오늘 운동 시작' : '루틴이 연결되지 않음'} disabled={!rule.template_id} onPress={startToday} />
-          </>
-        )}
-      </Card>
-
-      <Row style={{ marginBottom: S.md }}>
-        <Btn label="자유 운동 시작" kind="ghost" style={{ flex: 1 }} onPress={async () => { nav.openSession(await startFreeSession(db, today)); bump(); }} />
+      <Row style={{ marginBottom: S.lg }}>
         <Btn label="AI 루틴 가져오기" kind="ghost" style={{ flex: 1 }} onPress={nav.openImport} />
+        <Btn label="인바디 · 신체 기록" kind="ghost" style={{ flex: 1 }} onPress={nav.openBody} />
       </Row>
-      <Btn label="인바디 · 신체 기록" kind="ghost" onPress={nav.openBody} style={{ marginBottom: S.lg }} />
 
       <Card>
         <Row style={{ marginBottom: S.sm }}>

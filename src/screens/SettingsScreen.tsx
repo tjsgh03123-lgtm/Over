@@ -2,44 +2,29 @@ import React, { useEffect, useState } from 'react';
 import { Alert, Pressable, ScrollView, View } from 'react-native';
 import { useApp } from '../app/context.tsx';
 import { exportBackup, exportBodyCsv, exportWorkoutCsv, restoreBackup } from '../db/backup.ts';
-import { getSchedule, listTemplates, setScheduleRule, type ScheduleRule, type TemplateRow } from '../db/repo.ts';
-import type { Intensity } from '../domain/types.ts';
+import { getPlan, getWeightStep, setSetting } from '../db/repo.ts';
+import type { CyclePlan } from '../domain/cycle.ts';
 import { pickTextFile, shareTextFile, stamp } from '../services/files.ts';
 import { GRAPH_KEYS, GRAPH_LABEL, GRAPH_PRESETS } from '../domain/themeModel.ts';
-import { Btn, Card, Chip, H, IntensityPicker, Row, Segmented, T } from '../ui/components.tsx';
+import { Btn, Card, H, Row, Segmented, T } from '../ui/components.tsx';
 import { C, GC, S } from '../ui/theme.ts';
 
-const WD = ['일', '월', '화', '수', '목', '금', '토'];
-const KIND: { key: ScheduleRule['kind']; label: string }[] = [
-  { key: 'weights', label: '웨이트' }, { key: 'cardio', label: '유산소' }, { key: 'rest', label: '휴식' },
-];
+const STEPS = [1, 2.5, 5];
 
 export function SettingsScreen() {
-  const { db, version, nav, bump, theme } = useApp();
-  const [rules, setRules] = useState<ScheduleRule[]>([]);
-  const [tpls, setTpls] = useState<TemplateRow[]>([]);
-  const [open, setOpen] = useState<number | null>(null);
+  const { db, today, version, nav, bump, theme } = useApp();
+  const [plan, setPlan] = useState<CyclePlan | null>(null);
+  const [step, setStep] = useState(2.5);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    getSchedule(db).then(setRules);
-    listTemplates(db).then(setTpls);
-  }, [db, version]);
+    getPlan(db, today).then(setPlan);
+    getWeightStep(db).then(setStep);
+  }, [db, today, version]);
 
   const guard = async (fn: () => Promise<void>) => {
     setBusy(true);
     try { await fn(); } catch (e) { Alert.alert('오류', (e as Error).message); } finally { setBusy(false); }
-  };
-
-  const update = async (r: ScheduleRule, p: Partial<{ kind: ScheduleRule['kind']; templateId: string | null; intensity: Intensity; label: string | null }>) => {
-    const kind = p.kind ?? r.kind;
-    await setScheduleRule(db, r.weekday, {
-      kind,
-      templateId: kind === 'weights' ? ('templateId' in p ? p.templateId : r.template_id) : null,
-      intensity: p.intensity ?? r.default_intensity,
-      label: 'label' in p ? p.label : r.label,
-    });
-    bump();
   };
 
   return (
@@ -47,37 +32,21 @@ export function SettingsScreen() {
       <H style={{ fontSize: 22, marginBottom: S.lg }}>설정</H>
 
       <Card>
-        <H style={{ fontSize: 16, marginBottom: S.sm }}>주간 루틴</H>
-        {rules.map((r) => {
-          const tpl = tpls.find((t) => t.id === r.template_id);
-          return (
-            <View key={r.id} style={{ borderTopWidth: 1, borderTopColor: C.line, paddingVertical: S.sm }}>
-              <Row>
-                <T bold style={{ width: 28 }}>{WD[r.weekday]}</T>
-                <T style={{ flex: 1 }}>{r.kind === 'rest' ? '휴식' : r.kind === 'cardio' ? (r.label ?? '유산소') : tpl?.name ?? '(루틴 미연결)'}</T>
-                <Btn label={open === r.weekday ? '닫기' : '변경'} kind="ghost" small onPress={() => setOpen(open === r.weekday ? null : r.weekday)} />
-              </Row>
-              {open === r.weekday && (
-                <View style={{ marginTop: S.sm }}>
-                  <Row style={{ marginBottom: S.sm }}>
-                    {KIND.map((k) => <Chip key={k.key} label={k.label} active={r.kind === k.key} onPress={() => update(r, { kind: k.key })} />)}
-                  </Row>
-                  {r.kind === 'weights' && (
-                    <Row style={{ flexWrap: 'wrap', gap: 6, marginBottom: S.sm }}>
-                      {tpls.map((t) => <Chip key={t.id} label={t.name} active={r.template_id === t.id} onPress={() => update(r, { templateId: t.id, label: t.name })} />)}
-                    </Row>
-                  )}
-                  {r.kind !== 'rest' && (
-                    <>
-                      <T muted style={{ fontSize: 12, marginBottom: 4 }}>오늘의 강도</T>
-                      <IntensityPicker value={r.default_intensity} compact onChange={(v) => update(r, { intensity: v ?? 'none' })} />
-                    </>
-                  )}
-                </View>
-              )}
-            </View>
-          );
-        })}
+        <H style={{ fontSize: 16, marginBottom: 4 }}>루틴 일정</H>
+        <T muted style={{ marginBottom: S.md }}>
+          {plan?.mode === 'cycle' ? `${plan.slots.length}일 주기` : '요일별'} · 요일 또는 며칠 주기로 자유롭게 정할 수 있어요.
+        </T>
+        <Btn label="일정 설정" kind="ghost" onPress={nav.openPlan} />
+      </Card>
+
+      <Card>
+        <H style={{ fontSize: 16, marginBottom: 4 }}>세트 입력</H>
+        <T muted style={{ fontSize: 12, marginBottom: S.sm }}>중량 칸 아래 ± 버튼이 한 번에 바꾸는 kg</T>
+        <Segmented
+          options={STEPS.map((v) => ({ key: String(v), label: `${v}kg` }))}
+          value={String(step)}
+          onChange={(k) => { setStep(Number(k)); setSetting(db, 'weight_step', k); }}
+        />
       </Card>
 
       <Card>
@@ -153,7 +122,7 @@ export function SettingsScreen() {
       <Card>
         <H style={{ fontSize: 16, marginBottom: S.sm }}>관리</H>
         <Row style={{ flexWrap: 'wrap' }}>
-          <Btn label="루틴 관리" kind="ghost" onPress={nav.openTemplates} />
+          <Btn label="루틴 관리" kind="ghost" onPress={() => nav.openTemplates()} />
           <Btn label="종목 관리" kind="ghost" onPress={nav.openExercises} />
           <Btn label="AI 루틴 가져오기" kind="ghost" onPress={nav.openImport} />
         </Row>
@@ -163,7 +132,6 @@ export function SettingsScreen() {
         <H style={{ fontSize: 16, marginBottom: 4 }}>정보</H>
         <T muted style={{ fontSize: 12, lineHeight: 18 }}>
           OVERDRIVE는 완전한 오프라인 앱입니다. 서버 전송·AI API 호출·크레딧 소모가 없습니다. 인바디 OCR은 기기 안에서 처리됩니다.
-          강도(고중량/중간중량/저중량)는 실제 kg과 별개인 사용자 지정 태그이며, 세트 → 종목 → 운동일 순으로 적용됩니다.
         </T>
       </Card>
     </ScrollView>

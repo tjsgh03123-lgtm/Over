@@ -10,12 +10,14 @@ import { CalendarScreen } from './src/screens/CalendarScreen.tsx';
 import { ExercisesScreen } from './src/screens/ExercisesScreen.tsx';
 import { GrowthScreen } from './src/screens/GrowthScreen.tsx';
 import { HomeScreen } from './src/screens/HomeScreen.tsx';
+import { PlanScreen } from './src/screens/PlanScreen.tsx';
 import { ImportScreen } from './src/screens/ImportScreen.tsx';
 import { SessionScreen } from './src/screens/SessionScreen.tsx';
 import { SettingsScreen } from './src/screens/SettingsScreen.tsx';
 import { TemplatesScreen } from './src/screens/TemplatesScreen.tsx';
 import { WorkoutScreen } from './src/screens/WorkoutScreen.tsx';
-import { getSetting, setSetting } from './src/db/repo.ts';
+import { findMissedRoutine, getPlan, getSetting, resolveMissed, setSetting, type MissedChoice, type MissedRoutine } from './src/db/repo.ts';
+import { MissedRoutineModal } from './src/ui/MissedRoutineModal.tsx';
 import { sanitizeGraphColors, sanitizeMode, type GraphKey, type ThemeMode } from './src/domain/themeModel.ts';
 import { applyTheme, C, GC } from './src/ui/theme.ts';
 
@@ -23,7 +25,8 @@ type Overlay =
   | { name: 'session'; id: string }
   | { name: 'import' }
   | { name: 'body' }
-  | { name: 'templates' }
+  | { name: 'templates'; create?: boolean }
+  | { name: 'plan' }
   | { name: 'exercises' };
 
 const TABS: { key: Tab; label: string }[] = [
@@ -42,6 +45,9 @@ export default function App() {
   const [tab, setTab] = useState<Tab>('home');
   const [stack, setStack] = useState<Overlay[]>([]);
   const [mode, setModeState] = useState<ThemeMode>('dark');
+  const [missed, setMissed] = useState<MissedRoutine | null>(null);
+  const [cycleMode, setCycleMode] = useState(false);
+  const [foreground, setForeground] = useState(0);
 
   useEffect(() => {
     (async () => {
@@ -60,10 +66,21 @@ export default function App() {
       if (s === 'active') {
         setToday(localDateStr());
         setVersion((v) => v + 1);
+        setForeground((n) => n + 1);
       }
     });
     return () => sub.remove();
   }, []);
+
+  // 앱을 켰을 때(또는 다시 활성화됐을 때) 지난 루틴을 완료하지 못했다면 선택창을 띄운다
+  useEffect(() => {
+    if (!db) return;
+    (async () => {
+      const m = await findMissedRoutine(db, today);
+      if (m) setCycleMode((await getPlan(db, today)).mode === 'cycle');
+      setMissed(m);
+    })().catch(() => {});
+  }, [db, today, foreground]);
 
   const bump = useCallback(() => setVersion((v) => v + 1), []);
   const push = useCallback((o: Overlay) => setStack((s) => [...s, o]), []);
@@ -85,7 +102,8 @@ export default function App() {
     openSession: (id) => push({ name: 'session', id }),
     openImport: () => push({ name: 'import' }),
     openBody: () => push({ name: 'body' }),
-    openTemplates: () => push({ name: 'templates' }),
+    openTemplates: (create) => push({ name: 'templates', create: !!create }),
+    openPlan: () => push({ name: 'plan' }),
     openExercises: () => push({ name: 'exercises' }),
     goTab: (t) => { setStack([]); setTab(t); },
     close,
@@ -124,6 +142,15 @@ export default function App() {
   const ctx: AppCtx = { db, today, version, bump, nav, theme };
   const top = stack[stack.length - 1];
 
+  const chooseMissed = async (choice: MissedChoice) => {
+    const m = missed;
+    setMissed(null);
+    if (!m) return;
+    const sid = await resolveMissed(db, today, m, choice);
+    setVersion((v) => v + 1);
+    if (sid) push({ name: 'session', id: sid });
+  };
+
   return (
     <SafeAreaProvider>
       <Ctx.Provider value={ctx}>
@@ -150,6 +177,7 @@ export default function App() {
               </View>
             </>
           )}
+          <MissedRoutineModal missed={missed} cycle={cycleMode} onChoose={chooseMissed} />
         </SafeAreaView>
       </Ctx.Provider>
     </SafeAreaProvider>
@@ -161,7 +189,8 @@ function Overlay({ o }: { o: Overlay }) {
     case 'session': return <SessionScreen sessionId={o.id} />;
     case 'import': return <ImportScreen />;
     case 'body': return <BodyEntryScreen />;
-    case 'templates': return <TemplatesScreen />;
+    case 'templates': return <TemplatesScreen startNew={o.create} />;
+    case 'plan': return <PlanScreen />;
     case 'exercises': return <ExercisesScreen />;
   }
 }
