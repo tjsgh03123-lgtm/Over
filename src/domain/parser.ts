@@ -15,6 +15,8 @@ export interface ParsedDay {
   title: string;
   intensity: Intensity | null;
   isRest: boolean;
+  /** JSON의 type 값(weights/cardio/rest). 없으면 isRest로 판단 */
+  kind?: 'weights' | 'cardio' | 'rest';
   exercises: ParsedExercise[];
 }
 
@@ -22,6 +24,9 @@ export interface ParseResult {
   format: 'json' | 'table' | 'text' | 'empty';
   days: ParsedDay[];
   warnings: string[];
+  /** JSON에 루틴 이름·방식이 있으면 함께 돌려준다 (사이클 한 개 = 루틴 한 개) */
+  routineName?: string;
+  mode?: 'cycle' | 'weekday';
 }
 
 const DEFAULT_SETS = 3;
@@ -115,10 +120,16 @@ function parseJson(src: string): ParseResult | null {
   }
   const warnings: string[] = [];
   let list: unknown[] = [];
+  let routineName: string | undefined;
+  let mode: 'cycle' | 'weekday' | undefined;
   if (Array.isArray(data)) list = data;
   else if (data && typeof data === 'object') {
     const d = data as Record<string, unknown>;
-    const cand = d.routines ?? d.days ?? d.workouts ?? d.schedule;
+    // 새 형식: { routine: { name, mode, days: [...] } }
+    const root = d.routine && typeof d.routine === 'object' && !Array.isArray(d.routine) ? (d.routine as Record<string, unknown>) : d;
+    if (typeof root.name === 'string' && root.name.trim() && (Array.isArray(root.days) || root !== d)) routineName = root.name.trim();
+    if (root.mode === 'cycle' || root.mode === 'weekday') mode = root.mode;
+    const cand = root.days ?? root.routines ?? root.workouts ?? root.schedule ?? d.routines;
     if (Array.isArray(cand)) list = cand;
     else if (Array.isArray(d.exercises)) list = [d];
   }
@@ -136,16 +147,19 @@ function parseJson(src: string): ParseResult | null {
     }
     const weekday = parseWeekday(o.weekday ?? o.day);
     const title = String(o.name ?? o.title ?? (weekday != null ? '' : '루틴')).trim();
+    const t = String(o.type ?? o.kind ?? '').toLowerCase();
+    const kind: ParsedDay['kind'] = t === 'cardio' || t === '유산소' ? 'cardio' : t === 'rest' || t === '휴식' ? 'rest' : t === 'weights' || t === '웨이트' ? 'weights' : undefined;
     days.push({
       weekday,
       title: title || weekdayLabel(weekday),
       intensity: parseIntensity(o.intensity),
-      isRest: o.rest === true || o.isRest === true || (exercises.length === 0 && /휴식|rest/i.test(title)),
+      isRest: kind === 'rest' || o.rest === true || o.isRest === true || (exercises.length === 0 && kind !== 'cardio' && /휴식|rest/i.test(title)),
+      kind,
       exercises,
     });
   }
-  if (!days.length) warnings.push('JSON에서 루틴을 찾지 못했습니다 (routines 배열 필요)');
-  return { format: 'json', days, warnings };
+  if (!days.length) warnings.push('JSON에서 루틴을 찾지 못했습니다 (routine.days 배열 필요)');
+  return { format: 'json', days, warnings, routineName, mode };
 }
 
 export function weekdayLabel(w: number | null): string {

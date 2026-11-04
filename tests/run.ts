@@ -5,9 +5,9 @@ import {
 } from '../src/domain/stats.ts';
 import { parseRoutine } from '../src/domain/parser.ts';
 import { parseInBodyText } from '../src/domain/inbody.ts';
-import {
-  cycleIndex, dayNumberOf, daysBetween, resizeSlots, sanitizePlan, shiftStartForMissed, startForDayNumber, MAX_CYCLE,
-} from '../src/domain/cycle.ts';
+import { cycleIndex, daysBetween, shiftStartForMissed, startForDayNumber } from '../src/domain/cycle.ts';
+import { cycleDayNumber, dayForDate, inferMode, MAX_DAYS, sanitizeRoutines, type Routine } from '../src/domain/routine.ts';
+import { AI_IMPORT_PROMPT, AI_PROMPT_DIVIDER } from '../src/domain/importSchema.ts';
 import { fmtDuration, fmtElapsed, suggestFor } from '../src/domain/format.ts';
 import { DEFAULT_GRAPH_COLORS, GRAPH_KEYS, sanitizeGraphColors, sanitizeMode } from '../src/domain/themeModel.ts';
 import type { SessionRecord, SetRecord } from '../src/domain/types.ts';
@@ -289,8 +289,17 @@ test('화면 모드: light만 라이트, 그 외는 다크(기본)', () => {
   assert.equal(sanitizeMode(null), 'dark');
 });
 
-console.log('루틴 일정 (요일별 / N일 주기)');
-test('주기 순환: 시작일 기준으로 N일마다 반복, 시작일 이전 날짜도 정상', () => {
+console.log('루틴(사이클) 모델');
+const R = (over: Partial<Routine> = {}): Routine => ({
+  id: 'r1', name: '테스트', mode: 'cycle', startDate: '2026-11-01',
+  days: [
+    { id: 'a', name: 'A', kind: 'weights', templateId: 't1', weekday: 1 },
+    { id: 'b', name: 'B', kind: 'weights', templateId: 't2', weekday: 3 },
+    { id: 'c', name: '휴식', kind: 'rest', templateId: null, weekday: null },
+  ],
+  ...over,
+});
+test('사이클 순환: 시작일 기준으로 N일마다 반복, 시작일 이전 날짜도 정상', () => {
   assert.equal(daysBetween('2026-11-01', '2026-11-05'), 4);
   assert.deepEqual([0, 1, 2, 3, 4, 5, 6].map((i) => cycleIndex('2026-11-01', `2026-11-0${i + 1}`, 3)), [0, 1, 2, 0, 1, 2, 0]);
   assert.equal(cycleIndex('2026-11-05', '2026-11-04', 3), 2); // 하루 전 = 마지막 칸
@@ -299,32 +308,57 @@ test('주기 순환: 시작일 기준으로 N일마다 반복, 시작일 이전 
 test('오늘이 N일차가 되도록 시작일 계산', () => {
   const start = startForDayNumber('2026-11-05', 3, 4);
   assert.equal(start, '2026-11-03');
-  const plan = sanitizePlan({ mode: 'cycle', startDate: start, slots: resizeSlots([], 4) }, '2026-11-05');
-  assert.equal(dayNumberOf(plan, '2026-11-05'), 3);
-  assert.equal(dayNumberOf(plan, '2026-11-06'), 4);
-  assert.equal(dayNumberOf(plan, '2026-11-07'), 1);
+  const r = R({ startDate: start });
+  assert.equal(cycleDayNumber(r, '2026-11-05'), 3);
+  assert.equal(cycleDayNumber(r, '2026-11-06'), 1); // 3일 사이클이라 4일차 없음 → 1일차
+  assert.equal(cycleDayNumber(R({ days: [] }), '2026-11-05'), 1);
 });
-test('주기 길이 변경: 늘리면 휴식 칸 추가, 줄이면 뒤쪽이 잘림, 1~28 범위', () => {
-  const a = resizeSlots([{ kind: 'weights', templateId: 't1', label: 'A' }], 3);
-  assert.deepEqual(a.map((x) => x.kind), ['weights', 'rest', 'rest']);
-  assert.equal(resizeSlots(a, 1).length, 1);
-  assert.equal(resizeSlots(a, 0).length, 1);
-  assert.equal(resizeSlots(a, 99).length, MAX_CYCLE);
+test('dayForDate: 사이클은 순환, 요일 지정은 같은 요일의 날(없으면 휴식=null), 날이 없으면 null', () => {
+  const c = R();
+  assert.deepEqual([1, 2, 3, 4].map((d) => dayForDate(c, `2026-11-0${d}`).day!.name), ['A', 'B', '휴식', 'A']);
+  assert.equal(dayForDate(c, '2026-11-02').cycleDay, 2);
+  assert.equal(dayForDate(c, '2026-11-02').cycleLength, 3);
+  const w = R({ mode: 'weekday' });
+  assert.equal(dayForDate(w, '2026-11-02').day!.name, 'A'); // 11/02 = 월
+  assert.equal(dayForDate(w, '2026-11-04').day!.name, 'B'); // 수
+  assert.equal(dayForDate(w, '2026-11-03').day, null); // 화: 지정 없음
+  assert.equal(dayForDate(R({ days: [] }), '2026-11-03').day, null);
 });
-test('저장값이 깨져도 안전한 기본 계획(요일별)으로 복구', () => {
-  assert.deepEqual(sanitizePlan(null, '2026-11-05'), { mode: 'weekday', startDate: '2026-11-05', slots: [] });
-  assert.equal(sanitizePlan('{bad', '2026-11-05').mode, 'weekday');
-  const p = sanitizePlan({ mode: 'cycle', startDate: 'x', slots: [{ kind: 'weights', templateId: 7 }, { kind: 'zzz' }, null] }, '2026-11-05');
-  assert.equal(p.mode, 'cycle');
-  assert.equal(p.startDate, '2026-11-05');
-  assert.deepEqual(p.slots.map((s) => [s.kind, s.templateId]), [['weights', null], ['rest', null], ['rest', null]]);
+test('저장값이 깨져도 안전한 빈 상태로 복구, 잘못된 필드는 기본값', () => {
+  assert.deepEqual(sanitizeRoutines(null, '2026-11-05'), { activeId: null, routines: [] });
+  assert.deepEqual(sanitizeRoutines('{bad', '2026-11-05'), { activeId: null, routines: [] });
+  const st = sanitizeRoutines({
+    activeId: 'missing',
+    routines: [
+      { id: 'r', name: ' ', mode: 'zzz', startDate: 'x', days: [{ id: 'd1', name: 'x', kind: 'weights', templateId: 7, weekday: 9 }, { id: 'd2', kind: 'nope' }, null, { name: 'no id' }] },
+      { name: 'id 없음' },
+    ],
+  }, '2026-11-05');
+  assert.equal(st.routines.length, 1);
+  assert.equal(st.activeId, null); // 없는 루틴을 가리키면 해제
+  const r = st.routines[0];
+  assert.deepEqual([r.name, r.mode, r.startDate], ['루틴', 'cycle', '2026-11-05']);
+  assert.deepEqual(r.days.map((d) => [d.kind, d.templateId, d.weekday]), [['weights', null, null], ['rest', null, null]]);
+  assert.equal(sanitizeRoutines({ activeId: 'r', routines: [{ id: 'r', days: [] }] }, '2026-11-05').activeId, 'r');
+});
+test('길이 제한: 한 루틴의 날은 최대 28개', () => {
+  const days = Array.from({ length: 40 }, (_, i) => ({ id: `d${i}`, name: 'x', kind: 'rest' }));
+  assert.equal(sanitizeRoutines({ routines: [{ id: 'r', days }] }, '2026-11-05').routines[0].days.length, MAX_DAYS);
 });
 test('루틴대로 하기: 놓친 날만큼 시작일이 밀려 오늘이 그 칸이 됨', () => {
-  const plan = sanitizePlan({ mode: 'cycle', startDate: '2026-11-01', slots: resizeSlots([], 3) }, '2026-11-05');
-  // 11/03(1일 칸 아님: idx 2)을 놓쳤고 오늘 11/05
-  const missedIdx = cycleIndex(plan.startDate, '2026-11-03', 3);
-  const start2 = shiftStartForMissed(plan, '2026-11-03', '2026-11-05');
-  assert.equal(cycleIndex(start2, '2026-11-05', 3), missedIdx);
+  const start2 = shiftStartForMissed('2026-11-01', '2026-11-03', '2026-11-05');
+  assert.equal(cycleIndex(start2, '2026-11-05', 3), cycleIndex('2026-11-01', '2026-11-03', 3));
+});
+test('방식 추정: 운동일이 모두 요일을 가지면 요일 지정, 아니면 N일 반복', () => {
+  assert.equal(inferMode([{ weekday: 1, isRest: false }, { weekday: null, isRest: true }]), 'weekday');
+  assert.equal(inferMode([{ weekday: 1, isRest: false }, { weekday: null, isRest: false }]), 'cycle');
+  assert.equal(inferMode([]), 'cycle');
+});
+test('AI 프롬프트: 사용자 입력 자리는 맨 아래 구분선 밑 (중간에 입력칸 없음)', () => {
+  assert.ok(AI_IMPORT_PROMPT.trimEnd().endsWith(AI_PROMPT_DIVIDER));
+  assert.equal(AI_IMPORT_PROMPT.split(AI_PROMPT_DIVIDER).length, 2);
+  assert.ok(!AI_IMPORT_PROMPT.includes('[내 조건]'));
+  assert.ok(AI_IMPORT_PROMPT.indexOf('JSON Schema') < AI_IMPORT_PROMPT.indexOf(AI_PROMPT_DIVIDER));
 });
 
 console.log('시간 표시 / 세트 입력 시작값');

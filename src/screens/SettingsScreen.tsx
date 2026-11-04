@@ -2,8 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Alert, Pressable, ScrollView, View } from 'react-native';
 import { useApp } from '../app/context.tsx';
 import { exportBackup, exportBodyCsv, exportWorkoutCsv, restoreBackup } from '../db/backup.ts';
-import { getPlan, getWeightStep, setSetting } from '../db/repo.ts';
-import type { CyclePlan } from '../domain/cycle.ts';
+import { getWeightStep, setSetting } from '../db/repo.ts';
 import { pickTextFile, shareTextFile, stamp } from '../services/files.ts';
 import { GRAPH_KEYS, GRAPH_LABEL, GRAPH_PRESETS } from '../domain/themeModel.ts';
 import { Btn, Card, H, Row, Segmented, T } from '../ui/components.tsx';
@@ -12,15 +11,13 @@ import { C, GC, S } from '../ui/theme.ts';
 const STEPS = [1, 2.5, 5];
 
 export function SettingsScreen() {
-  const { db, today, version, nav, bump, theme } = useApp();
-  const [plan, setPlan] = useState<CyclePlan | null>(null);
+  const { db, version, nav, bump, theme } = useApp();
   const [step, setStep] = useState(2.5);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    getPlan(db, today).then(setPlan);
     getWeightStep(db).then(setStep);
-  }, [db, today, version]);
+  }, [db, version]);
 
   const guard = async (fn: () => Promise<void>) => {
     setBusy(true);
@@ -30,14 +27,6 @@ export function SettingsScreen() {
   return (
     <ScrollView contentContainerStyle={{ padding: S.lg, paddingBottom: 60 }}>
       <H style={{ fontSize: 22, marginBottom: S.lg }}>설정</H>
-
-      <Card>
-        <H style={{ fontSize: 16, marginBottom: 4 }}>루틴 일정</H>
-        <T muted style={{ marginBottom: S.md }}>
-          {plan?.mode === 'cycle' ? `${plan.slots.length}일 주기` : '요일별'} · 요일 또는 며칠 주기로 자유롭게 정할 수 있어요.
-        </T>
-        <Btn label="일정 설정" kind="ghost" onPress={nav.openPlan} />
-      </Card>
 
       <Card>
         <H style={{ fontSize: 16, marginBottom: 4 }}>세트 입력</H>
@@ -122,7 +111,7 @@ export function SettingsScreen() {
       <Card>
         <H style={{ fontSize: 16, marginBottom: S.sm }}>관리</H>
         <Row style={{ flexWrap: 'wrap' }}>
-          <Btn label="루틴 관리" kind="ghost" onPress={() => nav.openTemplates()} />
+          <Btn label="루틴" kind="ghost" onPress={() => nav.goTab('routine')} />
           <Btn label="종목 관리" kind="ghost" onPress={nav.openExercises} />
           <Btn label="AI 루틴 가져오기" kind="ghost" onPress={nav.openImport} />
         </Row>

@@ -54,7 +54,7 @@ export function HomeScreen() {
     bump();
   };
 
-  const cycleNote = slot?.cycleDay ? `${slot.cycleDay}/${slot.cycleLength}일차` : null;
+  const cycleNote = slot?.cycleDay ? `${slot.routineName} · ${slot.cycleDay}/${slot.cycleLength}일차` : slot ? slot.routineName : null;
 
   return (
     <ScrollView contentContainerStyle={{ padding: S.lg, paddingBottom: 40 }}>
@@ -74,7 +74,7 @@ export function HomeScreen() {
         <Card>
           <Row style={{ marginBottom: 6 }}>
             <T muted style={{ flex: 1 }}>오늘의 운동{cycleNote ? ` · ${cycleNote}` : ''}</T>
-            <Btn label="일정" kind="ghost" small onPress={nav.openPlan} />
+            <Btn label="루틴" kind="ghost" small onPress={() => nav.goTab('routine')} />
           </Row>
 
           {doneToday.length > 0 && (
@@ -85,7 +85,7 @@ export function HomeScreen() {
 
           {slot?.kind === 'weights' && tpl ? (
             <>
-              <H>{tpl.name}</H>
+              <H>{slot.label ?? tpl.name}</H>
               <T muted style={{ marginTop: 4, marginBottom: S.md }}>
                 {tpl.count}종목{tpl.names.length ? ` · ${tpl.names.join(', ')}${tpl.count > tpl.names.length ? ' …' : ''}` : ''}
               </T>
@@ -119,7 +119,7 @@ export function HomeScreen() {
             <>
               <H>오늘 정해진 루틴이 없어요</H>
               <T muted style={{ marginTop: 4, marginBottom: S.md }}>루틴을 만들어 두면 여기서 바로 시작할 수 있어요.</T>
-              <Btn label="루틴 만들기" onPress={() => nav.openTemplates(true)} style={{ marginBottom: S.sm }} />
+              <Btn label="루틴 만들기" onPress={() => nav.goTab('routine')} style={{ marginBottom: S.sm }} />
               <Btn label="자유 운동" kind="ghost" onPress={startFree} />
             </>
           )}

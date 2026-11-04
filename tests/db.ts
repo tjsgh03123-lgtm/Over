@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { openTestDb } from './nodeAdapter.ts';
 import { DDL, TABLE_ORDER } from '../src/db/schema.ts';
 import { seedDefaults } from '../src/db/seed.ts';
+import { seedLegacy } from './legacySeed.ts';
 import * as repo from '../src/db/repo.ts';
 import { exportBackup, exportBodyCsv, exportWorkoutCsv, restoreBackup } from '../src/db/backup.ts';
 import { dailyPoints, filterSets, seriesByIntensity } from '../src/domain/stats.ts';
@@ -22,10 +23,16 @@ async function test(name: string, fn: () => Promise<void>) {
   }
 }
 
+/** 예시 데이터가 들어 있는 DB(예전 버전이 만들던 기본 루틴 4개 + 요일 일정). 저장소 기능 테스트용 픽스처. */
 async function freshDb(): Promise<Db> {
   const db = openTestDb();
   await db.exec(DDL);
-  await seedDefaults(db);
+  await seedLegacy(db);
+  return db;
+}
+async function emptyDb(): Promise<Db> {
+  const db = openTestDb();
+  await db.exec(DDL);
   return db;
 }
 
@@ -57,34 +64,41 @@ await test('12개 테이블 생성', async () => {
   assert.deepEqual(names, [...TABLE_ORDER].sort());
   assert.equal(TABLE_ORDER.length, 12);
 });
-await test('기본 루틴: 월 10종목, 수·금·일 8종목, 요일 규칙 7개, 기본 3세트, 강도 없음', async () => {
+await test('새로 설치하면 기본 루틴·종목이 하나도 없음 (직접 만들거나 AI에서 가져옴)', async () => {
+  const db = await emptyDb();
+  assert.equal(await seedDefaults(db), true);
+  assert.equal((await repo.listTemplates(db)).length, 0);
+  assert.equal((await repo.listExercises(db)).length, 0);
+  assert.equal((await repo.getRoutines(db, '2026-11-05')).routines.length, 0);
+  assert.equal(await repo.slotForDate(db, '2026-11-05'), null);
+  assert.equal(await repo.getSetting(db, 'default_sets'), '3');
+  assert.equal(await seedDefaults(db), false); // 한 번만 실행
+});
+await test('예전 버전에서 업데이트: 기본 루틴·요일 일정·미사용 기본 종목 삭제, 기록은 유지', async () => {
+  const db = await freshDb(); // 예전 기본 루틴이 들어 있는 상태
+  assert.equal((await repo.listTemplates(db)).length, 4);
+  const bench = await repo.getOrCreateExercise(db, '벤치프레스');
+  await logSession(db, '2026-11-01', bench.id, [{ w: 60, r: 8 }]); // 기록이 있는 기본 종목
+  await repo.getOrCreateExercise(db, '내가 만든 종목'); // 사용자가 직접 만든 종목
+  assert.equal(await seedDefaults(db), false); // 신규 설치가 아님
+  assert.equal((await repo.listTemplates(db)).length, 0);
+  assert.equal((await db.all('SELECT * FROM schedule_rules')).length, 0);
+  assert.equal((await db.all('SELECT * FROM workout_template_exercises')).length, 0);
+  assert.deepEqual((await repo.listExercises(db, true)).map((e) => e.name).sort(), ['내가 만든 종목', '벤치프레스'].sort());
+  assert.equal((await repo.loadFlatSets(db, bench.id)).length, 1); // 완료한 기록·그래프 유지
+  assert.equal((await repo.loadSession(db, (await repo.sessionsOnDate(db, '2026-11-01'))[0].id))!.template_id, null);
+  assert.equal(await seedDefaults(db), false); // 두 번째 실행은 아무 일도 하지 않음
+});
+await test('픽스처 확인: 예시 루틴은 월 10종목, 수·금·일 8종목, 기본 3세트', async () => {
   const db = await freshDb();
   const tpls = await repo.listTemplates(db);
-  assert.equal(tpls.length, 4);
-  const count = async (needle: string) => {
+  const n = async (needle: string) => {
     const t = tpls.find((x) => x.name.includes(needle))!;
     const ex = await repo.getTemplateExercises(db, t.id);
     assert.ok(ex.every((e) => e.target_sets === 3));
-    return { t, n: ex.length };
+    return ex.length;
   };
-  assert.equal((await count('월요일')).n, 10);
-  assert.equal((await count('수요일')).n, 8);
-  const fri = await count('금요일');
-  assert.equal(fri.n, 8);
-  assert.equal(fri.t.default_intensity, 'none');
-  assert.ok(!(await repo.getSchedule(db)).some((r) => r.default_intensity !== 'none' && r.kind === 'weights'), '웨이트 요일에 강도 지정이 없어야 함');
-  assert.equal((await count('일요일')).n, 8);
-  const rules = await repo.getSchedule(db);
-  assert.equal(rules.length, 7);
-  assert.equal(rules.find((r) => r.weekday === 2)!.kind, 'rest');
-  assert.equal(rules.find((r) => r.weekday === 4)!.kind, 'cardio');
-  assert.equal(rules.find((r) => r.weekday === 6)!.kind, 'cardio');
-});
-await test('시드는 한 번만 실행(재실행해도 중복 없음), 같은 종목은 하나로 공유', async () => {
-  const db = await freshDb();
-  assert.equal(await seedDefaults(db), false);
-  const bench = (await repo.listExercises(db)).filter((e) => e.name === '벤치프레스');
-  assert.equal(bench.length, 1);
+  assert.deepEqual([await n('월요일'), await n('수요일'), await n('금요일'), await n('일요일')], [10, 8, 8, 8]);
 });
 await test('기본 시드에는 기록(그래프 예시 숫자)이 저장되지 않음', async () => {
   const db = await freshDb();
@@ -233,17 +247,38 @@ await test('종목 이름을 바꿔도 과거 기록 유지, 루틴 삭제 후�
 });
 
 console.log('11 기본 루틴 및 AI 가져오기');
-await test('AI 텍스트 → 파싱 → 루틴/요일 규칙 저장 → 종목 중복 없이 재사용', async () => {
+await test('AI 텍스트 → 파싱 → 루틴(사이클) 한 개로 저장 → 종목 중복 없이 재사용', async () => {
   const db = await freshDb();
   const parsed = parseRoutine('## 월요일 - 가슴\n1. 벤치프레스 4x8 @ 60kg\n2. 새로운 머신 프레스 3x12\n\n화요일: 휴식');
-  const r = await repo.applyImportedRoutine(db, parsed.days, 'raw', parsed.format, { linkWeekdays: true });
-  assert.equal(r.templates, 1);
-  const rule = await repo.getRuleForWeekday(db, 1);
-  const tplEx = await repo.getTemplateExercises(db, rule!.template_id!);
+  const r = await repo.applyImportedRoutine(db, '2026-11-05', parsed.days, 'raw', parsed.format, { name: '내 AI 루틴', activate: true });
+  assert.equal(r.days, 2);
+  const st = await repo.getRoutines(db, '2026-11-05');
+  assert.equal(st.routines.length, 1);
+  assert.equal(st.activeId, r.routineId);
+  const rt = st.routines[0];
+  assert.equal(rt.name, '내 AI 루틴');
+  assert.equal(rt.mode, 'weekday'); // 운동일에 모두 요일이 있으면 요일 지정 방식으로 추정
+  assert.deepEqual(rt.days.map((d) => [d.kind, d.weekday]), [['weights', 1], ['rest', 2]]);
+  const tplEx = await repo.getTemplateExercises(db, rt.days[0].templateId!);
   assert.deepEqual(tplEx.map((e) => [e.name, e.target_sets, e.target_weight]), [['벤치프레스', 4, 60], ['새로운 머신 프레스', 3, null]]);
   assert.equal((await repo.listExercises(db)).filter((e) => e.name === '벤치프레스').length, 1);
-  assert.equal((await repo.getRuleForWeekday(db, 2))!.kind, 'rest');
   assert.equal((await db.all('SELECT * FROM imported_routines')).length, 1);
+});
+await test('AI 새 JSON 형식(routine.days, type)을 그대로 읽어 사이클 루틴으로 저장', async () => {
+  const db = await emptyDb();
+  const json = JSON.stringify({ version: 2, routine: { name: '3분할', mode: 'cycle', days: [
+    { name: '가슴·삼두', type: 'weights', exercises: [{ name: '벤치프레스', sets: 4, reps: '6-8' }] },
+    { name: '유산소', type: 'cardio', exercises: [] },
+    { name: '휴식', type: 'rest', exercises: [] },
+  ] } });
+  const parsed = parseRoutine(json);
+  assert.equal(parsed.routineName, '3분할');
+  assert.equal(parsed.mode, 'cycle');
+  const r = await repo.applyImportedRoutine(db, '2026-11-05', parsed.days, json, parsed.format, { name: parsed.routineName!, mode: parsed.mode, activate: true });
+  assert.equal(r.days, 3);
+  const rt = (await repo.getRoutines(db, '2026-11-05')).routines[0];
+  assert.deepEqual(rt.days.map((d) => d.kind), ['weights', 'cardio', 'rest']);
+  assert.equal(rt.days[1].templateId, null);
 });
 
 console.log('12 신체 기록');
@@ -322,61 +357,125 @@ await test('CSV 내보내기: BOM, 따옴표/쉼표 이스케이프, 강도 한�
 });
 
 console.log('루틴 일정 · 앱 시작 팝업 · 타이머 · 세트 입력');
-await test('요일별 일정: 날짜 → 요일 규칙, 삭제된 루틴은 연결 없음으로 취급', async () => {
-  const db = await freshDb();
-  // 2026-11-02 = 월요일
-  const mon = (await repo.slotForDate(db, '2026-11-02'))!;
+/** 월요일이 오는 해 11월: 2026-11-02 = 월요일. 테스트용 루틴 헬퍼 */
+async function weightDay(db: Db, routineId: string, name: string, exName: string, weekday: number | null = null) {
+  const ex = await repo.getOrCreateExercise(db, exName);
+  return repo.upsertDay(db, '2026-11-05', routineId, { name, kind: 'weights', weekday, exercises: [{ exerciseId: ex.id, targetSets: 3 }] });
+}
+await test('루틴 만들기: 첫 루틴은 자동으로 사용 중, 날 추가·순서 변경·삭제, 날의 종목은 날 안에 저장', async () => {
+  const db = await emptyDb();
+  const id = await repo.createRoutine(db, '2026-11-05', { name: '  3분할  ' });
+  const id2 = await repo.createRoutine(db, '2026-11-05', { name: '두 번째' });
+  let st = await repo.getRoutines(db, '2026-11-05');
+  assert.equal(st.activeId, id);
+  assert.deepEqual(st.routines.map((r) => r.name), ['3분할', '두 번째']);
+  const d1 = await weightDay(db, id, '가슴', '벤치프레스');
+  const d2 = await weightDay(db, id, '등', '렛풀다운');
+  await repo.upsertDay(db, '2026-11-05', id, { name: '', kind: 'rest' });
+  st = await repo.getRoutines(db, '2026-11-05');
+  assert.deepEqual(st.routines[0].days.map((d) => d.name), ['가슴', '등', '휴식']);
+  await repo.moveDay(db, '2026-11-05', id, d2, -1);
+  assert.deepEqual((await repo.getRoutines(db, '2026-11-05')).routines[0].days.map((d) => d.name), ['등', '가슴', '휴식']);
+  const detail = (await repo.getDayDetail(db, '2026-11-05', id, d1))!;
+  assert.deepEqual(detail.exercises.map((e) => e.name), ['벤치프레스']);
+  // 웨이트 → 휴식으로 바꾸면 종목이 지워짐
+  await repo.upsertDay(db, '2026-11-05', id, { id: d1, name: '가슴', kind: 'rest' });
+  assert.equal((await repo.getDayDetail(db, '2026-11-05', id, d1))!.exercises.length, 0);
+  await repo.setActiveRoutine(db, '2026-11-05', id2);
+  assert.equal((await repo.getRoutines(db, '2026-11-05')).activeId, id2);
+  // 루틴 삭제: 날의 종목도 삭제, 사용 중이던 루틴이면 다른 루틴으로
+  await repo.deleteRoutine(db, '2026-11-05', id2);
+  assert.equal((await repo.getRoutines(db, '2026-11-05')).activeId, id);
+  await repo.deleteRoutine(db, '2026-11-05', id);
+  assert.equal((await repo.getRoutines(db, '2026-11-05')).activeId, null);
+  assert.equal((await repo.listTemplates(db)).length, 0);
+});
+await test('요일 지정 방식: 지정한 요일에만 운동하고 나머지는 휴식, 삭제된 종목 연결은 없음 처리', async () => {
+  const db = await emptyDb();
+  const id = await repo.createRoutine(db, '2026-11-05', { name: '주 3회', mode: 'weekday' });
+  await weightDay(db, id, '가슴', '벤치프레스', 1); // 월
+  const fri = await weightDay(db, id, '하체', '스쿼트', 5); // 금
+  const mon = (await repo.slotForDate(db, '2026-11-02'))!; // 2026-11-02 = 월
   assert.equal(mon.kind, 'weights');
-  assert.ok(mon.template_id);
-  assert.equal((await repo.slotForDate(db, '2026-11-03'))!.kind, 'rest');
+  assert.equal(mon.label, '가슴');
   assert.equal(mon.cycleDay, undefined);
-  await repo.deleteTemplate(db, mon.template_id!);
+  assert.equal((await repo.slotForDate(db, '2026-11-03'))!.kind, 'rest'); // 화: 지정 없음 = 휴식
+  assert.equal((await repo.slotForDate(db, '2026-11-06'))!.label, '하체'); // 금
+  await repo.deleteDay(db, '2026-11-05', id, fri);
+  assert.equal((await repo.slotForDate(db, '2026-11-06'))!.kind, 'rest');
+  // 템플릿이 외부에서 지워져도(깨진 연결) 앱이 죽지 않고 연결 없음
+  await db.run('DELETE FROM workout_templates');
   assert.equal((await repo.slotForDate(db, '2026-11-02'))!.template_id, null);
 });
-await test('N일 주기: 3일 주기(A·B·휴식)가 시작일 기준으로 순환, 몇 일차인지 표시', async () => {
-  const db = await freshDb();
-  const [a, b] = await repo.listTemplates(db);
-  await repo.savePlan(db, {
-    mode: 'cycle', startDate: '2026-11-01',
-    slots: [
-      { kind: 'weights', templateId: a.id, label: a.name },
-      { kind: 'weights', templateId: b.id, label: b.name },
-      { kind: 'rest', templateId: null, label: '휴식' },
-    ],
-  });
-  const kinds: string[] = [];
-  const ids: (string | null)[] = [];
+await test('N일 반복 방식: 시작일 기준으로 순환, 몇 일차인지, 사용 중인 루틴이 없으면 일정 없음', async () => {
+  const db = await emptyDb();
+  const id = await repo.createRoutine(db, '2026-11-01', { name: '3일 주기', mode: 'cycle', startDate: '2026-11-01' });
+  assert.equal(await repo.slotForDate(db, '2026-11-01'), null); // 날이 없으면 일정 없음
+  const a = await weightDay(db, id, 'A', '벤치프레스');
+  const b = await weightDay(db, id, 'B', '렛풀다운');
+  await repo.upsertDay(db, '2026-11-05', id, { name: '휴식', kind: 'rest' });
+  const labels: (string | null)[] = [];
   for (let d = 1; d <= 6; d++) {
     const s = (await repo.slotForDate(db, `2026-11-0${d}`))!;
-    kinds.push(s.kind); ids.push(s.template_id);
+    labels.push(s.label);
     assert.equal(s.cycleDay, ((d - 1) % 3) + 1);
     assert.equal(s.cycleLength, 3);
+    assert.equal(s.routineName, '3일 주기');
   }
-  assert.deepEqual(kinds, ['weights', 'weights', 'rest', 'weights', 'weights', 'rest']);
-  assert.deepEqual(ids, [a.id, b.id, null, a.id, b.id, null]);
-  // 저장 후 다시 읽어도 동일 (백업 복원 시 app_settings로 함께 보존)
+  assert.deepEqual(labels, ['A', 'B', '휴식', 'A', 'B', '휴식']);
+  assert.ok(a && b);
+  await repo.setActiveRoutine(db, '2026-11-05', null);
+  assert.equal(await repo.slotForDate(db, '2026-11-02'), null);
+  // 루틴은 app_settings에 저장되어 백업·복원으로 함께 보존된다
+  await repo.setActiveRoutine(db, '2026-11-05', id);
   const backup = await exportBackup(db);
-  const db2 = await freshDb();
+  const db2 = await emptyDb();
   await restoreBackup(db2, backup);
-  assert.equal((await repo.slotForDate(db2, '2026-11-02'))!.template_id, b.id);
+  assert.equal((await repo.slotForDate(db2, '2026-11-02'))!.label, 'B');
 });
+await test('자유 운동을 루틴의 새 날로 저장 (루틴이 없으면 ‘내 루틴’ 생성)', async () => {
+  const db = await emptyDb();
+  const ex = await repo.getOrCreateExercise(db, '벤치프레스');
+  const { sid } = await logSession(db, '2026-11-05', ex.id, [{ w: 92.5, r: 6 }], { free: true });
+  const r = await repo.saveSessionAsDay(db, '2026-11-05', sid, '내 벤치 날');
+  const st = await repo.getRoutines(db, '2026-11-05');
+  assert.equal(st.routines[0].name, '내 루틴');
+  assert.equal(st.activeId, r.routineId);
+  const d = (await repo.getDayDetail(db, '2026-11-05', r.routineId, r.dayId))!;
+  assert.equal(d.exercises[0].target_weight, 92.5);
+  // 이미 사용 중인 루틴이 있으면 거기에 추가
+  const r2 = await repo.saveSessionAsDay(db, '2026-11-05', sid, '두 번째 날');
+  assert.equal(r2.routineId, r.routineId);
+  assert.equal((await repo.getRoutines(db, '2026-11-05')).routines[0].days.length, 2);
+});
+/** 월·수·금·일에 운동하는 요일 지정 루틴 (나머지 요일은 휴식) */
+async function weekdayRoutine(db: Db) {
+  const id = await repo.createRoutine(db, '2026-11-01', { name: '주 4회', mode: 'weekday' });
+  await weightDay(db, id, '가슴', '벤치프레스', 1);
+  await weightDay(db, id, '하체', '스쿼트', 3);
+  await weightDay(db, id, '등', '렛풀다운', 5);
+  await weightDay(db, id, '어깨', '숄더프레스', 0);
+  return id;
+}
 await test('앱 시작 팝업: 처음에는 묻지 않고, 놓친 지난 루틴이 있을 때만 묻고, 같은 날 다시 묻지 않음', async () => {
-  const db = await freshDb();
-  // 처음 실행: 기준만 저장하고 묻지 않음 (기본 시드에 월요일 루틴이 있어도)
+  const db = await emptyDb();
+  await weekdayRoutine(db);
+  // 처음 실행: 기준만 저장하고 묻지 않음 (월요일 운동이 있어도)
   assert.equal(await repo.findMissedRoutine(db, '2026-11-03'), null);
   // 이틀 뒤(수 11/04): 월요일(11/02) 루틴은 기준일 이전이라 대상 아님, 화요일은 휴식
   assert.equal(await repo.findMissedRoutine(db, '2026-11-04'), null);
   // 다음 주 화요일(11/10)에 열었는데 월요일(11/09) 루틴을 안 했다면 묻는다
   const m = await repo.findMissedRoutine(db, '2026-11-10');
   assert.equal(m?.date, '2026-11-09');
-  assert.ok(m!.templateName.includes('월요일'));
+  assert.ok(m!.templateName.includes('가슴'));
   // 선택하면(넘어가기) 같은 날 다시 묻지 않고, 다음 날에도 같은 날짜를 다시 묻지 않음
   assert.equal(await repo.resolveMissed(db, '2026-11-10', m!, 'skip'), null);
   assert.equal(await repo.findMissedRoutine(db, '2026-11-10'), null);
   assert.equal(await repo.findMissedRoutine(db, '2026-11-11'), null);
 });
 await test('앱 시작 팝업: 그날 다른 운동이라도 완료한 기록이 있으면 묻지 않음, 오늘의 루틴·진행 중 운동도 대상 아님', async () => {
-  const db = await freshDb();
+  const db = await emptyDb();
+  await weekdayRoutine(db);
   assert.equal(await repo.findMissedRoutine(db, '2026-11-09'), null); // 기준일 저장 (11/08까지는 묻지 않음)
   const ex = await repo.getOrCreateExercise(db, '벤치프레스');
   await logSession(db, '2026-11-09', ex.id, [{ w: 50, r: 10 }]); // 월요일에 (자유 운동이라도) 운동함
@@ -388,40 +487,46 @@ await test('앱 시작 팝업: 그날 다른 운동이라도 완료한 기록이
   await repo.startFreeSession(db, '2026-11-16');
   assert.equal(await repo.findMissedRoutine(db, '2026-11-16'), null);
 });
-await test('앱 시작 팝업 선택: 루틴대로 하기(주기 모드는 일정이 밀림), 오늘만 자유 운동(일정 그대로)', async () => {
-  const db = await freshDb();
-  const [a, b] = await repo.listTemplates(db);
-  await repo.savePlan(db, {
-    mode: 'cycle', startDate: '2026-11-01',
-    slots: [
-      { kind: 'weights', templateId: a.id, label: a.name }, // 11/01, 11/04, 11/07
-      { kind: 'weights', templateId: b.id, label: b.name }, // 11/02, 11/05
-      { kind: 'rest', templateId: null, label: '휴식' }, // 11/03, 11/06
-    ],
-  });
+await test('앱 시작 팝업 선택: 루틴대로 하기(사이클은 일정이 밀림), 오늘만 자유 운동(일정 그대로)', async () => {
+  const build = async () => {
+    const db = await emptyDb();
+    const id = await repo.createRoutine(db, '2026-11-01', { name: '3일 주기', mode: 'cycle', startDate: '2026-11-01' });
+    await weightDay(db, id, 'A', '벤치프레스'); // 11/01, 11/04, 11/07
+    await weightDay(db, id, 'B', '렛풀다운'); // 11/02, 11/05
+    await repo.upsertDay(db, '2026-11-01', id, { name: '휴식', kind: 'rest' }); // 11/03, 11/06
+    return { db, id };
+  };
+  const { db, id } = await build();
   assert.equal(await repo.findMissedRoutine(db, '2026-11-02'), null); // 기준일 저장 (11/01)
-  // 11/02: 어제(11/01)의 A를 못 했고 오늘은 B 예정
   const m = (await repo.findMissedRoutine(db, '2026-11-03'))!; // 11/02의 B를 못 함 (11/01은 기준일 이전)
   assert.equal(m.date, '2026-11-02');
-  assert.equal(m.templateId, b.id);
+  assert.ok(m.templateName.includes('B'));
   const sid = (await repo.resolveMissed(db, '2026-11-03', m, 'follow'))!;
   const ses = (await repo.loadSession(db, sid))!;
-  assert.equal(ses.template_id, b.id);
+  assert.equal(ses.title, 'B');
   assert.equal(ses.date, '2026-11-03');
-  assert.equal((await repo.slotForDate(db, '2026-11-03'))!.template_id, b.id); // 오늘이 그 칸이 됨
+  assert.equal((await repo.slotForDate(db, '2026-11-03'))!.label, 'B'); // 오늘이 그 칸이 됨
   assert.equal((await repo.slotForDate(db, '2026-11-04'))!.kind, 'rest'); // 이후 일정이 하루 밀림
+  assert.equal((await repo.slotForDate(db, '2026-11-05'))!.label, 'A');
+  assert.ok(id);
 
   // 오늘만 자유 운동: 일정은 그대로
-  const db2 = await freshDb();
-  await repo.savePlan(db2, { mode: 'cycle', startDate: '2026-11-01', slots: [
-    { kind: 'weights', templateId: a.id, label: null }, { kind: 'weights', templateId: b.id, label: null }, { kind: 'rest', templateId: null, label: null }] });
+  const { db: db2, id: id2 } = await build();
   await repo.findMissedRoutine(db2, '2026-11-02');
   const m2 = (await repo.findMissedRoutine(db2, '2026-11-03'))!;
   const fsid = (await repo.resolveMissed(db2, '2026-11-03', m2, 'free'))!;
-  const fs = (await repo.loadSession(db2, fsid))!;
-  assert.equal(fs.is_free, 1);
+  assert.equal((await repo.loadSession(db2, fsid))!.is_free, 1);
   assert.equal((await repo.slotForDate(db2, '2026-11-03'))!.kind, 'rest'); // 변화 없음
-  assert.equal((await repo.getPlan(db2, '2026-11-03')).startDate, '2026-11-01');
+  assert.equal((await repo.getRoutines(db2, '2026-11-03')).routines.find((r) => r.id === id2)!.startDate, '2026-11-01');
+
+  // 요일 지정 루틴은 '루틴대로 하기'를 해도 일정(요일)이 바뀌지 않음
+  const db3 = await emptyDb();
+  await weekdayRoutine(db3);
+  await repo.findMissedRoutine(db3, '2026-11-09');
+  const m3 = (await repo.findMissedRoutine(db3, '2026-11-17'))!; // 월 11/16 가슴을 못 함 (일 11/15 어깨도 못 했지만 가장 최근 것)
+  assert.equal(m3.date, '2026-11-16');
+  await repo.resolveMissed(db3, '2026-11-17', m3, 'follow');
+  assert.equal((await repo.slotForDate(db3, '2026-11-18'))!.label, '하체'); // 수요일은 그대로 하체
 });
 await test('세트 입력: 새 종목/세트는 비어 있고(앞 세트 값에서 시작), 지난 기록은 완료한 본 세트에서 가져옴', async () => {
   const db = await freshDb();

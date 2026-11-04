@@ -10,13 +10,13 @@ import { CalendarScreen } from './src/screens/CalendarScreen.tsx';
 import { ExercisesScreen } from './src/screens/ExercisesScreen.tsx';
 import { GrowthScreen } from './src/screens/GrowthScreen.tsx';
 import { HomeScreen } from './src/screens/HomeScreen.tsx';
-import { PlanScreen } from './src/screens/PlanScreen.tsx';
+import { RoutineDetailScreen } from './src/screens/RoutineDetailScreen.tsx';
+import { DayEditorScreen } from './src/screens/DayEditorScreen.tsx';
+import { RoutineScreen } from './src/screens/RoutineScreen.tsx';
 import { ImportScreen } from './src/screens/ImportScreen.tsx';
 import { SessionScreen } from './src/screens/SessionScreen.tsx';
 import { SettingsScreen } from './src/screens/SettingsScreen.tsx';
-import { TemplatesScreen } from './src/screens/TemplatesScreen.tsx';
-import { WorkoutScreen } from './src/screens/WorkoutScreen.tsx';
-import { findMissedRoutine, getPlan, getSetting, resolveMissed, setSetting, type MissedChoice, type MissedRoutine } from './src/db/repo.ts';
+import { findMissedRoutine, getActiveRoutine, getSetting, resolveMissed, setSetting, type MissedChoice, type MissedRoutine } from './src/db/repo.ts';
 import { MissedRoutineModal } from './src/ui/MissedRoutineModal.tsx';
 import { sanitizeGraphColors, sanitizeMode, type GraphKey, type ThemeMode } from './src/domain/themeModel.ts';
 import { applyTheme, C, GC } from './src/ui/theme.ts';
@@ -25,13 +25,13 @@ type Overlay =
   | { name: 'session'; id: string }
   | { name: 'import' }
   | { name: 'body' }
-  | { name: 'templates'; create?: boolean }
-  | { name: 'plan' }
+  | { name: 'routine'; id: string }
+  | { name: 'day'; routineId: string; dayId: string | null }
   | { name: 'exercises' };
 
 const TABS: { key: Tab; label: string }[] = [
   { key: 'home', label: '홈' },
-  { key: 'workout', label: '운동' },
+  { key: 'routine', label: '루틴' },
   { key: 'calendar', label: '캘린더' },
   { key: 'growth', label: '성장 분석' },
   { key: 'settings', label: '설정' },
@@ -77,7 +77,7 @@ export default function App() {
     if (!db) return;
     (async () => {
       const m = await findMissedRoutine(db, today);
-      if (m) setCycleMode((await getPlan(db, today)).mode === 'cycle');
+      if (m) setCycleMode((await getActiveRoutine(db, today))?.mode === 'cycle');
       setMissed(m);
     })().catch(() => {});
   }, [db, today, foreground]);
@@ -102,8 +102,8 @@ export default function App() {
     openSession: (id) => push({ name: 'session', id }),
     openImport: () => push({ name: 'import' }),
     openBody: () => push({ name: 'body' }),
-    openTemplates: (create) => push({ name: 'templates', create: !!create }),
-    openPlan: () => push({ name: 'plan' }),
+    openRoutine: (id) => push({ name: 'routine', id }),
+    openDay: (routineId, dayId) => push({ name: 'day', routineId, dayId }),
     openExercises: () => push({ name: 'exercises' }),
     goTab: (t) => { setStack([]); setTab(t); },
     close,
@@ -157,12 +157,12 @@ export default function App() {
         <StatusBar style={mode === 'light' ? 'dark' : 'light'} />
         <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
           {top ? (
-            <Overlay o={top} key={stack.length + (top.name === 'session' ? top.id : top.name)} />
+            <Overlay o={top} key={stack.length + (top.name === 'session' || top.name === 'routine' ? top.id : top.name === 'day' ? `${top.routineId}${top.dayId}` : top.name)} />
           ) : (
             <>
               <View style={{ flex: 1 }}>
                 {tab === 'home' && <HomeScreen />}
-                {tab === 'workout' && <WorkoutScreen />}
+                {tab === 'routine' && <RoutineScreen />}
                 {tab === 'calendar' && <CalendarScreen />}
                 {tab === 'growth' && <GrowthScreen />}
                 {tab === 'settings' && <SettingsScreen />}
@@ -189,8 +189,8 @@ function Overlay({ o }: { o: Overlay }) {
     case 'session': return <SessionScreen sessionId={o.id} />;
     case 'import': return <ImportScreen />;
     case 'body': return <BodyEntryScreen />;
-    case 'templates': return <TemplatesScreen startNew={o.create} />;
-    case 'plan': return <PlanScreen />;
+    case 'routine': return <RoutineDetailScreen routineId={o.id} />;
+    case 'day': return <DayEditorScreen routineId={o.routineId} dayId={o.dayId} />;
     case 'exercises': return <ExercisesScreen />;
   }
 }

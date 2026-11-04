@@ -1,10 +1,12 @@
 import { nowIso, uid, type Db, type SqlParam } from './adapter.ts';
 import type { FlatSet, Intensity, SetType, WeightMode } from '../domain/types.ts';
 import type { ParsedDay } from '../domain/parser.ts';
-import { addDays, weekStart, weekdayOf } from '../domain/stats.ts';
+import { addDays, weekStart } from '../domain/stats.ts';
+import { shiftStartForMissed } from '../domain/cycle.ts';
 import {
-  cycleIndex, sanitizePlan, shiftStartForMissed, type CyclePlan, type PlanSlot, type SlotKind,
-} from '../domain/cycle.ts';
+  dayForDate, EMPTY_ROUTINES, inferMode, MAX_DAYS, sanitizeRoutines,
+  type DayKind, type Routine, type RoutineDay, type RoutineMode, type RoutinesState,
+} from '../domain/routine.ts';
 
 /* ============================== 종목 ============================== */
 
@@ -166,51 +168,141 @@ export async function deleteTemplate(db: Db, id: string): Promise<void> {
   await db.run('DELETE FROM workout_templates WHERE id = ?', [id]);
 }
 
-/* ============================== 요일 규칙 ============================== */
+/* ============================== 루틴 (= 사이클 한 개 전체) ============================== */
+/*
+ * 루틴 메타데이터(이름·방식·시작일·날 목록)는 app_settings의 'routines_v2' JSON에 저장된다 (백업에 함께 포함).
+ * 각 '날'의 종목은 workout_templates / workout_template_exercises에 저장된다.
+ */
 
-export interface ScheduleRule {
-  id: string;
-  weekday: number;
-  kind: 'weights' | 'cardio' | 'rest';
-  template_id: string | null;
-  default_intensity: Intensity;
-  label: string | null;
+export async function getRoutines(db: Db, today: string): Promise<RoutinesState> {
+  const raw = await getSetting(db, 'routines_v2');
+  return raw ? sanitizeRoutines(raw, today) : { ...EMPTY_ROUTINES };
 }
-
-export async function getSchedule(db: Db): Promise<ScheduleRule[]> {
-  return db.all<ScheduleRule>('SELECT * FROM schedule_rules ORDER BY (weekday + 6) % 7');
+export async function saveRoutines(db: Db, state: RoutinesState): Promise<void> {
+  await setSetting(db, 'routines_v2', JSON.stringify(state));
 }
-export async function getRuleForWeekday(db: Db, weekday: number): Promise<ScheduleRule | null> {
-  return db.first<ScheduleRule>('SELECT * FROM schedule_rules WHERE weekday = ?', [weekday]);
-}
-export async function setScheduleRule(
-  db: Db, weekday: number,
-  v: { kind: ScheduleRule['kind']; templateId?: string | null; intensity?: Intensity; label?: string | null },
-): Promise<void> {
-  await db.run(
-    `INSERT INTO schedule_rules (id, weekday, kind, template_id, default_intensity, label) VALUES (?,?,?,?,?,?)
-     ON CONFLICT(weekday) DO UPDATE SET kind=excluded.kind, template_id=excluded.template_id,
-       default_intensity=excluded.default_intensity, label=excluded.label`,
-    [uid('sch'), weekday, v.kind, v.templateId ?? null, v.intensity ?? 'none', v.label ?? null],
-  );
+export async function getActiveRoutine(db: Db, today: string): Promise<Routine | null> {
+  const st = await getRoutines(db, today);
+  return st.routines.find((r) => r.id === st.activeId) ?? null;
 }
 
-/* ============================== 루틴 일정 (요일별 / N일 주기) ============================== */
+async function mutateRoutine(db: Db, today: string, id: string, fn: (r: Routine) => Routine): Promise<void> {
+  const st = await getRoutines(db, today);
+  await saveRoutines(db, { ...st, routines: st.routines.map((r) => (r.id === id ? fn(r) : r)) });
+}
+
+/** 새 루틴을 만든다. 첫 루틴이면 자동으로 사용 중이 된다. */
+export async function createRoutine(
+  db: Db, today: string, v: { name: string; mode?: RoutineMode; startDate?: string },
+): Promise<string> {
+  const st = await getRoutines(db, today);
+  const id = uid('rt');
+  const routine: Routine = { id, name: v.name.trim() || '새 루틴', mode: v.mode ?? 'cycle', startDate: v.startDate ?? today, days: [] };
+  await saveRoutines(db, { activeId: st.activeId ?? id, routines: [...st.routines, routine] });
+  return id;
+}
+export const renameRoutine = (db: Db, today: string, id: string, name: string) =>
+  mutateRoutine(db, today, id, (r) => ({ ...r, name: name.trim() || r.name }));
+export const setRoutineMode = (db: Db, today: string, id: string, mode: RoutineMode) =>
+  mutateRoutine(db, today, id, (r) => ({ ...r, mode }));
+export const setRoutineStart = (db: Db, today: string, id: string, startDate: string) =>
+  mutateRoutine(db, today, id, (r) => ({ ...r, startDate }));
+export async function setActiveRoutine(db: Db, today: string, id: string | null): Promise<void> {
+  const st = await getRoutines(db, today);
+  await saveRoutines(db, { ...st, activeId: id && st.routines.some((r) => r.id === id) ? id : null });
+}
+
+/** 루틴을 지우면 그 루틴 날들의 종목도 함께 지운다. 완료한 운동 기록과 성장 그래프는 그대로 유지된다. */
+export async function deleteRoutine(db: Db, today: string, id: string): Promise<void> {
+  const st = await getRoutines(db, today);
+  const r = st.routines.find((x) => x.id === id);
+  if (!r) return;
+  await db.transaction(async () => {
+    for (const d of r.days) if (d.templateId) await deleteTemplate(db, d.templateId);
+    const routines = st.routines.filter((x) => x.id !== id);
+    await saveRoutines(db, { activeId: st.activeId === id ? routines[0]?.id ?? null : st.activeId, routines });
+  });
+}
+
+export interface DayInput {
+  id?: string;
+  name: string;
+  kind: DayKind;
+  weekday?: number | null;
+  exercises?: TemplateExerciseInput[];
+  postCardioMin?: number | null;
+}
+
+/** 날 추가/수정. weights면 종목을 workout_templates에 저장하고, 다른 종류로 바뀌면 종목을 지운다. */
+export async function upsertDay(db: Db, today: string, routineId: string, input: DayInput): Promise<string> {
+  const st = await getRoutines(db, today);
+  const r = st.routines.find((x) => x.id === routineId);
+  if (!r) throw new Error('루틴을 찾을 수 없습니다');
+  const existing = input.id ? r.days.find((d) => d.id === input.id) : undefined;
+  if (!existing && r.days.length >= MAX_DAYS) throw new Error(`한 루틴은 최대 ${MAX_DAYS}일까지 만들 수 있습니다`);
+  const dayId = existing?.id ?? uid('rd');
+  const name = input.name.trim() || (input.kind === 'rest' ? '휴식' : input.kind === 'cardio' ? '유산소' : '운동');
+  await db.transaction(async () => {
+    let templateId: string | null = existing?.templateId ?? null;
+    if (input.kind === 'weights') {
+      templateId = await saveTemplate(db, {
+        id: templateId ?? undefined, name, postCardioMin: input.postCardioMin ?? null, exercises: input.exercises ?? [],
+      });
+    } else if (templateId) {
+      await deleteTemplate(db, templateId);
+      templateId = null;
+    }
+    const day: RoutineDay = { id: dayId, name, kind: input.kind, templateId, weekday: input.weekday ?? null };
+    await mutateRoutine(db, today, routineId, (x) => ({
+      ...x, days: existing ? x.days.map((d) => (d.id === dayId ? day : d)) : [...x.days, day],
+    }));
+  });
+  return dayId;
+}
+
+export async function deleteDay(db: Db, today: string, routineId: string, dayId: string): Promise<void> {
+  const st = await getRoutines(db, today);
+  const d = st.routines.find((x) => x.id === routineId)?.days.find((x) => x.id === dayId);
+  if (!d) return;
+  await db.transaction(async () => {
+    if (d.templateId) await deleteTemplate(db, d.templateId);
+    await mutateRoutine(db, today, routineId, (x) => ({ ...x, days: x.days.filter((y) => y.id !== dayId) }));
+  });
+}
+
+export async function moveDay(db: Db, today: string, routineId: string, dayId: string, dir: -1 | 1): Promise<void> {
+  await mutateRoutine(db, today, routineId, (x) => {
+    const i = x.days.findIndex((d) => d.id === dayId);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= x.days.length) return x;
+    const days = [...x.days];
+    [days[i], days[j]] = [days[j], days[i]];
+    return { ...x, days };
+  });
+}
+
+/** 날 편집 화면용: 날 + 종목 */
+export async function getDayDetail(db: Db, today: string, routineId: string, dayId: string) {
+  const st = await getRoutines(db, today);
+  const r = st.routines.find((x) => x.id === routineId);
+  const day = r?.days.find((d) => d.id === dayId);
+  if (!r || !day) return null;
+  const exercises = day.templateId ? await getTemplateExercises(db, day.templateId) : [];
+  const tpl = day.templateId ? await db.first<{ post_cardio_min: number | null }>('SELECT post_cardio_min FROM workout_templates WHERE id = ?', [day.templateId]) : null;
+  return { routine: r, day, exercises, postCardioMin: tpl?.post_cardio_min ?? null };
+}
+
+/* -------- 오늘 해당하는 날 -------- */
 
 export interface DaySlot {
-  kind: SlotKind;
+  kind: DayKind;
   template_id: string | null;
+  /** 날 이름 (예: 가슴·삼두) */
   label: string | null;
-  /** 주기 모드일 때만: 몇 일차 / 전체 일수 */
+  routineName: string;
+  /** cycle 모드일 때만: 몇 일차 / 전체 일수 */
   cycleDay?: number;
   cycleLength?: number;
-}
-
-export async function getPlan(db: Db, today: string): Promise<CyclePlan> {
-  return sanitizePlan(await getSetting(db, 'plan'), today);
-}
-export async function savePlan(db: Db, plan: CyclePlan): Promise<void> {
-  await setSetting(db, 'plan', JSON.stringify(plan));
 }
 
 async function templateExists(db: Db, id: string | null): Promise<string | null> {
@@ -219,20 +311,23 @@ async function templateExists(db: Db, id: string | null): Promise<string | null>
   return t ? id : null;
 }
 
-/** 그 날짜에 해당하는 일정 칸. 일정이 없으면 null. 삭제된 루틴은 연결 없음(null)으로 취급한다. */
+/**
+ * 사용 중인 루틴에서 그 날짜에 해당하는 날. 사용 중인 루틴이 없거나 날이 하나도 없으면 null.
+ * 요일 방식에서 해당 요일에 지정된 날이 없으면 휴식으로 본다. 삭제된 종목 정보는 연결 없음(null)으로 취급한다.
+ */
 export async function slotForDate(db: Db, date: string): Promise<DaySlot | null> {
-  const plan = await getPlan(db, date);
-  if (plan.mode === 'cycle' && plan.slots.length) {
-    const idx = cycleIndex(plan.startDate, date, plan.slots.length);
-    const s: PlanSlot = plan.slots[idx];
-    return {
-      kind: s.kind, template_id: s.kind === 'weights' ? await templateExists(db, s.templateId) : null, label: s.label,
-      cycleDay: idx + 1, cycleLength: plan.slots.length,
-    };
-  }
-  const r = await getRuleForWeekday(db, weekdayOf(date));
-  if (!r) return null;
-  return { kind: r.kind, template_id: r.kind === 'weights' ? await templateExists(db, r.template_id) : null, label: r.label };
+  const r = await getActiveRoutine(db, date);
+  if (!r || !r.days.length) return null;
+  const hit = dayForDate(r, date);
+  if (!hit.day) return { kind: 'rest', template_id: null, label: '휴식', routineName: r.name };
+  return {
+    kind: hit.day.kind,
+    template_id: hit.day.kind === 'weights' ? await templateExists(db, hit.day.templateId) : null,
+    label: hit.day.name,
+    routineName: r.name,
+    cycleDay: hit.cycleDay,
+    cycleLength: hit.cycleLength,
+  };
 }
 
 export interface TemplateBrief { id: string; name: string; count: number; names: string[]; post_cardio_min: number | null }
@@ -251,10 +346,10 @@ export type MissedChoice = 'skip' | 'follow' | 'free';
 const MISSED_LOOKBACK_DAYS = 7;
 
 /**
- * 오늘 이전에 예정돼 있었는데 완료한 운동이 없는 가장 최근 웨이트 루틴을 찾는다.
+ * 오늘 이전에 예정돼 있었는데 완료한 운동이 없는 가장 최근 웨이트 날을 찾는다.
  * - 처음 실행할 때는 기준일만 저장하고 묻지 않는다.
  * - 오늘 이미 물었거나, 진행 중인 운동이 있으면 묻지 않는다.
- * - 오늘의 (아직 안 한) 루틴은 대상이 아니다.
+ * - 오늘의 (아직 안 한) 운동은 대상이 아니다.
  */
 export async function findMissedRoutine(db: Db, today: string): Promise<MissedRoutine | null> {
   const handled = await getSetting(db, 'missed_handled_through');
@@ -272,7 +367,7 @@ export async function findMissedRoutine(db: Db, today: string): Promise<MissedRo
       const done = await db.first<{ n: number }>("SELECT COUNT(*) AS n FROM workout_sessions WHERE date = ? AND status = 'done'", [d]);
       if (!done || done.n === 0) {
         const t = await db.first<{ name: string }>('SELECT name FROM workout_templates WHERE id = ?', [slot.template_id]);
-        if (t) return { date: d, templateId: slot.template_id, templateName: t.name };
+        if (t) return { date: d, templateId: slot.template_id, templateName: slot.routineName ? `${slot.routineName} · ${t.name}` : t.name };
       }
     }
     d = addDays(d, -1);
@@ -282,7 +377,7 @@ export async function findMissedRoutine(db: Db, today: string): Promise<MissedRo
 
 /**
  * 선택 결과를 적용한다. 같은 날 다시 묻지 않고, 지난 날짜는 다시 묻지 않는다.
- * skip: 일정 그대로 · follow: 놓친 루틴을 오늘 시작 (주기 모드면 이후 일정을 밀어 이어감) · free: 오늘만 자유 운동
+ * skip: 일정 그대로 · follow: 놓친 날의 운동을 오늘 시작 (사이클 방식이면 이후 일정을 밀어 이어감) · free: 오늘만 자유 운동
  * 운동을 시작한 경우 세션 id를 돌려준다.
  */
 export async function resolveMissed(db: Db, today: string, missed: MissedRoutine, choice: MissedChoice): Promise<string | null> {
@@ -290,9 +385,9 @@ export async function resolveMissed(db: Db, today: string, missed: MissedRoutine
   await setSetting(db, 'missed_prompt_date', today);
   if (choice === 'skip') return null;
   if (choice === 'free') return startFreeSession(db, today);
-  const plan = await getPlan(db, today);
-  if (plan.mode === 'cycle' && plan.slots.length) {
-    await savePlan(db, { ...plan, startDate: shiftStartForMissed(plan, missed.date, today) });
+  const r = await getActiveRoutine(db, today);
+  if (r && r.mode === 'cycle' && r.days.length) {
+    await setRoutineStart(db, today, r.id, shiftStartForMissed(r.startDate, missed.date, today));
   }
   return startSessionFromTemplate(db, missed.templateId, today);
 }
@@ -649,35 +744,51 @@ export async function setSetting(db: Db, key: string, value: string): Promise<vo
   await db.run('INSERT INTO app_settings (key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', [key, value]);
 }
 
-/** 미리보기에서 사용자가 수정을 마친 결과를 루틴으로 저장. 요일이 있으면 요일 규칙에 연결(옵션). */
+/**
+ * 미리보기에서 사용자가 수정을 마친 결과를 '루틴(사이클) 한 개'로 저장한다.
+ * 파싱된 각 항목이 루틴의 날이 된다. 휴식/유산소 날은 종목 없이 저장.
+ */
 export async function applyImportedRoutine(
-  db: Db, days: ParsedDay[], raw: string, format: string, opts: { linkWeekdays: boolean },
-): Promise<{ templates: number }> {
+  db: Db, today: string, days: ParsedDay[], raw: string, format: string,
+  opts: { name: string; mode?: RoutineMode; activate?: boolean },
+): Promise<{ routineId: string; days: number }> {
+  const mode = opts.mode ?? inferMode(days);
+  let routineId = '';
   let count = 0;
   await db.transaction(async () => {
+    routineId = await createRoutine(db, today, { name: opts.name || '가져온 루틴', mode });
     for (const d of days) {
-      if (d.isRest && !d.exercises.length) {
-        if (opts.linkWeekdays && d.weekday != null) await setScheduleRule(db, d.weekday, { kind: 'rest', label: '휴식' });
-        continue;
-      }
-      if (!d.exercises.length) continue;
+      const kind: DayKind = d.kind ?? (d.isRest && !d.exercises.length ? 'rest' : 'weights');
+      if (kind === 'weights' && !d.exercises.length) continue;
       const exs: TemplateExerciseInput[] = [];
-      for (const e of d.exercises) {
-        const ex = await getOrCreateExercise(db, e.name);
-        exs.push({
-          exerciseId: ex.id, targetSets: e.sets, targetReps: e.reps, targetWeight: e.weight,
-          intensity: e.intensity, restSec: e.restSec,
-        });
+      if (kind === 'weights') {
+        for (const e of d.exercises) {
+          const ex = await getOrCreateExercise(db, e.name);
+          exs.push({ exerciseId: ex.id, targetSets: e.sets, targetReps: e.reps, targetWeight: e.weight, restSec: e.restSec });
+        }
       }
-      const tid = await saveTemplate(db, { name: d.title, defaultIntensity: d.intensity ?? 'none', exercises: exs });
+      await upsertDay(db, today, routineId, { name: d.title, kind, weekday: mode === 'weekday' ? d.weekday : null, exercises: exs });
       count++;
-      if (opts.linkWeekdays && d.weekday != null) {
-        await setScheduleRule(db, d.weekday, { kind: 'weights', templateId: tid, intensity: d.intensity ?? 'none', label: d.title });
-      }
     }
+    if (opts.activate) await setActiveRoutine(db, today, routineId);
     await db.run('INSERT INTO imported_routines (id, created_at, raw_text, format, parsed_json, applied) VALUES (?,?,?,?,?,1)', [
       uid('imp'), nowIso(), raw, format, JSON.stringify(days),
     ]);
   });
-  return { templates: count };
+  return { routineId, days: count };
+}
+
+/** 자유 운동을 사용 중인 루틴의 새 날로 저장 (루틴이 없으면 '내 루틴'을 만든다) */
+export async function saveSessionAsDay(db: Db, today: string, sessionId: string, name: string): Promise<{ routineId: string; dayId: string }> {
+  const s = await loadSession(db, sessionId);
+  if (!s) throw new Error('세션을 찾을 수 없습니다');
+  let routineId = (await getRoutines(db, today)).activeId;
+  if (!routineId) routineId = await createRoutine(db, today, { name: '내 루틴' });
+  const exercises: TemplateExerciseInput[] = s.exercises.map((e) => {
+    const working = e.sets.filter((x) => x.set_type === 'working');
+    const top = [...working].reverse().find((x) => x.weight != null);
+    return { exerciseId: e.exercise_id, targetSets: Math.max(1, working.length), targetReps: top?.reps ?? null, targetWeight: top?.weight ?? null };
+  });
+  const dayId = await upsertDay(db, today, routineId, { name, kind: 'weights', exercises });
+  return { routineId, dayId };
 }

@@ -3,7 +3,9 @@ import { Alert, ScrollView, View } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { useApp } from '../app/context.tsx';
 import { applyImportedRoutine } from '../db/repo.ts';
-import { AI_IMPORT_PROMPT, ROUTINE_JSON_SCHEMA } from '../domain/importSchema.ts';
+import { AI_IMPORT_PROMPT } from '../domain/importSchema.ts';
+import { inferMode, type RoutineMode } from '../domain/routine.ts';
+import { pickTextFile, shareTextFile } from '../services/files.ts';
 import { parseRoutine, type ParsedDay, type ParseResult } from '../domain/parser.ts';
 import { Btn, Card, Chip, Header, NumInput, Row, T, TextField } from '../ui/components.tsx';
 import { C, S } from '../ui/theme.ts';
@@ -13,16 +15,20 @@ const FORMAT_LABEL: Record<ParseResult['format'], string> = { json: 'JSON', tabl
 
 /** 외부 AI가 만든 루틴을 붙여넣기 → 로컬 파서(네트워크/AI API 호출 없음) → 미리보기·수정 → 저장 */
 export function ImportScreen() {
-  const { db, nav, bump } = useApp();
+  const { db, today, nav, bump } = useApp();
   const [raw, setRaw] = useState('');
   const [result, setResult] = useState<ParseResult | null>(null);
   const [days, setDays] = useState<ParsedDay[]>([]);
-  const [link, setLink] = useState(true);
+  const [routineName, setRoutineName] = useState('가져온 루틴');
+  const [mode, setMode] = useState<RoutineMode>('cycle');
+  const [activate, setActivate] = useState(true);
 
   const analyze = (text = raw) => {
     const r = parseRoutine(text);
     setResult(r);
     setDays(r.days);
+    setRoutineName(r.routineName ?? '가져온 루틴');
+    setMode(r.mode ?? inferMode(r.days));
   };
 
   const patchDay = (i: number, p: Partial<ParsedDay>) => setDays((d) => d.map((x, k) => (k === i ? { ...x, ...p } : x)));
@@ -34,9 +40,9 @@ export function ImportScreen() {
       .map((d) => ({ ...d, exercises: d.exercises.filter((e) => e.name.trim()) }))
       .filter((d) => d.exercises.length || d.isRest);
     if (!usable.length) return Alert.alert('저장할 루틴이 없습니다');
-    const r = await applyImportedRoutine(db, usable, raw, result?.format ?? 'text', { linkWeekdays: link });
+    const r = await applyImportedRoutine(db, today, usable, raw, result?.format ?? 'text', { name: routineName.trim(), mode, activate });
     bump();
-    Alert.alert('저장됨', `루틴 ${r.templates}개를 저장했습니다.`, [{ text: '확인', onPress: nav.close }]);
+    Alert.alert('저장됨', `‘${routineName.trim() || '가져온 루틴'}’ 루틴을 저장했습니다. (${r.days}일)`, [{ text: '확인', onPress: nav.close }]);
   };
 
   return (
@@ -44,23 +50,30 @@ export function ImportScreen() {
       <Header title="AI 루틴 가져오기" onBack={nav.close} />
       <ScrollView contentContainerStyle={{ padding: S.lg, paddingBottom: 80 }} keyboardShouldPersistTaps="handled">
         <Card>
-          <T bold>1. 외부 AI에 요청하기</T>
+          <T bold>1. 다른 AI에 요청하기</T>
           <T muted style={{ fontSize: 12, marginVertical: 6 }}>
-            ChatGPT·Claude·Gemini 등에 아래 프롬프트를 붙여넣고 조건을 적으면 앱이 정확히 읽을 수 있는 JSON이 만들어집니다.
+            ChatGPT·Claude·Gemini 등에 프롬프트를 붙여넣고, 맨 아래 구분선 밑에 원하는 루틴을 적으면 이 앱이 바로 읽을 수 있는 형식으로 만들어 줍니다.
             이 앱은 AI를 호출하지 않으며 비용이 들지 않습니다.
           </T>
           <Row>
-            <Btn label="프롬프트 복사" small kind="ghost" onPress={async () => { await Clipboard.setStringAsync(AI_IMPORT_PROMPT); Alert.alert('복사됨', 'AI 채팅창에 붙여넣으세요.'); }} />
-            <Btn label="JSON Schema 복사" small kind="ghost" onPress={async () => { await Clipboard.setStringAsync(JSON.stringify(ROUTINE_JSON_SCHEMA, null, 2)); Alert.alert('복사됨'); }} />
+            <Btn label="프롬프트 복사" small style={{ flex: 1 }} onPress={async () => { await Clipboard.setStringAsync(AI_IMPORT_PROMPT); Alert.alert('복사됨', 'AI 채팅창에 붙여넣고, 맨 아래 구분선 밑에 원하는 루틴을 적으세요.'); }} />
+            <Btn
+              label="텍스트 파일로 저장" small kind="ghost" style={{ flex: 1 }}
+              onPress={async () => { try { await shareTextFile('overdrive-ai-prompt.txt', AI_IMPORT_PROMPT, 'text/plain'); } catch (e) { Alert.alert('오류', (e as Error).message); } }}
+            />
           </Row>
         </Card>
 
         <Card>
-          <T bold style={{ marginBottom: 6 }}>2. AI가 만든 루틴 붙여넣기</T>
-          <T muted style={{ fontSize: 12, marginBottom: 6 }}>일반 텍스트 · Markdown 표 · Markdown 목록 · JSON 지원</T>
+          <T bold style={{ marginBottom: 6 }}>2. AI가 만든 루틴 가져오기</T>
+          <T muted style={{ fontSize: 12, marginBottom: 6 }}>붙여넣기 또는 .txt 파일 · JSON(권장) · Markdown 표/목록 · 일반 텍스트 지원</T>
           <TextField value={raw} onChangeText={setRaw} multiline placeholder="여기에 붙여넣기" style={{ minHeight: 140, textAlignVertical: 'top' }} />
           <Row style={{ marginTop: S.sm }}>
             <Btn label="붙여넣기" small kind="ghost" onPress={async () => { const t = await Clipboard.getStringAsync(); setRaw(t); if (t) analyze(t); }} />
+            <Btn
+              label="파일 불러오기" small kind="ghost"
+              onPress={async () => { try { const t = await pickTextFile(); if (t != null) { setRaw(t); analyze(t); } } catch (e) { Alert.alert('오류', (e as Error).message); } }}
+            />
             <Btn label="분석하기" onPress={() => analyze()} style={{ flex: 1 }} />
           </Row>
         </Card>
@@ -68,8 +81,16 @@ export function ImportScreen() {
         {result && (
           <>
             <T muted style={{ marginBottom: 6 }}>
-              인식 형식: {FORMAT_LABEL[result.format]} · 루틴 {days.length}개 · 종목 {days.reduce((n, d) => n + d.exercises.length, 0)}개
+              인식 형식: {FORMAT_LABEL[result.format]} · {days.length}일 · 종목 {days.reduce((n, d) => n + d.exercises.length, 0)}개
             </T>
+            <Card>
+              <T muted style={{ marginBottom: 6 }}>루틴 이름</T>
+              <TextField value={routineName} onChangeText={setRoutineName} />
+              <Row style={{ marginTop: S.sm }}>
+                <Chip label="N일 반복" active={mode === 'cycle'} onPress={() => setMode('cycle')} />
+                <Chip label="요일 지정" active={mode === 'weekday'} onPress={() => setMode('weekday')} />
+              </Row>
+            </Card>
             {result.warnings.map((w, i) => <T key={i} style={{ color: C.muted, fontSize: 12, marginBottom: 4 }}>⚠ {w}</T>)}
 
             {days.map((d, i) => (
@@ -78,12 +99,14 @@ export function ImportScreen() {
                   <TextField value={d.title} onChangeText={(v) => patchDay(i, { title: v })} style={{ flex: 1 }} />
                   <Btn label="삭제" kind="danger" small onPress={() => setDays((x) => x.filter((_, k) => k !== i))} />
                 </Row>
-                <Row style={{ flexWrap: 'wrap', gap: 5, marginBottom: 6 }}>
-                  <Chip label="요일 없음" active={d.weekday == null} onPress={() => patchDay(i, { weekday: null })} color={C.muted} />
-                  {WD.map((w, k) => <Chip key={w} label={w} active={d.weekday === k} onPress={() => patchDay(i, { weekday: k })} />)}
-                </Row>
+                {mode === 'weekday' && (
+                  <Row style={{ flexWrap: 'wrap', gap: 5, marginBottom: 6 }}>
+                    <Chip label="요일 없음" active={d.weekday == null} onPress={() => patchDay(i, { weekday: null })} color={C.muted} />
+                    {WD.map((w, k) => <Chip key={w} label={w} active={d.weekday === k} onPress={() => patchDay(i, { weekday: k })} />)}
+                  </Row>
+                )}
                 <Row style={{ marginTop: S.sm }}>
-                  <Chip label={d.isRest ? '휴식일 ✓' : '휴식일로 표시'} active={d.isRest} onPress={() => patchDay(i, { isRest: !d.isRest })}  />
+                  <Chip label={d.isRest ? '휴식 ✓' : '휴식으로 표시'} active={d.isRest} onPress={() => patchDay(i, { isRest: !d.isRest, kind: undefined })}  />
                 </Row>
 
                 {d.exercises.map((e, j) => (
@@ -109,11 +132,11 @@ export function ImportScreen() {
 
             {days.length > 0 && (
               <>
-                <Row style={{ marginBottom: S.md }}>
-                  <Chip label={link ? '요일 규칙에 연결 ✓' : '요일 규칙에 연결 안 함'} active={link} onPress={() => setLink((v) => !v)} />
+                <Row style={{ marginBottom: S.sm }}>
+                  <Chip label={activate ? '저장 후 바로 사용 ✓' : '저장만 하기'} active={activate} onPress={() => setActivate((v) => !v)} />
                 </Row>
                 <T muted style={{ fontSize: 12, marginBottom: S.md }}>
-                  요일이 있는 루틴은 해당 요일의 오늘의 운동으로 지정됩니다(기존 요일 설정을 덮어씀). 같은 이름의 종목은 기존 종목과 통합되어 기록이 이어집니다.
+                  같은 이름의 종목은 기존 종목과 통합되어 기록이 이어집니다. 저장한 루틴은 루틴 탭에서 고칠 수 있어요.
                 </T>
                 <Btn label="이대로 저장" onPress={save} />
               </>

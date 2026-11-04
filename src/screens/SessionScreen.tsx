@@ -3,7 +3,7 @@ import { Alert, Pressable, ScrollView, Switch, Text, View } from 'react-native';
 import { useApp } from '../app/context.tsx';
 import {
   addCardio, addSessionExercise, addSet, deleteSet, deleteSession, finishSession, getWeightStep, lastPerformance,
-  loadSession, removeSessionExercise, reopenSession, saveSessionAsTemplate, setExerciseNote,
+  loadSession, removeSessionExercise, reopenSession, saveSessionAsDay, setExerciseNote,
   setSessionNote, updateSet, type SessionExRow, type SessionFull, type SetRow,
 } from '../db/repo.ts';
 import { fmtClock, fmtDuration, fmtElapsed, suggestFor } from '../domain/format.ts';
@@ -18,7 +18,7 @@ type Focus = { setId: string; field: 'weight' | 'reps' } | null;
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
 export function SessionScreen({ sessionId }: { sessionId: string }) {
-  const { db, nav, bump } = useApp();
+  const { db, today, nav, bump } = useApp();
   const [s, setS] = useState<SessionFull | null>(null);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [opts, setOpts] = useState<Record<string, boolean>>({}); // 종목별 '옵션'(메모·준비 세트·삭제) 펼침
@@ -277,19 +277,19 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
         {s.is_free === 1 && (
           <Card>
             {saveTplName == null ? (
-              <Btn label="이 운동을 새 루틴으로 저장" kind="ghost" onPress={() => setSaveTplName(s.title === '자유 운동' ? `자유 루틴 ${s.date}` : s.title)} />
+              <Btn label="이 운동을 루틴의 새 날로 저장" kind="ghost" onPress={() => setSaveTplName(s.title === '자유 운동' ? `자유 루틴 ${s.date}` : s.title)} />
             ) : (
               <>
-                <TextField value={saveTplName} onChangeText={setSaveTplName} placeholder="루틴 이름" />
+                <TextField value={saveTplName} onChangeText={setSaveTplName} placeholder="날 이름" />
                 <Row style={{ marginTop: S.sm }}>
                   <Btn
                     label="저장" small
                     onPress={async () => {
                       if (!saveTplName.trim()) return;
-                      await saveSessionAsTemplate(db, s.id, saveTplName.trim());
+                      await saveSessionAsDay(db, today, s.id, saveTplName.trim());
                       setSaveTplName(null);
                       bump();
-                      Alert.alert('저장됨', '운동 탭의 루틴 목록에서 확인할 수 있습니다.');
+                      Alert.alert('저장됨', '사용 중인 루틴에 새 날로 추가했어요. 루틴 탭에서 확인할 수 있습니다.');
                     }}
                   />
                   <Btn label="취소" kind="ghost" small onPress={() => setSaveTplName(null)} />

@@ -2,15 +2,15 @@ import React, { createContext, useContext } from 'react';
 import type { Db } from '../db/adapter.ts';
 import type { GraphKey, ThemeMode } from '../domain/themeModel.ts';
 
-export type Tab = 'home' | 'workout' | 'calendar' | 'growth' | 'settings';
+export type Tab = 'home' | 'routine' | 'calendar' | 'growth' | 'settings';
 
 export interface Nav {
   openSession(id: string): void;
   openImport(): void;
   openBody(): void;
-  /** create=true면 새 루틴 만들기 화면으로 바로 들어간다 */
-  openTemplates(create?: boolean): void;
-  openPlan(): void;
+  openRoutine(id: string): void;
+  /** dayId가 null이면 새 날 추가 */
+  openDay(routineId: string, dayId: string | null): void;
   openExercises(): void;
   goTab(t: Tab): void;
   close(): void;
