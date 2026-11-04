@@ -13,13 +13,16 @@ export interface SetFilter {
   intensity?: IntensityFilter;
   includeWarmup?: boolean; // 준비 세트를 포함(별도 조회용)
   onlyWarmup?: boolean;
+  onlyRm?: boolean; // 1RM 측정 세트만
   range?: DateRange;
 }
 
 /** 기본 성장 통계에 포함되는 세트: 완료 + 본 세트 + 중량 입력됨 */
-export function isStatEligible(s: FlatSet, opts: { includeWarmup?: boolean; onlyWarmup?: boolean } = {}): boolean {
+export function isStatEligible(s: FlatSet, opts: { includeWarmup?: boolean; onlyWarmup?: boolean; onlyRm?: boolean } = {}): boolean {
   if (!s.done) return false;
   if (s.weight == null || Number.isNaN(s.weight)) return false;
+  if (opts.onlyRm) return !!s.isRm; // 1RM 탭
+  if (s.isRm) return false; // 1RM 측정 세트는 평소 운동 기록과 섞지 않는다
   if (opts.onlyWarmup) return s.setType === 'warmup';
   if (!opts.includeWarmup && s.setType === 'warmup') return false;
   return true;
@@ -190,6 +193,20 @@ export function sameRepsTrend(
     if (cur == null || isBetter(w, cur, mode)) byDate.set(s.date, w);
   }
   return [...byDate.entries()].map(([date, weight]) => ({ date, weight })).sort((a, b) => (a.date < b.date ? -1 : 1));
+}
+
+/**
+ * 평소 운동에서 횟수별로 보기 위한 선택지: 이 종목에서 실제로 한 횟수 중 많이 한 순으로 최대 limit개(작은 횟수부터 표시).
+ * mostUsed는 가장 많이 한 횟수(기본 선택값).
+ */
+export function repChoices(all: FlatSet[], exerciseId: string, limit = 6): { options: number[]; mostUsed: number | null } {
+  const count = new Map<number, number>();
+  for (const s of filterSets(all, { exerciseId })) {
+    if (s.reps == null || s.reps < 1) continue;
+    count.set(s.reps, (count.get(s.reps) ?? 0) + 1);
+  }
+  const byUse = [...count.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0]);
+  return { options: byUse.slice(0, limit).map(([r]) => r).sort((a, b) => a - b), mostUsed: byUse.length ? byUse[0][0] : null };
 }
 
 /** 추정 1RM (Epley). 실측 1RM이 아니며 12회 초과·보조/체중 운동에는 제공하지 않음. */

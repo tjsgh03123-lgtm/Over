@@ -577,5 +577,163 @@ await test('루틴 브리프: 홈 카드용 이름·종목 수·앞 3개 종목'
   assert.equal(await repo.getTemplateBrief(db, 'nope'), null);
 });
 
+console.log('신체 항목 / 1RM / 보는 운동 / 첫 실행');
+await test('직접 만든 항목: 추가·값 저장·그래프용 조회·삭제하면 값도 삭제', async () => {
+  const db = await emptyDb();
+  const m = await repo.addBodyMetric(db, { label: '허리둘레', unit: 'cm' });
+  assert.equal(m.key, 'x1');
+  await repo.setBodyExtra(db, 'x1', '2026-11-01', 80);
+  await repo.setBodyExtra(db, 'x1', '2026-11-05', 79.5);
+  assert.deepEqual((await repo.getBodyExtra(db)).x1, { '2026-11-01': 80, '2026-11-05': 79.5 });
+  // 값만 있는 날도 신체 기록 행이 만들어져 목록·그래프에 나온다
+  assert.deepEqual((await repo.listMeasurements(db)).map((r) => r.date), ['2026-11-01', '2026-11-05']);
+  await repo.setBodyExtra(db, 'x1', '2026-11-05', null);
+  assert.deepEqual(Object.keys((await repo.getBodyExtra(db)).x1), ['2026-11-01']);
+  await assert.rejects(() => repo.setBodyExtra(db, 'weight', '2026-11-01', 70)); // 기본 항목은 이 경로로 저장하지 않음
+  await assert.rejects(() => repo.addBodyMetric(db, { label: '허리둘레', unit: '' }));
+  await repo.removeBodyMetric(db, 'x1');
+  assert.equal((await repo.getBodyMetrics(db)).some((x) => x.key === 'x1'), false);
+  assert.deepEqual(await repo.getBodyExtra(db), {});
+});
+await test('기본 항목은 지우면 숨김만 되고 기록은 남으며, 다시 보이게 할 수 있음', async () => {
+  const db = await emptyDb();
+  await repo.upsertMeasurement(db, '2026-11-01', { weight: 70, body_fat_pct: 18 });
+  await repo.removeBodyMetric(db, 'body_fat_pct');
+  const l = await repo.getBodyMetrics(db);
+  assert.equal(l.find((x) => x.key === 'body_fat_pct')!.hidden, true);
+  assert.equal((await repo.listMeasurements(db))[0].body_fat_pct, 18);
+  await repo.setBodyMetricHidden(db, 'body_fat_pct', false);
+  assert.equal((await repo.getBodyMetrics(db)).find((x) => x.key === 'body_fat_pct')!.hidden, false);
+});
+await test('직접 항목 이름·단위·색 변경, 기본 항목은 이름을 바꾸지 않음, 신체 기록을 지우면 그날 값도 삭제', async () => {
+  const db = await emptyDb();
+  await repo.addBodyMetric(db, { label: '허리', unit: 'cm' });
+  await repo.updateBodyMetric(db, 'x1', { label: '허리둘레', unit: 'inch', color: '#1e88e5' });
+  await repo.updateBodyMetric(db, 'weight', { label: '체중' });
+  const l = await repo.getBodyMetrics(db);
+  assert.deepEqual([l.find((x) => x.key === 'x1')!.label, l.find((x) => x.key === 'x1')!.unit, l.find((x) => x.key === 'x1')!.color], ['허리둘레', 'inch', '#1E88E5']);
+  assert.equal(l.find((x) => x.key === 'weight')!.label, '몸무게');
+  await repo.setBodyExtra(db, 'x1', '2026-11-01', 80);
+  await repo.deleteMeasurement(db, (await repo.listMeasurements(db))[0].id);
+  assert.deepEqual((await repo.getBodyExtra(db)).x1 ?? {}, {});
+});
+await test('백업 복원에 직접 항목 정의와 값이 함께 들어가고, 신체 CSV는 그대로 동작', async () => {
+  const db = await emptyDb();
+  await repo.addBodyMetric(db, { label: '허리둘레', unit: 'cm' });
+  await repo.setBodyExtra(db, 'x1', '2026-11-01', 80);
+  const bak = await exportBackup(db);
+  const db2 = await emptyDb();
+  await restoreBackup(db2, JSON.parse(JSON.stringify(bak)));
+  assert.equal((await repo.getBodyMetrics(db2)).at(-1)!.label, '허리둘레');
+  assert.deepEqual((await repo.getBodyExtra(db2)).x1, { '2026-11-01': 80 });
+  assert.ok((await exportBodyCsv(db2)).includes('2026-11-01'));
+});
+
+await test('1RM 세트: 준비/본/1RM 전환, 평소 통계·볼륨·지난 기록 힌트에서 제외, 1RM 필터에서만 조회', async () => {
+  const db = await emptyDb();
+  const bench = await repo.getOrCreateExercise(db, '벤치프레스');
+  const { sid, seId } = await logSession(db, '2026-11-02', bench.id, [{ w: 60, r: 8 }, { w: 100, r: 1 }]);
+  let s = (await repo.loadSession(db, sid))!;
+  const rmSet = s.exercises[0].sets[1];
+  await repo.updateSet(db, rmSet.id, { kind: 'rm' });
+  s = (await repo.loadSession(db, sid))!;
+  assert.equal(s.exercises[0].sets[1].is_rm, 1);
+  assert.equal(s.exercises[0].sets[1].set_type, 'working');
+  const flat = await repo.loadFlatSets(db);
+  assert.deepEqual(filterSets(flat, { exerciseId: bench.id }).map((x) => x.weight), [60]);
+  assert.deepEqual(filterSets(flat, { exerciseId: bench.id, onlyRm: true }).map((x) => x.weight), [100]);
+  const lp = await repo.lastPerformance(db, bench.id);
+  assert.deepEqual([lp?.weight, lp?.reps], [60, 8]);
+  const wk = await repo.weekStats(db, '2026-11-02');
+  assert.equal(wk.sets, 1);
+  assert.equal(wk.volume, 480);
+  // 다시 본 세트로 되돌리면 평소 기록에 들어옴, 준비 세트로 바꾸면 1RM 표시가 사라짐
+  await repo.updateSet(db, rmSet.id, { kind: 'working' });
+  assert.equal(filterSets(await repo.loadFlatSets(db), { exerciseId: bench.id }).length, 2);
+  await repo.updateSet(db, rmSet.id, { kind: 'rm' });
+  await repo.updateSet(db, rmSet.id, { kind: 'warmup' });
+  s = (await repo.loadSession(db, sid))!;
+  assert.deepEqual([s.exercises[0].sets[1].set_type, s.exercises[0].sets[1].is_rm], ['warmup', 0]);
+  void seId;
+});
+await test('1RM 세트는 루틴으로 저장할 때 목표 세트·중량에 반영되지 않고 CSV에 1RM으로 표시', async () => {
+  const db = await emptyDb();
+  const bench = await repo.getOrCreateExercise(db, '벤치프레스');
+  const { sid } = await logSession(db, '2026-11-02', bench.id, [{ w: 60, r: 8 }, { w: 100, r: 1 }]);
+  const rm = (await repo.loadSession(db, sid))!.exercises[0].sets[1];
+  await repo.updateSet(db, rm.id, { kind: 'rm' });
+  const r = await repo.saveSessionAsDay(db, '2026-11-05', sid, '상체');
+  const day = (await repo.getDayDetail(db, '2026-11-05', r.routineId, r.dayId))!;
+  assert.equal(day.exercises[0].target_sets, 1);
+  assert.equal(day.exercises[0].target_weight, 60);
+  assert.ok((await exportWorkoutCsv(db)).includes('1RM'));
+});
+await test('이전 버전 DB(is_rm 열 없음)도 열 때 자동으로 열이 추가되고 기존 세트는 평소 기록으로 남음', async () => {
+  const db = openTestDb();
+  await db.exec(DDL.replace('  is_rm INTEGER DEFAULT 0,\n', ''));
+  const before = await db.all<{ name: string }>('PRAGMA table_info(workout_sets)');
+  assert.equal(before.some((c) => c.name === 'is_rm'), false);
+  await seedDefaults(db);
+  const after = await db.all<{ name: string }>('PRAGMA table_info(workout_sets)');
+  assert.equal(after.some((c) => c.name === 'is_rm'), true);
+  await seedDefaults(db); // 한 번 더 실행해도 오류 없음
+  const bench = await repo.getOrCreateExercise(db, '벤치프레스');
+  await logSession(db, '2026-11-02', bench.id, [{ w: 60, r: 8 }]);
+  assert.equal(filterSets(await repo.loadFlatSets(db), { exerciseId: bench.id }).length, 1);
+});
+await test('이전 버전 백업(is_rm 없음)을 복원해도 오류 없이 평소 기록으로 복원', async () => {
+  const db = await emptyDb();
+  const bench = await repo.getOrCreateExercise(db, '벤치프레스');
+  await logSession(db, '2026-11-02', bench.id, [{ w: 60, r: 8 }]);
+  const bak = JSON.parse(JSON.stringify(await exportBackup(db)));
+  for (const r of bak.tables.workout_sets) delete r.is_rm;
+  const db2 = await emptyDb();
+  await restoreBackup(db2, bak);
+  const flat = await repo.loadFlatSets(db2);
+  assert.equal(flat.length, 1);
+  assert.equal(flat[0].isRm, false);
+});
+
+await test('보는 운동: 루틴의 운동은 여러 날·여러 루틴에 있어도 한 번만, 고른 것만 목록에 나옴', async () => {
+  const db = await emptyDb();
+  const today = '2026-11-05';
+  const bench = await repo.getOrCreateExercise(db, '벤치프레스');
+  const row = await repo.getOrCreateExercise(db, '바벨로우');
+  const sq = await repo.getOrCreateExercise(db, '스쿼트');
+  const r1 = await repo.createRoutine(db, today, { name: '3분할' });
+  await repo.upsertDay(db, today, r1, { name: '푸쉬', kind: 'weights', exercises: [{ exerciseId: bench.id, targetSets: 3, targetReps: 8, targetWeight: null }] });
+  await repo.upsertDay(db, today, r1, { name: '푸쉬2', kind: 'weights', exercises: [
+    { exerciseId: bench.id, targetSets: 3, targetReps: 8, targetWeight: null }, { exerciseId: row.id, targetSets: 3, targetReps: 8, targetWeight: null }] });
+  const r2 = await repo.createRoutine(db, today, { name: '하체 특화' });
+  await repo.upsertDay(db, today, r2, { name: '하체', kind: 'weights', exercises: [
+    { exerciseId: sq.id, targetSets: 5, targetReps: 5, targetWeight: null }, { exerciseId: bench.id, targetSets: 2, targetReps: 10, targetWeight: null }] });
+  await repo.upsertDay(db, today, r2, { name: '휴식', kind: 'rest', exercises: [] });
+  const list = await repo.listRoutineExercises(db, today);
+  assert.deepEqual(list.map((x) => x.name).sort(), ['바벨로우', '벤치프레스', '스쿼트']);
+  assert.deepEqual(list.find((x) => x.name === '벤치프레스')!.routines, ['3분할', '하체 특화']);
+
+  assert.deepEqual(await repo.listWatchedExercises(db), []); // 처음에는 아무것도 고르지 않은 상태
+  assert.equal(await repo.toggleTracked(db, row.id), true);
+  assert.equal(await repo.toggleTracked(db, bench.id), true);
+  assert.deepEqual((await repo.listWatchedExercises(db)).map((x) => x.name), ['바벨로우', '벤치프레스']); // 고른 순서
+  assert.equal(await repo.toggleTracked(db, row.id), false);
+  assert.deepEqual((await repo.listWatchedExercises(db)).map((x) => x.name), ['벤치프레스']);
+  // 루틴에 없는 종목도 직접 추가 가능, 깨진 저장값은 빈 목록
+  const free = await repo.getOrCreateExercise(db, '풀업');
+  await repo.setTrackedIds(db, [free.id, free.id, 'ghost']);
+  assert.deepEqual((await repo.listWatchedExercises(db)).map((x) => x.name), ['풀업']);
+  await repo.setSetting(db, 'tracked_exercises', '{oops');
+  assert.deepEqual(await repo.getTrackedIds(db), []);
+});
+
+await test('첫 실행 설정: 새로 설치할 때만 표시 대기 상태가 되고, 업데이트한 기존 앱에는 뜨지 않음', async () => {
+  const fresh = await emptyDb();
+  assert.equal(await seedDefaults(fresh), true);
+  assert.equal(await repo.getSetting(fresh, 'setup_pending'), '1');
+  const old = await freshDb(); // 예전 버전이 이미 만들어 둔 앱
+  await seedDefaults(old);
+  assert.equal(await repo.getSetting(old, 'setup_pending'), null);
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

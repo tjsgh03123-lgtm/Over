@@ -114,13 +114,14 @@ export function SettingsScreen() {
           <Btn label="루틴" kind="ghost" onPress={() => nav.goTab('routine')} />
           <Btn label="종목 관리" kind="ghost" onPress={nav.openExercises} />
           <Btn label="AI 루틴 가져오기" kind="ghost" onPress={nav.openImport} />
+          <Btn label="처음 설정 다시 하기" kind="ghost" onPress={nav.openSetup} />
         </Row>
       </Card>
 
       <Card>
         <H style={{ fontSize: 16, marginBottom: 4 }}>정보</H>
         <T muted style={{ fontSize: 12, lineHeight: 18 }}>
-          OVERDRIVE는 완전한 오프라인 앱입니다. 서버 전송·AI API 호출·크레딧 소모가 없습니다. 인바디 OCR은 기기 안에서 처리됩니다.
+          OVERDRIVE는 완전한 오프라인 앱입니다. 서버 전송·AI API 호출·크레딧 소모가 없습니다.
         </T>
       </Card>
     </ScrollView>

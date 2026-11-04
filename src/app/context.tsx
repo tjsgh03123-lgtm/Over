@@ -12,6 +12,7 @@ export interface Nav {
   /** dayId가 null이면 새 날 추가 */
   openDay(routineId: string, dayId: string | null): void;
   openExercises(): void;
+  openSetup(): void;
   goTab(t: Tab): void;
   close(): void;
 }

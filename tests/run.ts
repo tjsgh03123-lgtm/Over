@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import { flattenSessions, resolveIntensity } from '../src/domain/intensity.ts';
 import {
-  change, dailyPoints, estimate1RM, filterSets, rangeFor, sameRepsTrend, seriesByIntensity, summarize, weekStart,
+  change, dailyPoints, estimate1RM, filterSets, rangeFor, repChoices, sameRepsTrend, seriesByIntensity, summarize, weekStart,
 } from '../src/domain/stats.ts';
+import {
+  addCustomMetric, BUILTIN_METRICS, MAX_CUSTOM_METRICS, sanitizeExtra, sanitizeMetrics, visibleMetrics,
+} from '../src/domain/bodyMetrics.ts';
 import { parseRoutine } from '../src/domain/parser.ts';
-import { parseInBodyText } from '../src/domain/inbody.ts';
 import { cycleIndex, daysBetween, shiftStartForMissed, startForDayNumber } from '../src/domain/cycle.ts';
 import { cycleDayNumber, dayForDate, inferMode, MAX_DAYS, sanitizeRoutines, type Routine } from '../src/domain/routine.ts';
 import { AI_IMPORT_PROMPT, AI_PROMPT_DIVIDER } from '../src/domain/importSchema.ts';
@@ -258,17 +260,75 @@ test('빈 입력 / 인식 불가 입력은 경고', () => {
   assert.ok(parseRoutine('안녕하세요 오늘도 화이팅').warnings.length > 0);
 });
 
-console.log('12 인바디 OCR 텍스트 해석');
-test('한글 인바디 결과지 텍스트', () => {
-  const t = `InBody 결과지\n체수분 (L) 40.1\n체중 (kg) 72.4\n골격근량 (kg) 33.1\n체지방량 (kg) 12.3\n체지방률 (%) 17.0`;
-  assert.deepEqual(parseInBodyText(t), { weight: 72.4, skeletal_muscle: 33.1, body_fat_mass: 12.3, body_fat_pct: 17 });
+console.log('신체 항목 (기본 + 직접 추가)');
+test('저장값이 없거나 깨져도 기본 4개 항목으로 복구', () => {
+  for (const raw of [null, '{broken', 123, []]) {
+    const l = sanitizeMetrics(raw);
+    assert.deepEqual(l.map((m) => m.key), ['weight', 'skeletal_muscle', 'body_fat_mass', 'body_fat_pct']);
+    assert.ok(l.every((m) => !m.hidden));
+  }
 });
-test('숫자가 다음 줄에 있어도 인식, 못 찾은 항목은 null', () => {
-  const t = `체중\n70.5\n골격근량\n32.0`;
-  assert.deepEqual(parseInBodyText(t), { weight: 70.5, skeletal_muscle: 32, body_fat_mass: null, body_fat_pct: null });
+test('직접 항목 추가: 이름·단위 저장, 키는 x1부터, 이름 중복·빈 이름·초과는 거부', () => {
+  const base = sanitizeMetrics(null);
+  const a = addCustomMetric(base, { label: ' 허리둘레 ', unit: 'cm' });
+  assert.equal(a.metric.key, 'x1');
+  assert.equal(a.metric.label, '허리둘레');
+  assert.equal(a.metric.unit, 'cm');
+  assert.ok(!a.metric.builtin && /^#[0-9A-F]{6}$/.test(a.metric.color!));
+  assert.throws(() => addCustomMetric(a.list, { label: '허리둘레', unit: 'cm' }));
+  assert.throws(() => addCustomMetric(a.list, { label: '몸무게', unit: 'kg' }));
+  assert.throws(() => addCustomMetric(a.list, { label: '  ', unit: '' }));
+  let l = base;
+  for (let i = 0; i < MAX_CUSTOM_METRICS; i++) l = addCustomMetric(l, { label: `항목${i}`, unit: '' }).list;
+  assert.throws(() => addCustomMetric(l, { label: '하나더', unit: '' }));
 });
-test('범위를 벗어난 값은 버림', () => {
-  assert.equal(parseInBodyText('체중 999').weight, null);
+test('저장했다 읽어도 숨김·직접 항목·색이 유지되고 잘못된 값은 버림', () => {
+  const l0 = addCustomMetric(sanitizeMetrics(null), { label: '혈압', unit: 'mmHg' }).list;
+  l0[0].hidden = true;
+  const l1 = sanitizeMetrics(JSON.stringify(l0));
+  assert.equal(l1[0].hidden, true);
+  assert.equal(l1.at(-1)!.label, '혈압');
+  assert.deepEqual(visibleMetrics(l1).map((m) => m.key), ['skeletal_muscle', 'body_fat_mass', 'body_fat_pct', 'x1']);
+  const l2 = sanitizeMetrics(JSON.stringify([{ key: 'x9', label: '', unit: 'cm' }, { key: 'evil', label: 'a', unit: 'b' }, { key: 'x2', label: 'ok', unit: 'cm', color: 'red' }]));
+  assert.deepEqual(l2.map((m) => m.key), [...BUILTIN_METRICS.map((m) => m.key), 'x2']);
+  assert.equal(l2.at(-1)!.color, null);
+});
+test('직접 항목 값 저장 형식 검증: 날짜·숫자만', () => {
+  const e = sanitizeExtra(JSON.stringify({ x1: { '2026-11-05': 80.5, '2026-13': 1, '2026-11-06': 'abc' }, weight: { '2026-11-05': 70 }, x2: 'zzz' }));
+  assert.deepEqual(e, { x1: { '2026-11-05': 80.5 } });
+  assert.deepEqual(sanitizeExtra(null), {});
+});
+
+console.log('1RM 분리 / 횟수별 보기');
+const fs = (date: string, weight: number, reps: number, extra: Record<string, unknown> = {}) => ({
+  date, sessionId: date, exerciseId: 'e1', exerciseName: '벤치', setNo: 1, weight, reps, done: true, setType: 'working' as const,
+  weightMode: 'weighted' as const, intensity: 'none' as const, ...extra,
+});
+test('1RM 세트는 평소 통계에서 빠지고, 1RM 필터에서만 나온다', () => {
+  const all = [fs('2026-11-01', 60, 8), fs('2026-11-02', 100, 1, { isRm: true }), fs('2026-11-03', 62.5, 8)];
+  assert.deepEqual(filterSets(all, { exerciseId: 'e1' }).map((x) => x.weight), [60, 62.5]);
+  assert.deepEqual(filterSets(all, { exerciseId: 'e1', onlyRm: true }).map((x) => x.weight), [100]);
+  assert.equal(summarize(all, 'e1', 'weighted').allTimeBest!.best, 62.5);
+  assert.deepEqual(dailyPoints(filterSets(all, { exerciseId: 'e1', onlyRm: true })).map((p) => p.best), [100]);
+});
+test('미완료 1RM 세트는 1RM 기록에도 들어가지 않는다', () => {
+  const all = [fs('2026-11-02', 100, 1, { isRm: true, done: false })];
+  assert.equal(filterSets(all, { exerciseId: 'e1', onlyRm: true }).length, 0);
+});
+test('횟수 선택지: 많이 한 횟수 순으로 고르고 작은 횟수부터 정렬, 기본값은 가장 많이 한 횟수', () => {
+  const all = [
+    fs('2026-11-01', 60, 8), fs('2026-11-02', 60, 8), fs('2026-11-03', 62, 8), fs('2026-11-03', 50, 12), fs('2026-11-04', 70, 5),
+    fs('2026-11-04', 100, 1, { isRm: true }), fs('2026-11-04', 20, 15, { setType: 'warmup' }),
+  ];
+  const c = repChoices(all, 'e1');
+  assert.deepEqual(c.options, [5, 8, 12]); // 1RM 세트의 1회·준비 세트의 15회는 포함하지 않음
+  assert.equal(c.mostUsed, 8);
+  assert.deepEqual(repChoices([], 'e1'), { options: [], mostUsed: null });
+  assert.equal(repChoices(all, 'e1', 2).options.length, 2);
+});
+test('횟수별 추이: 그 횟수 이상 한 날의 최고 중량 (1RM 세트 제외)', () => {
+  const all = [fs('2026-11-01', 60, 8), fs('2026-11-02', 70, 5), fs('2026-11-02', 100, 8, { isRm: true }), fs('2026-11-03', 65, 10)];
+  assert.deepEqual(sameRepsTrend(all, 'e1', 8, 'weighted'), [{ date: '2026-11-01', weight: 60 }, { date: '2026-11-03', weight: 65 }]);
 });
 
 console.log('테마 / 그래프 색상');

@@ -1,5 +1,8 @@
 import { nowIso, uid, type Db, type SqlParam } from './adapter.ts';
-import type { FlatSet, Intensity, SetType, WeightMode } from '../domain/types.ts';
+import type { FlatSet, Intensity, SetKind, SetType, WeightMode } from '../domain/types.ts';
+import {
+  addCustomMetric, BUILTIN_METRICS, sanitizeExtra, sanitizeMetrics, type BodyMetric, type ExtraValues,
+} from '../domain/bodyMetrics.ts';
 import type { ParsedDay } from '../domain/parser.ts';
 import { addDays, weekStart } from '../domain/stats.ts';
 import { shiftStartForMissed } from '../domain/cycle.ts';
@@ -421,6 +424,7 @@ export interface SetRow {
   reps: number | null;
   done: number;
   set_type: SetType;
+  is_rm: number | null; // 1이면 1RM 측정 세트 (평소 운동 기록·볼륨과 분리)
   intensity: Intensity | null;
 }
 export interface SessionExRow {
@@ -451,7 +455,7 @@ export async function lastPerformance(db: Db, exerciseId: string): Promise<{ wei
     `SELECT st.weight AS weight, st.reps AS reps FROM workout_sets st
        JOIN workout_session_exercises se ON se.id = st.session_exercise_id
        JOIN workout_sessions s ON s.id = se.session_id
-      WHERE se.exercise_id = ? AND s.status = 'done' AND st.done = 1 AND st.set_type = 'working' AND st.weight IS NOT NULL
+      WHERE se.exercise_id = ? AND s.status = 'done' AND st.done = 1 AND st.set_type = 'working' AND COALESCE(st.is_rm,0) = 0 AND st.weight IS NOT NULL
       ORDER BY s.date DESC, s.started_at DESC, st.set_no DESC LIMIT 1`,
     [exerciseId],
   );
@@ -538,7 +542,7 @@ export async function deleteSet(db: Db, setId: string): Promise<void> {
 /** 변경 즉시 저장(자동 저장) — 필드별 부분 업데이트 */
 export async function updateSet(
   db: Db, setId: string,
-  patch: Partial<{ weight: number | null; reps: number | null; done: boolean; setType: SetType; intensity: Intensity | null }>,
+  patch: Partial<{ weight: number | null; reps: number | null; done: boolean; setType: SetType; kind: SetKind; intensity: Intensity | null }>,
 ): Promise<void> {
   const cols: string[] = [];
   const vals: SqlParam[] = [];
@@ -546,6 +550,11 @@ export async function updateSet(
   if ('reps' in patch) { cols.push('reps = ?'); vals.push(patch.reps ?? null); }
   if ('done' in patch) { cols.push('done = ?'); vals.push(patch.done ? 1 : 0); }
   if ('setType' in patch) { cols.push('set_type = ?'); vals.push(patch.setType ?? 'working'); }
+  if ('kind' in patch) {
+    // 준비 / 본 / 1RM — 1RM은 본 세트이면서 is_rm 표시가 붙은 세트
+    cols.push('set_type = ?', 'is_rm = ?');
+    vals.push(patch.kind === 'warmup' ? 'warmup' : 'working', patch.kind === 'rm' ? 1 : 0);
+  }
   if ('intensity' in patch) { cols.push('intensity = ?'); vals.push(patch.intensity ?? null); }
   if (!cols.length) return;
   await db.run(`UPDATE workout_sets SET ${cols.join(', ')} WHERE id = ?`, [...vals, setId]);
@@ -595,7 +604,7 @@ export async function saveSessionAsTemplate(db: Db, sessionId: string, name: str
     name,
     defaultIntensity: s.intensity ?? 'none',
     exercises: s.exercises.map((e) => {
-      const working = e.sets.filter((x) => x.set_type === 'working');
+      const working = e.sets.filter((x) => x.set_type === 'working' && !x.is_rm);
       const top = [...working].reverse().find((x) => x.weight != null);
       return {
         exerciseId: e.exercise_id,
@@ -614,7 +623,7 @@ export async function saveSessionAsTemplate(db: Db, sessionId: string, name: str
 export async function loadFlatSets(db: Db, exerciseId?: string): Promise<FlatSet[]> {
   const rows = await db.all<any>(
     `SELECT s.date AS date, s.id AS sessionId, se.exercise_id AS exerciseId, se.exercise_name AS exerciseName,
-            st.set_no AS setNo, st.weight AS weight, st.reps AS reps, st.done AS done, st.set_type AS setType,
+            st.set_no AS setNo, st.weight AS weight, st.reps AS reps, st.done AS done, st.set_type AS setType, COALESCE(st.is_rm,0) AS isRm,
             se.weight_mode AS weightMode,
             COALESCE(NULLIF(st.intensity,'none'), NULLIF(se.intensity,'none'), NULLIF(s.intensity,'none'), 'none') AS intensity
        FROM workout_sets st
@@ -624,7 +633,7 @@ export async function loadFlatSets(db: Db, exerciseId?: string): Promise<FlatSet
       ORDER BY s.date, s.started_at, se.position, st.set_no`,
     exerciseId ? [exerciseId] : [],
   );
-  return rows.map((r) => ({ ...r, done: !!r.done }));
+  return rows.map((r) => ({ ...r, done: !!r.done, isRm: !!r.isRm }));
 }
 
 /** 기록이 있는 종목 목록 (성장 분석 종목 선택용) */
@@ -637,6 +646,65 @@ export async function listTrackedExercises(db: Db): Promise<{ id: string; name: 
        JOIN workout_sets st ON st.session_exercise_id = se.id AND st.done = 1
       GROUP BY e.id ORDER BY last_date DESC, e.name`,
   );
+}
+
+/* ---------- 성장 분석에서 볼 운동 (내 루틴에서 고른 것만) ---------- */
+
+export async function getTrackedIds(db: Db): Promise<string[]> {
+  const raw = await getSetting(db, 'tracked_exercises');
+  if (!raw) return [];
+  try {
+    const v = JSON.parse(raw);
+    return Array.isArray(v) ? [...new Set(v.filter((x): x is string => typeof x === 'string'))] : [];
+  } catch { return []; }
+}
+export async function setTrackedIds(db: Db, ids: string[]): Promise<void> {
+  await setSetting(db, 'tracked_exercises', JSON.stringify([...new Set(ids)]));
+}
+export async function toggleTracked(db: Db, id: string): Promise<boolean> {
+  const ids = await getTrackedIds(db);
+  const on = !ids.includes(id);
+  await setTrackedIds(db, on ? [...ids, id] : ids.filter((x) => x !== id));
+  return on;
+}
+
+export interface RoutineExercise { id: string; name: string; weight_mode: WeightMode; routines: string[] }
+
+/** 내 루틴(모든 루틴·모든 날)에 들어 있는 운동 목록. 같은 운동은 한 번만, 어느 루틴에 있는지만 덧붙인다. */
+export async function listRoutineExercises(db: Db, today: string): Promise<RoutineExercise[]> {
+  const state = await getRoutines(db, today);
+  const rows = await db.all<{ template_id: string; id: string; name: string; weight_mode: WeightMode }>(
+    `SELECT w.template_id AS template_id, e.id AS id, e.name AS name, e.weight_mode AS weight_mode
+       FROM workout_template_exercises w JOIN exercises e ON e.id = w.exercise_id
+      ORDER BY w.position`);
+  const byTpl = new Map<string, typeof rows>();
+  for (const r of rows) byTpl.set(r.template_id, [...(byTpl.get(r.template_id) ?? []), r]);
+  // 루틴 → 날 → 종목 순서로 훑어서, 같은 종목은 한 번만 담고 어느 루틴에 있는지만 덧붙인다 (항상 같은 순서)
+  const out = new Map<string, RoutineExercise>();
+  for (const r of state.routines) {
+    for (const d of r.days) {
+      for (const e of d.templateId ? byTpl.get(d.templateId) ?? [] : []) {
+        const cur = out.get(e.id) ?? { id: e.id, name: e.name, weight_mode: e.weight_mode, routines: [] };
+        if (!cur.routines.includes(r.name)) cur.routines.push(r.name);
+        out.set(e.id, cur);
+      }
+    }
+  }
+  return [...out.values()];
+}
+
+export interface TrackedExercise { id: string; name: string; weight_mode: WeightMode }
+
+/** 보기로 고른 운동 (고른 순서). 지워졌거나 보관된 종목은 제외 */
+export async function listWatchedExercises(db: Db): Promise<TrackedExercise[]> {
+  const ids = await getTrackedIds(db);
+  if (!ids.length) return [];
+  const rows = await db.all<TrackedExercise & { archived: number }>(
+    `SELECT id, name, weight_mode, archived FROM exercises WHERE id IN (${ids.map(() => '?').join(',')})`, ids);
+  return ids.flatMap((id) => {
+    const r = rows.find((x) => x.id === id);
+    return r && !r.archived ? [{ id: r.id, name: r.name, weight_mode: r.weight_mode }] : [];
+  });
 }
 
 /* ============================== 캘린더 / 주간 통계 ============================== */
@@ -670,7 +738,7 @@ export async function weekStats(db: Db, today: string): Promise<WeekStats> {
     `SELECT COUNT(*) AS sets, COALESCE(SUM(CASE WHEN st.weight IS NOT NULL AND st.reps IS NOT NULL THEN st.weight * st.reps ELSE 0 END),0) AS volume
        FROM workout_sets st JOIN workout_session_exercises se ON se.id = st.session_exercise_id
        JOIN workout_sessions s ON s.id = se.session_id
-      WHERE s.status='done' AND st.done=1 AND st.set_type='working' AND s.date BETWEEN ? AND ?`, [from, to]);
+      WHERE s.status='done' AND st.done=1 AND st.set_type='working' AND COALESCE(st.is_rm,0)=0 AND s.date BETWEEN ? AND ?`, [from, to]);
   const c = await db.first<{ m: number }>('SELECT COALESCE(SUM(duration_min),0) AS m FROM cardio_sessions WHERE date BETWEEN ? AND ?', [from, to]);
   return { workouts: w?.workouts ?? 0, days: w?.days ?? 0, sets: v?.sets ?? 0, volume: v?.volume ?? 0, cardioMin: c?.m ?? 0 };
 }
@@ -731,8 +799,86 @@ export async function listMeasurements(db: Db): Promise<Measurement[]> {
   return db.all<Measurement>('SELECT * FROM body_measurements ORDER BY date');
 }
 export async function deleteMeasurement(db: Db, id: string) {
+  const row = await db.first<{ date: string }>('SELECT date FROM body_measurements WHERE id = ?', [id]);
   await db.run('DELETE FROM body_measurements WHERE id = ?', [id]);
+  if (row) {
+    const extra = await getBodyExtra(db);
+    let changed = false;
+    for (const k of Object.keys(extra)) if (row.date in extra[k]) { delete extra[k][row.date]; changed = true; }
+    if (changed) await setSetting(db, 'body_extra', JSON.stringify(extra));
+  }
 }
+
+/* ---------- 신체 항목(기본 + 직접 추가) ---------- */
+
+export async function getBodyMetrics(db: Db): Promise<BodyMetric[]> {
+  return sanitizeMetrics(await getSetting(db, 'body_metrics'));
+}
+async function saveBodyMetrics(db: Db, list: BodyMetric[]): Promise<void> {
+  await setSetting(db, 'body_metrics', JSON.stringify(list));
+}
+export async function addBodyMetric(db: Db, v: { label: string; unit: string }): Promise<BodyMetric> {
+  const r = addCustomMetric(await getBodyMetrics(db), v);
+  await saveBodyMetrics(db, r.list);
+  return r.metric;
+}
+/** 직접 만든 항목의 이름·단위·색 변경 (기본 항목은 이름·단위를 바꾸지 않는다) */
+export async function updateBodyMetric(db: Db, key: string, patch: { label?: string; unit?: string; color?: string }): Promise<void> {
+  const list = await getBodyMetrics(db);
+  const m = list.find((x) => x.key === key);
+  if (!m || m.builtin) return;
+  if (patch.label != null) {
+    const label = patch.label.trim();
+    if (!label) throw new Error('항목 이름을 입력하세요');
+    if (list.some((x) => x.key !== key && x.label === label)) throw new Error('같은 이름의 항목이 이미 있습니다');
+    m.label = label.slice(0, 20);
+  }
+  if (patch.unit != null) m.unit = patch.unit.trim().slice(0, 8);
+  if (patch.color != null && /^#[0-9a-fA-F]{6}$/.test(patch.color)) m.color = patch.color.toUpperCase();
+  await saveBodyMetrics(db, list);
+}
+/** 입력칸·그래프에서 숨기거나 다시 보인다 (기록은 지우지 않는다) */
+export async function setBodyMetricHidden(db: Db, key: string, hidden: boolean): Promise<void> {
+  const list = await getBodyMetrics(db);
+  const m = list.find((x) => x.key === key);
+  if (!m) return;
+  m.hidden = hidden;
+  await saveBodyMetrics(db, list);
+}
+/** 직접 만든 항목은 값까지 삭제, 기본 항목은 숨김만 한다 */
+export async function removeBodyMetric(db: Db, key: string): Promise<void> {
+  const list = await getBodyMetrics(db);
+  const m = list.find((x) => x.key === key);
+  if (!m) return;
+  if (m.builtin) return setBodyMetricHidden(db, key, true);
+  await saveBodyMetrics(db, list.filter((x) => x.key !== key));
+  const extra = await getBodyExtra(db);
+  if (key in extra) {
+    delete extra[key];
+    await setSetting(db, 'body_extra', JSON.stringify(extra));
+  }
+}
+export async function getBodyExtra(db: Db): Promise<ExtraValues> {
+  return sanitizeExtra(await getSetting(db, 'body_extra'));
+}
+/** 직접 만든 항목의 날짜별 값 저장 (value가 null이면 그 날의 값을 지움). 그날의 신체 기록 행도 만들어 둔다. */
+export async function setBodyExtra(db: Db, key: string, date: string, value: number | null): Promise<void> {
+  const list = await getBodyMetrics(db);
+  if (!list.some((m) => m.key === key && !m.builtin)) throw new Error('없는 항목입니다');
+  const extra = await getBodyExtra(db);
+  if (value == null) {
+    if (extra[key]) delete extra[key][date];
+  } else {
+    if (!Number.isFinite(value)) throw new Error('숫자를 입력하세요');
+    (extra[key] ??= {})[date] = value;
+    await upsertMeasurement(db, date, {});
+  }
+  await setSetting(db, 'body_extra', JSON.stringify(extra));
+}
+
+/** 내장 기본 항목 목록 (테스트·화면 공용) */
+export const BUILTIN_BODY_KEYS = BUILTIN_METRICS.map((m) => m.key);
+
 
 /* ============================== 설정 / 가져오기 ============================== */
 
@@ -785,7 +931,7 @@ export async function saveSessionAsDay(db: Db, today: string, sessionId: string,
   let routineId = (await getRoutines(db, today)).activeId;
   if (!routineId) routineId = await createRoutine(db, today, { name: '내 루틴' });
   const exercises: TemplateExerciseInput[] = s.exercises.map((e) => {
-    const working = e.sets.filter((x) => x.set_type === 'working');
+    const working = e.sets.filter((x) => x.set_type === 'working' && !x.is_rm);
     const top = [...working].reverse().find((x) => x.weight != null);
     return { exerciseId: e.exercise_id, targetSets: Math.max(1, working.length), targetReps: top?.reps ?? null, targetWeight: top?.weight ?? null };
   });

@@ -116,6 +116,22 @@ export function LineChart<M>({
   );
 }
 
+/** 목록용 작은 추이선 (축·점 없이 모양만). 값이 2개 미만이면 아무것도 그리지 않는다. */
+export function Sparkline({ values, color, width = 64, height = 28 }: { values: number[]; color: string; width?: number; height?: number }) {
+  if (values.length < 2) return <View style={{ width, height }} />;
+  const lo = Math.min(...values);
+  const hi = Math.max(...values);
+  const span = hi - lo || 1;
+  const pts = values
+    .map((v, i) => `${(i / (values.length - 1)) * (width - 4) + 2},${height - 3 - ((v - lo) / span) * (height - 6)}`)
+    .join(' ');
+  return (
+    <Svg width={width} height={height}>
+      <Polyline points={pts} fill="none" stroke={color} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+    </Svg>
+  );
+}
+
 export function PressableRow({ children, onPress }: { children: React.ReactNode; onPress: () => void }) {
   return <Pressable onPress={onPress}>{children}</Pressable>;
 }

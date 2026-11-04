@@ -71,6 +71,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
           ...('reps' in patch ? { reps: patch.reps ?? null } : {}),
           ...('done' in patch ? { done: patch.done ? 1 : 0 } : {}),
           ...('setType' in patch ? { set_type: patch.setType! } : {}),
+          ...('kind' in patch ? { set_type: patch.kind === 'warmup' ? 'warmup' as const : 'working' as const, is_rm: patch.kind === 'rm' ? 1 : 0 } : {}),
         }),
       }),
     });
@@ -134,7 +135,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
                         <Row>
                           <Pressable
                             disabled={!editable || !showOpts}
-                            onPress={() => patchSet(ex, row, { setType: row.set_type === 'warmup' ? 'working' : 'warmup' })}
+                            onPress={() => patchSet(ex, row, { kind: row.is_rm ? 'working' : row.set_type === 'warmup' ? 'rm' : 'warmup' })}
                             onLongPress={() => Alert.alert('세트 삭제', `${row.set_no}세트를 삭제할까요?`, [
                               { text: '취소' }, { text: '삭제', style: 'destructive', onPress: async () => { await deleteSet(db, row.id); bump(); reload(); } },
                             ])}
@@ -142,6 +143,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
                           >
                             <T bold style={{ color: row.set_type === 'warmup' ? C.muted : C.text }}>{row.set_no}</T>
                             {row.set_type === 'warmup' && <T muted style={{ fontSize: 10 }}>준비</T>}
+                            {!!row.is_rm && <T bold style={{ fontSize: 10 }}>1RM</T>}
                           </Pressable>
                           <NumInput
                             value={row.weight} suggest={sugW} placeholder="kg" width={84}
@@ -221,7 +223,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
                           />
                         </Row>
                       )}
-                      <T muted style={{ fontSize: 11, marginTop: S.sm }}>세트 번호 탭: 준비/본 전환 · 길게 누름: 삭제</T>
+                      <T muted style={{ fontSize: 11, marginTop: S.sm }}>세트 번호 탭: 본 → 준비 → 1RM 순서로 전환 · 길게 누름: 삭제</T>
                     </View>
                   )}
                 </View>

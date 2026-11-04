@@ -84,6 +84,7 @@ CREATE TABLE IF NOT EXISTS workout_sets (
   reps INTEGER,
   done INTEGER NOT NULL DEFAULT 0,
   set_type TEXT NOT NULL DEFAULT 'working' CHECK (set_type IN ('warmup','working')),
+  is_rm INTEGER DEFAULT 0,
   intensity TEXT CHECK (intensity IN ('high','mid','low','none')),
   created_at TEXT NOT NULL
 );
@@ -145,7 +146,7 @@ export const TABLE_COLUMNS: Record<string, string[]> = {
     'id', 'date', 'template_id', 'title', 'intensity', 'is_free', 'status', 'started_at', 'ended_at', 'duration_sec', 'note',
   ],
   workout_session_exercises: ['id', 'session_id', 'exercise_id', 'exercise_name', 'weight_mode', 'position', 'intensity', 'note'],
-  workout_sets: ['id', 'session_exercise_id', 'set_no', 'weight', 'reps', 'done', 'set_type', 'intensity', 'created_at'],
+  workout_sets: ['id', 'session_exercise_id', 'set_no', 'weight', 'reps', 'done', 'set_type', 'is_rm', 'intensity', 'created_at'],
   body_measurements: ['id', 'date', 'weight', 'skeletal_muscle', 'body_fat_mass', 'body_fat_pct', 'source', 'image_uri', 'created_at'],
   cardio_sessions: ['id', 'date', 'session_id', 'kind', 'intensity', 'duration_min', 'note', 'created_at'],
   schedule_rules: ['id', 'weekday', 'kind', 'template_id', 'default_intensity', 'label'],

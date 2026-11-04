@@ -8,11 +8,12 @@
     "backgroundColor": "#0B0D10",
     "android": {
       "package": "com.overdrive.workout",
-      "adaptiveIcon": { "backgroundColor": "#0B0D10" }
+      "adaptiveIcon": {
+        "backgroundColor": "#0B0D10"
+      }
     },
     "plugins": [
-      "expo-sqlite",
-      ["expo-image-picker", { "photosPermission": "인바디 캡처 이미지를 불러오기 위해 사진 접근이 필요합니다." }]
+      "expo-sqlite"
     ]
   }
 }

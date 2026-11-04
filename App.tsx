@@ -15,6 +15,7 @@ import { DayEditorScreen } from './src/screens/DayEditorScreen.tsx';
 import { RoutineScreen } from './src/screens/RoutineScreen.tsx';
 import { ImportScreen } from './src/screens/ImportScreen.tsx';
 import { SessionScreen } from './src/screens/SessionScreen.tsx';
+import { SetupScreen } from './src/screens/SetupScreen.tsx';
 import { SettingsScreen } from './src/screens/SettingsScreen.tsx';
 import { findMissedRoutine, getActiveRoutine, getSetting, resolveMissed, setSetting, type MissedChoice, type MissedRoutine } from './src/db/repo.ts';
 import { MissedRoutineModal } from './src/ui/MissedRoutineModal.tsx';
@@ -27,7 +28,8 @@ type Overlay =
   | { name: 'body' }
   | { name: 'routine'; id: string }
   | { name: 'day'; routineId: string; dayId: string | null }
-  | { name: 'exercises' };
+  | { name: 'exercises' }
+  | { name: 'setup' };
 
 const TABS: { key: Tab; label: string }[] = [
   { key: 'home', label: '홈' },
@@ -57,6 +59,7 @@ export default function App() {
       applyTheme(m, sanitizeGraphColors(await getSetting(d, 'graph_colors')));
       setModeState(m);
       setDb(d);
+      if ((await getSetting(d, 'setup_pending')) === '1') setStack([{ name: 'setup' }]);
     })().catch((e) => setError(String(e?.message ?? e)));
   }, []);
 
@@ -105,6 +108,7 @@ export default function App() {
     openRoutine: (id) => push({ name: 'routine', id }),
     openDay: (routineId, dayId) => push({ name: 'day', routineId, dayId }),
     openExercises: () => push({ name: 'exercises' }),
+    openSetup: () => push({ name: 'setup' }),
     goTab: (t) => { setStack([]); setTab(t); },
     close,
   }), [push, close]);
@@ -192,5 +196,6 @@ function Overlay({ o }: { o: Overlay }) {
     case 'routine': return <RoutineDetailScreen routineId={o.id} />;
     case 'day': return <DayEditorScreen routineId={o.routineId} dayId={o.dayId} />;
     case 'exercises': return <ExercisesScreen />;
+    case 'setup': return <SetupScreen />;
   }
 }

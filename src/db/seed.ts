@@ -12,7 +12,14 @@ const LEGACY_SEED_EXERCISES = [
   '밀리터리 프레스', '벤치프레스', '데드리프트', '사이드 레터럴 레이즈', '행잉 레그 레이즈', 'T바 로우', '와이드 풀다운',
 ];
 
+/** 예전 버전에서 만든 DB에 없는 열을 추가한다 (여러 번 실행해도 안전) */
+export async function ensureColumns(db: Db): Promise<void> {
+  const cols = await db.all<{ name: string }>('PRAGMA table_info(workout_sets)');
+  if (!cols.some((c) => c.name === 'is_rm')) await db.run('ALTER TABLE workout_sets ADD COLUMN is_rm INTEGER DEFAULT 0');
+}
+
 export async function seedDefaults(db: Db): Promise<boolean> {
+  await ensureColumns(db);
   const first = !(await db.first<{ value: string }>("SELECT value FROM app_settings WHERE key = 'seeded_v1'"));
   const migrated = !!(await db.first<{ value: string }>("SELECT value FROM app_settings WHERE key = 'migrated_v2'"));
   if (migrated) return false;
@@ -30,6 +37,8 @@ export async function seedDefaults(db: Db): Promise<boolean> {
         LEGACY_SEED_EXERCISES,
       );
     }
+    // 새로 설치한 앱에서만 시작 설정 화면을 한 번 보여 준다 (업데이트한 기존 앱에는 띄우지 않음)
+    if (first) await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('setup_pending', '1')");
     await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('seeded_v1', '1')");
     await db.run("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('default_sets', '3')");
     await db.run("INSERT INTO app_settings (key, value) VALUES ('migrated_v2', '1')");

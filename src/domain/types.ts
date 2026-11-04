@@ -1,5 +1,7 @@
 export type Intensity = 'high' | 'mid' | 'low' | 'none';
 export type SetType = 'warmup' | 'working';
+/** 화면에서 고르는 세트 종류: 준비 / 본 / 1RM 측정 */
+export type SetKind = 'working' | 'warmup' | 'rm';
 export type WeightMode = 'weighted' | 'bodyweight' | 'assisted';
 
 export const INTENSITY_LABEL: Record<Intensity, string> = {
@@ -49,6 +51,7 @@ export interface FlatSet {
   reps: number | null;
   done: boolean;
   setType: SetType;
+  isRm?: boolean; // 1RM 측정 세트 (평소 운동 통계에서는 제외)
   weightMode: WeightMode;
   intensity: Intensity; // 상속 결과
 }

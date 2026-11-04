@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { useApp } from '../app/context.tsx';
 import {
-  addCardio, getActiveSession, getTemplateBrief, listTrackedExercises, loadFlatSets, sessionsOnDate, slotForDate,
+  addCardio, getActiveSession, getTemplateBrief, listWatchedExercises, loadFlatSets, sessionsOnDate, slotForDate,
   startFreeSession, startSessionFromTemplate, weekStats, type DaySlot, type SessionMeta, type TemplateBrief, type WeekStats,
 } from '../db/repo.ts';
 import { fmtDuration, fmtElapsed } from '../domain/format.ts';
@@ -34,7 +34,7 @@ export function HomeScreen() {
       setActive(await getActiveSession(db));
       setDoneToday((await sessionsOnDate(db, today)).filter((x) => x.status === 'done'));
       setWeek(await weekStats(db, today));
-      const tracked = (await listTrackedExercises(db)).slice(0, 5);
+      const tracked = (await listWatchedExercises(db)).slice(0, 5);
       const flat = await loadFlatSets(db);
       setGrowth(tracked.flatMap((t) => {
         const sm = summarize(flat, t.id, t.weight_mode);
@@ -147,7 +147,7 @@ export function HomeScreen() {
       <Card>
         <H style={{ fontSize: 16, marginBottom: S.sm }}>최근 중량 성장</H>
         {growth.length === 0 ? (
-          <T muted>운동을 완료하면 종목별 최고 중량과 변화량이 여기에 표시됩니다.</T>
+          <T muted>성장 분석에서 보고 싶은 운동을 고르면, 완료한 기록의 최고 중량과 변화량이 여기에 표시됩니다.</T>
         ) : (
           growth.map((g) => (
             <Pressable key={g.id} onPress={() => nav.goTab('growth')} style={{ paddingVertical: 8, flexDirection: 'row', alignItems: 'center' }}>

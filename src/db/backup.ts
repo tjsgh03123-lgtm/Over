@@ -63,7 +63,7 @@ const INT_KO: Record<string, string> = { high: '고중량', mid: '중간중량',
 
 export async function exportWorkoutCsv(db: Db): Promise<string> {
   const rows = await db.all<any>(
-    `SELECT s.date, s.title, se.exercise_name, st.set_no, st.set_type, st.weight, st.reps, st.done,
+    `SELECT s.date, s.title, se.exercise_name, st.set_no, st.set_type, COALESCE(st.is_rm,0) AS is_rm, st.weight, st.reps, st.done,
             COALESCE(NULLIF(st.intensity,'none'), NULLIF(se.intensity,'none'), NULLIF(s.intensity,'none'), 'none') AS intensity,
             s.status, s.duration_sec, s.note
        FROM workout_sets st
@@ -72,7 +72,7 @@ export async function exportWorkoutCsv(db: Db): Promise<string> {
       ORDER BY s.date, s.started_at, se.position, st.set_no`);
   return toCsv(
     ['날짜', '운동', '종목', '세트', '세트유형', '중량(kg)', '횟수', '완료', '강도', '상태', '운동시간(초)', '메모'],
-    rows.map((r) => [r.date, r.title, r.exercise_name, r.set_no, r.set_type === 'warmup' ? '준비' : '본', r.weight, r.reps,
+    rows.map((r) => [r.date, r.title, r.exercise_name, r.set_no, r.is_rm ? '1RM' : r.set_type === 'warmup' ? '준비' : '본', r.weight, r.reps,
       r.done ? 'Y' : 'N', INT_KO[r.intensity] ?? r.intensity, r.status === 'done' ? '완료' : '진행중', r.duration_sec, r.note]),
   );
 }

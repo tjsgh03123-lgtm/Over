@@ -1,19 +1,20 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
 import { useApp } from '../app/context.tsx';
-import { listTrackedExercises, loadFlatSets } from '../db/repo.ts';
 import {
-  dailyPoints, estimate1RM, EST_1RM_NOTE, filterSets, rangeFor, sameRepsTrend, summarize,
+  getTrackedIds, listRoutineExercises, listWatchedExercises, loadFlatSets, toggleTracked, setTrackedIds,
+  type RoutineExercise, type TrackedExercise,
+} from '../db/repo.ts';
+import {
+  dailyPoints, filterSets, rangeFor, repChoices, sameRepsTrend, summarize,
   type Change, type DateRange, type DayPoint, type RangeKey,
 } from '../domain/stats.ts';
 import type { FlatSet, WeightMode } from '../domain/types.ts';
-import { Card, Chip, Empty, H, NumInput, Row, T } from '../ui/components.tsx';
-import { LineChart, type ChartSeries } from '../ui/LineChart.tsx';
+import { Btn, Card, Chip, Empty, H, Row, Segmented, T } from '../ui/components.tsx';
+import { ExercisePicker } from '../ui/ExercisePicker.tsx';
+import { LineChart, Sparkline, type ChartSeries } from '../ui/LineChart.tsx';
 import { RangePicker } from '../ui/RangePicker.tsx';
 import { C, GC, S } from '../ui/theme.ts';
-
-type Tracked = Awaited<ReturnType<typeof listTrackedExercises>>[number];
-type Metric = 'best' | 'avg' | 'volume';
 
 const fmtChange = (c: Change | null) =>
   c == null ? '—' : `${c.kg > 0 ? '+' : ''}${c.kg}kg${c.pct != null ? ` (${c.pct > 0 ? '+' : ''}${c.pct}%)` : ''}`;
@@ -22,167 +23,255 @@ const changeColor = (c: Change | null, mode: WeightMode) => {
   const good = mode === 'assisted' ? c.kg < 0 : c.kg > 0;
   return good ? C.ok : C.danger;
 };
+const arrow = (c: Change | null, mode: WeightMode) => {
+  if (!c || c.kg === 0) return '–';
+  const up = mode === 'assisted' ? c.kg < 0 : c.kg > 0;
+  return up ? '▲' : '▼';
+};
 
+/**
+ * 성장 분석(운동 중량): 내 루틴에서 고른 운동만 한 줄씩 보여 주고,
+ * 누르면 '평소 운동'(횟수별) / '1RM' 두 탭으로 추이를 본다.
+ */
 export function WeightGrowth() {
-  const { db, today, version } = useApp();
-  const [tracked, setTracked] = useState<Tracked[]>([]);
+  const { db, today, version, bump } = useApp();
+  const [watched, setWatched] = useState<TrackedExercise[]>([]);
+  const [routineEx, setRoutineEx] = useState<RoutineExercise[]>([]);
+  const [trackedIds, setIds] = useState<string[]>([]);
   const [flat, setFlat] = useState<FlatSet[]>([]);
-  const [exId, setExId] = useState<string | null>(null);
-  const [metric, setMetric] = useState<Metric>('best');
-  const [warmupView, setWarmupView] = useState(false);
-  const [rangeKey, setRangeKey] = useState<RangeKey>('3m');
-  const [custom, setCustom] = useState<DateRange>({ from: null, to: null });
-  const [selected, setSelected] = useState<{ seriesKey: string; date: string; point: DayPoint } | null>(null);
-  const [reps, setReps] = useState<number | null>(8);
-  const [detail, setDetail] = useState(false); // 기본은 단순하게, '상세'에서만 고급 항목 표시
+  const [picking, setPicking] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
+  const [openId, setOpenId] = useState<string | null>(null);
 
-  // DB가 바뀔 때마다(version) 원본 세트 기록에서 다시 계산 → 수정/삭제가 그래프에 자동 반영
   useEffect(() => {
     (async () => {
-      const t = await listTrackedExercises(db);
-      setTracked(t);
+      setWatched(await listWatchedExercises(db));
+      setRoutineEx(await listRoutineExercises(db, today));
+      setIds(await getTrackedIds(db));
       setFlat(await loadFlatSets(db));
-      setExId((cur) => (cur && t.some((x) => x.id === cur) ? cur : t[0]?.id ?? null));
     })();
-  }, [db, version]);
+  }, [db, today, version]);
 
-  const ex = tracked.find((t) => t.id === exId) ?? null;
-  const mode: WeightMode = ex?.weight_mode ?? 'weighted';
-  const range = useMemo(() => rangeFor(rangeKey, today, custom), [rangeKey, today, custom]);
+  const open = watched.find((w) => w.id === openId) ?? null;
+  if (open) return <Detail ex={open} flat={flat} today={today} onBack={() => setOpenId(null)} />;
 
-  const series: ChartSeries<DayPoint>[] = useMemo(() => {
-    if (!ex) return [];
-    const val = (p: DayPoint) => (metric === 'best' ? p.best : metric === 'avg' ? Math.round(p.avg * 100) / 100 : p.volume);
-    const toSeries = (key: string, label: string, color: string, pts: DayPoint[]): ChartSeries<DayPoint> => ({
-      key, label, color, points: pts.map((p) => ({ date: p.date, value: val(p), meta: p })),
-    });
-    const pts = dailyPoints(filterSets(flat, { exerciseId: ex.id, range, onlyWarmup: warmupView }), mode);
-    return [toSeries('all', warmupView ? '준비 세트' : '최고 중량', GC.all, pts)];
-  }, [flat, ex, metric, warmupView, range, mode]);
-
-  const summary = useMemo(
-    () => (ex ? summarize(flat, ex.id, mode, { range }) : null),
-    [flat, ex, mode, range],
-  );
-  const tableRows = useMemo(
-    () => (ex ? dailyPoints(filterSets(flat, { exerciseId: ex.id, range, onlyWarmup: warmupView }), mode).reverse() : []),
-    [flat, ex, range, warmupView, mode],
-  );
-  const sameReps = useMemo(
-    () => (ex && reps ? sameRepsTrend(flat, ex.id, reps, mode).slice(-8).reverse() : []),
-    [flat, ex, reps, mode],
-  );
-
-  if (!ex) {
-    return <Empty text={'아직 완료한 운동 기록이 없습니다.\n운동을 기록하고 완료하면 종목별 성장 그래프가 자동으로 만들어집니다.'} />;
-  }
-
-  const best = summary?.currentBest;
-  const est = best ? estimate1RM(best.best, best.bestReps, mode) : null;
-
-  const rangeLabel = RANGE_LABEL[rangeKey];
+  const extra = watched.filter((w) => !routineEx.some((r) => r.id === w.id)); // 루틴 밖에서 직접 추가한 운동
 
   return (
     <ScrollView contentContainerStyle={{ padding: S.lg, paddingTop: S.sm, paddingBottom: 60 }}>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingBottom: S.md }}>
-        {tracked.map((t) => (
-          <Chip key={t.id} label={t.name} active={t.id === exId} onPress={() => { setExId(t.id); setSelected(null); }} />
-        ))}
-      </ScrollView>
+      <Row style={{ marginBottom: S.md }}>
+        <H style={{ fontSize: 16, flex: 1 }}>보는 운동 {watched.length > 0 ? `${watched.length}개` : ''}</H>
+        <Btn label={picking ? '완료' : '운동 고르기'} kind={picking ? 'primary' : 'ghost'} small onPress={() => setPicking((v) => !v)} />
+      </Row>
 
-      <Card>
-        <LineChart
-          series={series}
-          unit={metric === 'volume' ? 'kg·회' : 'kg'}
-          invert={mode === 'assisted' && metric !== 'volume'}
-          selected={selected}
-          onSelect={(key, p) => setSelected({ seriesKey: key, date: p.date, point: p.meta as DayPoint })}
-        />
-      </Card>
-
-      {selected && (
-        <Card style={{ borderColor: C.accent }}>
-          <T bold style={{ marginBottom: 6 }}>{selected.date} · {ex.name}</T>
-          <T>
-            {selected.point.best}kg × {selected.point.bestReps ?? '-'}회 · {selected.point.bestSetNo}세트 ·{' '}
-            {selected.point.bestSetType === 'warmup' ? '준비 세트' : '본 세트'}
-          </T>
-          <T muted style={{ marginTop: 4 }}>
-            평균 {Math.round(selected.point.avg * 100) / 100}kg · 볼륨 {Math.round(selected.point.volume)} · {selected.point.setCount}세트
-          </T>
-        </Card>
-      )}
-
-      {summary && (
+      {picking && (
         <Card>
-          <Kv k="현재 최고" v={best ? `${best.best}kg × ${best.bestReps ?? '-'}회` : '—'} />
-          <Kv k="역대 최고" v={summary.allTimeBest ? `${summary.allTimeBest.best}kg × ${summary.allTimeBest.bestReps ?? '-'}회` : '—'} />
-          <Kv k="직전 대비" v={fmtChange(summary.vsPrevious)} color={changeColor(summary.vsPrevious, mode)} />
-          <Kv k="최초 대비" v={fmtChange(summary.vsFirst)} color={changeColor(summary.vsFirst, mode)} />
-          {mode === 'assisted' && <T muted style={{ marginTop: 6, fontSize: 12 }}>보조 중량은 낮을수록 좋은 기록입니다.</T>}
+          <T muted style={{ fontSize: 12, marginBottom: S.sm }}>
+            변화를 보고 싶은 운동을 체크하세요. 여러 날에 같은 운동이 있어도 한 번만 나옵니다. 체크하지 않은 운동도 기록은 그대로 남습니다.
+          </T>
+          {routineEx.length === 0 ? (
+            <T muted>내 루틴에 운동이 아직 없어요. 루틴 탭에서 만들거나 아래에서 직접 추가하세요.</T>
+          ) : routineEx.map((e) => (
+            <PickRow key={e.id} name={e.name} sub={e.routines.join(' · ')} on={trackedIds.includes(e.id)}
+              onPress={async () => { await toggleTracked(db, e.id); bump(); }} />
+          ))}
+          {extra.map((e) => (
+            <PickRow key={e.id} name={e.name} sub="직접 추가" on
+              onPress={async () => { await toggleTracked(db, e.id); bump(); }} />
+          ))}
+          <Row style={{ marginTop: S.md }}>
+            <Btn label="+ 다른 운동 추가" kind="ghost" small onPress={() => setAddOpen(true)} />
+            <View style={{ flex: 1 }} />
+            {trackedIds.length > 0 && (
+              <Btn label="모두 해제" kind="ghost" small onPress={async () => { await setTrackedIds(db, []); bump(); }} />
+            )}
+          </Row>
         </Card>
       )}
 
-      <Pressable onPress={() => setDetail((v) => !v)} style={{ paddingVertical: S.md, alignItems: 'center' }}>
-        <T muted>{detail ? '상세 접기 ▴' : `상세 보기 ▾  ·  기간 ${rangeLabel}`}</T>
-      </Pressable>
-
-      {detail && summary && (
-        <>
-          <RangePicker value={rangeKey} onChange={setRangeKey} custom={custom} onCustom={setCustom} />
-          <Row style={{ marginTop: S.md, marginBottom: S.md }}>
-            <Chip label="최고" active={metric === 'best'} onPress={() => setMetric('best')} />
-            <Chip label="평균" active={metric === 'avg'} onPress={() => setMetric('avg')} />
-            <Chip label="볼륨" active={metric === 'volume'} onPress={() => setMetric('volume')} />
-            <View style={{ flex: 1 }} />
-            <Chip label="준비 세트" active={warmupView} onPress={() => { setWarmupView((v) => !v); setSelected(null); }} />
-          </Row>
-
-          <Card>
-            <Kv k="선택 기간 최고" v={summary.rangeBest != null ? `${summary.rangeBest}kg` : '—'} />
-            <Kv k="선택 기간 평균" v={summary.rangeAvg != null ? `${summary.rangeAvg}kg` : '—'} />
-            {est != null && (
-              <View style={{ marginTop: S.md }}>
-                <T bold>추정 1RM {est}kg <T muted style={{ fontSize: 12 }}>(실측 아님)</T></T>
-                <T muted style={{ fontSize: 11, marginTop: 2 }}>{EST_1RM_NOTE}</T>
-              </View>
-            )}
-          </Card>
-
-          <Card>
-            <H style={{ fontSize: 15, marginBottom: 4 }}>동일 반복 횟수에서의 중량</H>
-            <Row style={{ marginVertical: S.sm }}>
-              <NumInput value={reps} onCommit={setReps} decimal={false} width={64} placeholder="회" />
-              <T muted>회 이상 수행한 날의 최고 중량</T>
-            </Row>
-            {sameReps.length === 0 ? <T muted>해당 기록이 없습니다.</T> : sameReps.map((r) => (
-              <Row key={r.date} style={{ justifyContent: 'space-between', paddingVertical: 3 }}>
-                <T muted>{r.date}</T><T bold>{r.weight}kg</T>
-              </Row>
-            ))}
-          </Card>
-
-          <Card>
-            <H style={{ fontSize: 15, marginBottom: S.sm }}>날짜별 기록</H>
-            {tableRows.length === 0 ? <T muted>선택한 조건의 기록이 없습니다.</T> : tableRows.slice(0, 30).map((p) => (
-              <View key={p.date} style={{ paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: C.line }}>
-                <Row>
-                  <T muted style={{ width: 92 }}>{p.date}</T>
-                  <T bold style={{ flex: 1 }}>{p.best}kg × {p.bestReps ?? '-'}회</T>
-                </Row>
-                <T muted style={{ fontSize: 11, marginLeft: 100 }}>평균 {Math.round(p.avg * 10) / 10}kg · 볼륨 {Math.round(p.volume)} · {p.setCount}세트</T>
-              </View>
-            ))}
-          </Card>
-        </>
+      {watched.length === 0 ? (
+        !picking && (
+          <>
+            <Empty text={'보고 싶은 운동을 골라 주세요.\n내 루틴에 있는 운동 중에서 고를 수 있어요.'} />
+            <Btn label="운동 고르기" onPress={() => setPicking(true)} />
+          </>
+        )
+      ) : (
+        watched.map((w) => <ListRow key={w.id} ex={w} flat={flat} onPress={() => setOpenId(w.id)} />)
       )}
+
+      <ExercisePicker
+        visible={addOpen}
+        onClose={() => setAddOpen(false)}
+        onPick={async (e) => {
+          setAddOpen(false);
+          if (!trackedIds.includes(e.id)) await toggleTracked(db, e.id);
+          bump();
+        }}
+      />
     </ScrollView>
   );
 }
 
-const RANGE_LABEL: Record<RangeKey, string> = {
-  '7d': '7일', '30d': '30일', '3m': '3개월', '6m': '6개월', '1y': '1년', all: '전체', custom: '직접 지정',
-};
+function PickRow({ name, sub, on, onPress }: { name: string; sub: string; on: boolean; onPress: () => void }) {
+  return (
+    <Pressable onPress={onPress} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderTopWidth: 1, borderTopColor: C.line }}>
+      <View style={{ width: 22, height: 22, borderRadius: 6, borderWidth: 2, borderColor: on ? C.accent : C.muted, backgroundColor: on ? C.accent : 'transparent', alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
+        {on && <T bold style={{ color: C.onAccent, fontSize: 13 }}>✓</T>}
+      </View>
+      <View style={{ flex: 1 }}>
+        <T bold>{name}</T>
+        {!!sub && <T muted style={{ fontSize: 11 }}>{sub}</T>}
+      </View>
+    </Pressable>
+  );
+}
+
+/** 목록 한 줄: 운동 이름 · 현재 최고 · 직전 대비 · 작은 추이선 (평소 운동 기록 기준) */
+function ListRow({ ex, flat, onPress }: { ex: TrackedExercise; flat: FlatSet[]; onPress: () => void }) {
+  const mode = ex.weight_mode;
+  const sm = useMemo(() => summarize(flat, ex.id, mode), [flat, ex.id, mode]);
+  const pts = useMemo(() => dailyPoints(filterSets(flat, { exerciseId: ex.id }), mode).slice(-12), [flat, ex.id, mode]);
+  const ch = sm.vsPrevious;
+  return (
+    <Pressable onPress={onPress}>
+      <Card>
+        <Row>
+          <View style={{ flex: 1 }}>
+            <T bold style={{ fontSize: 15 }}>{ex.name}</T>
+            {sm.currentBest ? (
+              <Row style={{ marginTop: 2, gap: 6 }}>
+                <T bold>{sm.currentBest.best}kg</T>
+                <T style={{ color: changeColor(ch, mode), fontSize: 12 }}>{arrow(ch, mode)} {ch ? fmtChange(ch) : '첫 기록'}</T>
+              </Row>
+            ) : <T muted style={{ fontSize: 12, marginTop: 2 }}>아직 완료한 기록이 없어요</T>}
+          </View>
+          <Sparkline values={pts.map((p) => p.best)} color={GC.all} />
+          <T muted style={{ fontSize: 18 }}>›</T>
+        </Row>
+      </Card>
+    </Pressable>
+  );
+}
+
+/* ----------------------------- 종목 상세 ----------------------------- */
+
+function Detail({ ex, flat, today, onBack }: { ex: TrackedExercise; flat: FlatSet[]; today: string; onBack: () => void }) {
+  const mode = ex.weight_mode;
+  const [tab, setTab] = useState<'normal' | 'rm'>('normal');
+  const [rangeKey, setRangeKey] = useState<RangeKey>('3m');
+  const [custom, setCustom] = useState<DateRange>({ from: null, to: null });
+  const choices = useMemo(() => repChoices(flat, ex.id), [flat, ex.id]);
+  const [reps, setReps] = useState<number | null | undefined>(undefined); // undefined=아직 안 골랐음(가장 많이 한 횟수), null=전체
+  const [sel, setSel] = useState<string | null>(null);
+  const range = useMemo(() => rangeFor(rangeKey, today, custom), [rangeKey, today, custom]);
+
+  const repsSel = reps === undefined ? choices.mostUsed : reps; // null이면 '전체'
+
+  const normal = useMemo(() => {
+    if (repsSel == null) {
+      const pts = dailyPoints(filterSets(flat, { exerciseId: ex.id, range }), mode);
+      return pts.map((p) => ({ date: p.date, value: p.best, note: `${p.best}kg × ${p.bestReps ?? '-'}회 · ${p.bestSetNo}세트 · 평균 ${Math.round(p.avg * 10) / 10}kg · ${p.setCount}세트` }));
+    }
+    return sameRepsTrend(flat, ex.id, repsSel, mode)
+      .filter((p) => (!range.from || p.date >= range.from) && (!range.to || p.date <= range.to))
+      .map((p) => ({ date: p.date, value: p.weight, note: `${repsSel}회 이상 · ${p.weight}kg` }));
+  }, [flat, ex.id, mode, repsSel, range]);
+
+  const rm = useMemo(
+    () => dailyPoints(filterSets(flat, { exerciseId: ex.id, range, onlyRm: true }), mode)
+      .map((p) => ({ date: p.date, value: p.best, note: `${p.best}kg${p.bestReps ? ` × ${p.bestReps}회` : ''}` })),
+    [flat, ex.id, mode, range],
+  );
+  const rmAll = useMemo(() => dailyPoints(filterSets(flat, { exerciseId: ex.id, onlyRm: true }), mode), [flat, ex.id, mode]);
+
+  const rows = tab === 'normal' ? normal : rm;
+  const series: ChartSeries[] = [{
+    key: tab, label: tab === 'rm' ? '1RM' : repsSel == null ? '최고 중량' : `${repsSel}회 이상`, color: GC.all,
+    points: rows.map((r) => ({ date: r.date, value: r.value })),
+  }];
+  const selRow = sel ? rows.find((r) => r.date === sel) : null;
+
+  const first = rows.length ? rows[0].value : null;
+  const last = rows.length ? rows[rows.length - 1].value : null;
+  const prev = rows.length > 1 ? rows[rows.length - 2].value : null;
+  const delta = (a: number | null, b: number | null): Change | null =>
+    a == null || b == null ? null : { kg: Math.round((a - b) * 100) / 100, pct: b === 0 ? null : Math.round(((a - b) / b) * 10000) / 100 };
+  const best = rows.reduce<number | null>((b, r) => (b == null || (mode === 'assisted' ? r.value < b : r.value > b) ? r.value : b), null);
+
+  return (
+    <ScrollView contentContainerStyle={{ padding: S.lg, paddingTop: S.sm, paddingBottom: 60 }}>
+      <Row style={{ marginBottom: S.md }}>
+        <Pressable onPress={onBack} hitSlop={10}><T style={{ fontSize: 22 }}>‹</T></Pressable>
+        <H style={{ fontSize: 17, flex: 1 }}>{ex.name}</H>
+      </Row>
+
+      <Segmented
+        options={[{ key: 'normal', label: '평소 운동' }, { key: 'rm', label: '1RM' }]}
+        value={tab}
+        onChange={(k) => { setTab(k); setSel(null); }}
+      />
+
+      {tab === 'normal' && (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingVertical: S.md }}>
+          <Chip label="전체" active={repsSel == null} onPress={() => { setReps(null); setSel(null); }} />
+          {choices.options.map((r) => (
+            <Chip key={r} label={`${r}회`} active={repsSel === r} onPress={() => { setReps(r); setSel(null); }} />
+          ))}
+        </ScrollView>
+      )}
+      <View style={{ marginTop: tab === 'rm' ? S.md : 0 }}>
+        <RangePicker value={rangeKey} onChange={setRangeKey} custom={custom} onCustom={setCustom} />
+      </View>
+
+      <Card style={{ marginTop: S.md }}>
+        {rows.length === 0 ? (
+          <Empty text={tab === 'rm'
+            ? '아직 1RM 기록이 없어요.\n운동 기록에서 세트 번호를 눌러 ‘1RM’으로 바꾸면 여기에 모입니다.'
+            : '이 조건에 맞는 기록이 없어요.'} />
+        ) : (
+          <LineChart
+            series={series} unit="kg" invert={mode === 'assisted'}
+            selected={sel ? { seriesKey: tab, date: sel } : null}
+            onSelect={(_, p) => setSel(p.date)}
+          />
+        )}
+      </Card>
+      {tab === 'normal' && repsSel != null && (
+        <T muted style={{ fontSize: 11, marginBottom: S.sm }}>{repsSel}회 이상 한 세트 중 그날의 최고 중량입니다.</T>
+      )}
+
+      {selRow && (
+        <Card style={{ borderColor: C.accent }}>
+          <T bold>{selRow.date}</T>
+          <T muted style={{ marginTop: 4 }}>{selRow.note}</T>
+        </Card>
+      )}
+
+      {rows.length > 0 && (
+        <Card>
+          <Kv k={tab === 'rm' ? '최고 1RM' : '기간 내 최고'} v={best != null ? `${best}kg` : '—'} />
+          {tab === 'rm' && rmAll.length > 0 && <Kv k="전체 기간 최고 1RM" v={`${rmAll.reduce((b, p) => Math.max(b, p.best), 0)}kg`} />}
+          <Kv k="직전 대비" v={fmtChange(delta(last, prev))} color={changeColor(delta(last, prev), mode)} />
+          <Kv k="처음 대비" v={fmtChange(rows.length > 1 ? delta(last, first) : null)} color={changeColor(rows.length > 1 ? delta(last, first) : null, mode)} />
+          {mode === 'assisted' && <T muted style={{ marginTop: 6, fontSize: 12 }}>보조 중량은 낮을수록 좋은 기록입니다.</T>}
+        </Card>
+      )}
+
+      {rows.length > 0 && (
+        <Card>
+          <H style={{ fontSize: 15, marginBottom: S.sm }}>날짜별 기록</H>
+          {[...rows].reverse().slice(0, 30).map((r) => (
+            <Row key={r.date} style={{ paddingVertical: 5, borderBottomWidth: 1, borderBottomColor: C.line }}>
+              <T muted style={{ width: 92 }}>{r.date}</T>
+              <T bold style={{ flex: 1 }}>{r.value}kg</T>
+            </Row>
+          ))}
+        </Card>
+      )}
+    </ScrollView>
+  );
+}
 
 function Kv({ k, v, color }: { k: string; v: string; color?: string }) {
   return (
