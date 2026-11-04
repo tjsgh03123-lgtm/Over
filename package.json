@@ -1,0 +1,31 @@
+{
+  "name": "overdrive",
+  "version": "1.0.0",
+  "main": "index.ts",
+  "private": true,
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --no-warnings tests/run.ts && node --experimental-strip-types --no-warnings tests/db.ts"
+  },
+  "dependencies": {
+    "@react-native-ml-kit/text-recognition": "^1.5.2",
+    "expo": "~54.0.0",
+    "expo-clipboard": "~8.0.0",
+    "expo-document-picker": "~14.0.0",
+    "expo-file-system": "~19.0.0",
+    "expo-image-picker": "~17.0.0",
+    "expo-sharing": "~14.0.0",
+    "expo-sqlite": "~16.0.0",
+    "expo-status-bar": "~3.0.0",
+    "react": "19.1.0",
+    "react-native": "0.81.4",
+    "react-native-safe-area-context": "~5.6.0",
+    "react-native-svg": "15.12.1"
+  },
+  "devDependencies": {
+    "@types/react": "~19.1.0",
+    "typescript": "~5.9.2"
+  }
+}
