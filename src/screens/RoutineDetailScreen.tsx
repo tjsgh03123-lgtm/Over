@@ -1,12 +1,13 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Alert, ScrollView, View } from 'react-native';
 import { useApp } from '../app/context.tsx';
 import {
-  deleteDay, deleteRoutine, getRoutines, moveDay, renameRoutine, setActiveRoutine, setRoutineMode, setRoutineStart,
+  deleteDay, deleteRoutine, getRoutines, moveDayTo, renameRoutine, setActiveRoutine, setRoutineMode, setRoutineStart,
 } from '../db/repo.ts';
 import { startForDayNumber } from '../domain/cycle.ts';
 import { cycleDayNumber, type Routine, type RoutineDay } from '../domain/routine.ts';
 import { Btn, Card, Header, Row, Segmented, T, TextField } from '../ui/components.tsx';
+import { ReorderList } from '../ui/ReorderList.tsx';
 import { C, S } from '../ui/theme.ts';
 
 const WD = ['일', '월', '화', '수', '목', '금', '토'];
@@ -18,6 +19,9 @@ export function RoutineDetailScreen({ routineId }: { routineId: string }) {
   const [r, setR] = useState<Routine | null>(null);
   const [active, setActive] = useState(false);
   const [name, setName] = useState('');
+  const [dragging, setDragging] = useState(false);
+  const scrollRef = useRef<ScrollView>(null);
+  const scrollY = useRef(0);
 
   useEffect(() => {
     getRoutines(db, today).then((st) => {
@@ -38,7 +42,11 @@ export function RoutineDetailScreen({ routineId }: { routineId: string }) {
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
       <Header title="루틴 설정" onBack={nav.close} />
-      <ScrollView contentContainerStyle={{ padding: S.lg, paddingBottom: 60 }} keyboardShouldPersistTaps="handled">
+      <ScrollView
+        ref={scrollRef} scrollEnabled={!dragging} scrollEventThrottle={16}
+        onScroll={(e) => { scrollY.current = e.nativeEvent.contentOffset.y; }}
+        contentContainerStyle={{ padding: S.lg, paddingBottom: 60 }} keyboardShouldPersistTaps="handled"
+      >
         <Card>
           <T muted style={{ marginBottom: 6 }}>루틴 이름</T>
           <TextField
@@ -79,24 +87,31 @@ export function RoutineDetailScreen({ routineId }: { routineId: string }) {
           <Btn label="+ 날 추가" small onPress={() => nav.openDay(r.id, null)} />
         </Row>
         {len === 0 && <T muted style={{ marginBottom: S.md }}>날을 추가해 종목을 정하세요. 휴식도 하나의 날이에요.</T>}
-        {r.days.map((d, i) => (
-          <Card key={d.id}>
-            <Row>
-              <View style={{ flex: 1 }}>
-                <T bold>{r.mode === 'cycle' ? `${i + 1}일차 · ` : ''}{dayText(d)}{r.mode === 'cycle' && i + 1 === todayDay && active ? '  · 오늘' : ''}</T>
-              </View>
-              <Btn label="↑" kind="ghost" small disabled={i === 0} onPress={async () => { await moveDay(db, today, r.id, d.id, -1); bump(); }} />
-              <Btn label="↓" kind="ghost" small disabled={i === len - 1} onPress={async () => { await moveDay(db, today, r.id, d.id, 1); bump(); }} />
-              <Btn label="편집" kind="ghost" small onPress={() => nav.openDay(r.id, d.id)} />
-              <Btn
-                label="✕" kind="danger" small
-                onPress={() => Alert.alert('날 삭제', `‘${d.name}’을(를) 루틴에서 삭제할까요? 이미 완료한 기록은 유지됩니다.`, [
-                  { text: '취소' }, { text: '삭제', style: 'destructive', onPress: async () => { await deleteDay(db, today, r.id, d.id); bump(); } },
-                ])}
-              />
-            </Row>
-          </Card>
-        ))}
+        {len > 1 && <T muted style={{ fontSize: 12, marginBottom: S.sm }}>오른쪽 ≡를 길게 누른 채 위아래로 끌면 순서가 바뀝니다.</T>}
+        <ReorderList<RoutineDay>
+          items={r.days}
+          keyOf={(d) => d.id}
+          scroll={{ ref: scrollRef, offset: scrollY }}
+          onDragChange={setDragging}
+          onReorder={async (from, to) => { await moveDayTo(db, today, r.id, r.days[from].id, to); bump(); }}
+          renderItem={(d, i, handle) => (
+            <Card>
+              <Row>
+                <View style={{ flex: 1 }}>
+                  <T bold>{r.mode === 'cycle' ? `${i + 1}일차 · ` : ''}{dayText(d)}{r.mode === 'cycle' && i + 1 === todayDay && active ? '  · 오늘' : ''}</T>
+                </View>
+                <Btn label="편집" kind="ghost" small onPress={() => nav.openDay(r.id, d.id)} />
+                <Btn
+                  label="✕" kind="danger" small
+                  onPress={() => Alert.alert('날 삭제', `‘${d.name}’을(를) 루틴에서 삭제할까요? 이미 완료한 기록은 유지됩니다.`, [
+                    { text: '취소' }, { text: '삭제', style: 'destructive', onPress: async () => { await deleteDay(db, today, r.id, d.id); bump(); } },
+                  ])}
+                />
+                {handle}
+              </Row>
+            </Card>
+          )}
+        />
 
         <Btn
           label="루틴 삭제" kind="danger" style={{ marginTop: S.lg }}

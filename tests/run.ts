@@ -10,7 +10,8 @@ import { parseRoutine } from '../src/domain/parser.ts';
 import { cycleIndex, daysBetween, shiftStartForMissed, startForDayNumber } from '../src/domain/cycle.ts';
 import { cycleDayNumber, dayForDate, inferMode, MAX_DAYS, sanitizeRoutines, type Routine } from '../src/domain/routine.ts';
 import { AI_IMPORT_PROMPT, AI_PROMPT_DIVIDER } from '../src/domain/importSchema.ts';
-import { fmtDuration, fmtElapsed, suggestFor } from '../src/domain/format.ts';
+import { fmtDuration, fmtElapsed, restFor, suggestFor } from '../src/domain/format.ts';
+import { clampDrag, moveItem, targetIndex } from '../src/domain/reorder.ts';
 import { DEFAULT_GRAPH_COLORS, GRAPH_KEYS, sanitizeGraphColors, sanitizeMode } from '../src/domain/themeModel.ts';
 import type { SessionRecord, SetRecord } from '../src/domain/types.ts';
 
@@ -329,6 +330,60 @@ test('횟수 선택지: 많이 한 횟수 순으로 고르고 작은 횟수부�
 test('횟수별 추이: 그 횟수 이상 한 날의 최고 중량 (1RM 세트 제외)', () => {
   const all = [fs('2026-11-01', 60, 8), fs('2026-11-02', 70, 5), fs('2026-11-02', 100, 8, { isRm: true }), fs('2026-11-03', 65, 10)];
   assert.deepEqual(sameRepsTrend(all, 'e1', 8, 'weighted'), [{ date: '2026-11-01', weight: 60 }, { date: '2026-11-03', weight: 65 }]);
+});
+
+console.log('끌어서 순서 바꾸기 / 휴식 시간');
+test('moveItem: 앞으로·뒤로 옮기기, 범위를 벗어나면 가장자리, 원본은 그대로', () => {
+  const a = ['a', 'b', 'c', 'd'];
+  assert.deepEqual(moveItem(a, 0, 2), ['b', 'c', 'a', 'd']);
+  assert.deepEqual(moveItem(a, 3, 0), ['d', 'a', 'b', 'c']);
+  assert.deepEqual(moveItem(a, 1, 1), a);
+  assert.deepEqual(moveItem(a, 1, 99), ['a', 'c', 'd', 'b']);
+  assert.deepEqual(moveItem(a, 2, -5), ['c', 'a', 'b', 'd']);
+  assert.deepEqual(moveItem(a, 9, 0), a);
+  assert.deepEqual(a, ['a', 'b', 'c', 'd']);
+});
+test('targetIndex: 같은 높이 — 절반쯤 겹치면 자리가 바뀜', () => {
+  const h = [100, 100, 100, 100];
+  assert.equal(targetIndex(h, 1, 0), 1);
+  assert.equal(targetIndex(h, 1, 40), 1); // 아직 절반 못 넘음
+  assert.equal(targetIndex(h, 1, 60), 2);
+  assert.equal(targetIndex(h, 1, 140), 2);
+  assert.equal(targetIndex(h, 1, 170), 3);
+  assert.equal(targetIndex(h, 1, 999), 3); // 아래로 아무리 끌어도 맨 끝
+  assert.equal(targetIndex(h, 2, -40), 2);
+  assert.equal(targetIndex(h, 2, -60), 1);
+  assert.equal(targetIndex(h, 2, -999), 0);
+  assert.equal(targetIndex(h, 0, -30), 0);
+  assert.equal(targetIndex(h, 3, 30), 3);
+});
+test('targetIndex: 높이가 다른 항목들, 잘못된 from은 그대로', () => {
+  const h = [60, 200, 80]; // 중심선: 30, 160, 300
+  assert.equal(targetIndex(h, 0, 90), 0); // 아래 가장자리 150 < 160
+  assert.equal(targetIndex(h, 0, 110), 1);
+  assert.equal(targetIndex(h, 0, 230), 1);
+  assert.equal(targetIndex(h, 0, 250), 2);
+  assert.equal(targetIndex(h, 2, -90), 2); // 위 가장자리 170 > 160
+  assert.equal(targetIndex(h, 2, -120), 1);
+  assert.equal(targetIndex(h, 2, -250), 0);
+  assert.equal(targetIndex(h, 5, 10), 5);
+  assert.equal(targetIndex([], 0, 10), 0);
+});
+test('clampDrag: 목록 위·아래 끝을 넘지 않음', () => {
+  const h = [100, 100, 100];
+  assert.equal(clampDrag(h, 1, -500), -100);
+  assert.equal(clampDrag(h, 1, 500), 100);
+  assert.equal(clampDrag(h, 1, 30), 30);
+  assert.equal(clampDrag(h, 0, -50), 0);
+});
+test('휴식 시간: 종목 값 우선, 없으면 기본값, 0 이하는 끔, 상한 10분', () => {
+  assert.equal(restFor(120, 90), 120);
+  assert.equal(restFor(null, 90), 90);
+  assert.equal(restFor(0, 90), 90);
+  assert.equal(restFor(undefined, 0), 0);
+  assert.equal(restFor(60, 0), 60); // 기본이 꺼져 있어도 종목에 정해 둔 값은 사용
+  assert.equal(restFor(9999, 90), 600);
+  assert.equal(restFor(-5, -5), 0);
 });
 
 console.log('테마 / 그래프 색상');

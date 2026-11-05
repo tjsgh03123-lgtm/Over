@@ -2,21 +2,25 @@ import React, { useEffect, useState } from 'react';
 import { Alert, Pressable, ScrollView, View } from 'react-native';
 import { useApp } from '../app/context.tsx';
 import { exportBackup, exportBodyCsv, exportWorkoutCsv, restoreBackup } from '../db/backup.ts';
-import { getWeightStep, setSetting } from '../db/repo.ts';
+import { getRestDefault, getWeightStep, setSetting } from '../db/repo.ts';
 import { pickTextFile, shareTextFile, stamp } from '../services/files.ts';
 import { GRAPH_KEYS, GRAPH_LABEL, GRAPH_PRESETS } from '../domain/themeModel.ts';
 import { Btn, Card, H, Row, Segmented, T } from '../ui/components.tsx';
 import { C, GC, S } from '../ui/theme.ts';
 
 const STEPS = [1, 2.5, 5];
+const RESTS = [0, 60, 90, 120, 180];
+const restLabel = (v: number) => (v === 0 ? '끄기' : v % 60 === 0 ? `${v / 60}분` : `${v}초`);
 
 export function SettingsScreen() {
   const { db, version, nav, bump, theme } = useApp();
   const [step, setStep] = useState(2.5);
+  const [rest, setRest] = useState(90);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     getWeightStep(db).then(setStep);
+    getRestDefault(db).then(setRest);
   }, [db, version]);
 
   const guard = async (fn: () => Promise<void>) => {
@@ -35,6 +39,14 @@ export function SettingsScreen() {
           options={STEPS.map((v) => ({ key: String(v), label: `${v}kg` }))}
           value={String(step)}
           onChange={(k) => { setStep(Number(k)); setSetting(db, 'weight_step', k); }}
+        />
+        <T muted style={{ fontSize: 12, marginTop: S.md, marginBottom: S.sm }}>
+          세트 사이 휴식 타이머 — 세트를 ✓하면 카운트다운이 돌고, 끝나면 진동해요. 루틴에서 종목별로 정한 휴식(초)이 있으면 그 값을 먼저 씁니다.
+        </T>
+        <Segmented
+          options={RESTS.map((v) => ({ key: String(v), label: restLabel(v) }))}
+          value={String(rest)}
+          onChange={(k) => { setRest(Number(k)); setSetting(db, 'rest_default_sec', k); }}
         />
       </Card>
 

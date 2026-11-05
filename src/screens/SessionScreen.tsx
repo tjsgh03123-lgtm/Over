@@ -1,19 +1,20 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Alert, Pressable, ScrollView, Switch, Text, View } from 'react-native';
+import { Alert, Pressable, ScrollView, Switch, Text, Vibration, View } from 'react-native';
 import { useApp } from '../app/context.tsx';
 import {
-  addCardio, addSessionExercise, addSet, deleteSet, deleteSession, finishSession, getWeightStep, lastPerformance,
+  addCardio, addSessionExercise, addSet, deleteSet, deleteSession, finishSession, getRestDefault, getSessionRests, getWeightStep, lastPerformance,
   loadSession, removeSessionExercise, reopenSession, saveSessionAsDay, setExerciseNote,
   setSessionNote, updateSet, type SessionExRow, type SessionFull, type SetRow,
 } from '../db/repo.ts';
-import { fmtClock, fmtDuration, fmtElapsed, suggestFor } from '../domain/format.ts';
-import { Btn, Card, Header, NumInput, Row, T, TextField } from '../ui/components.tsx';
+import { fmtClock, fmtDuration, fmtElapsed, restFor, suggestFor } from '../domain/format.ts';
+import { Btn, Card, Chip, Header, NumInput, Row, T, TextField } from '../ui/components.tsx';
 import { ExercisePicker } from '../ui/ExercisePicker.tsx';
 import { C, S } from '../ui/theme.ts';
 import { useElapsed } from '../ui/useElapsed.ts';
 
 type Last = { weight: number | null; reps: number | null };
 type Focus = { setId: string; field: 'weight' | 'reps' } | null;
+type Rest = { endAt: number; total: number; done: boolean } | null;
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -29,6 +30,11 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
   const [postCardio, setPostCardio] = useState(false);
   const [postCardioMin, setPostCardioMin] = useState<number | null>(null);
   const [saveTplName, setSaveTplName] = useState<string | null>(null);
+  const [kindOpen, setKindOpen] = useState<string | null>(null); // 세트 종류(본/준비/1RM) 선택을 펼친 세트
+  const [rests, setRests] = useState<Record<string, number | null>>({}); // 세션 종목 id → 루틴에 정해 둔 휴식(초)
+  const [restDefault, setRestDefault] = useState(90);
+  const [rest, setRest] = useState<Rest>(null); // 세트 사이 휴식 카운트다운
+  const [now, setNow] = useState(Date.now());
 
   const reload = useCallback(async () => {
     const full = await loadSession(db, sessionId);
@@ -41,6 +47,8 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
       }
       setLasts(l);
       setStep(await getWeightStep(db));
+      setRests(await getSessionRests(db, sessionId));
+      setRestDefault(await getRestDefault(db));
       if (full.template_id) {
         const t = await db.first<{ post_cardio_min: number | null }>('SELECT post_cardio_min FROM workout_templates WHERE id = ?', [full.template_id]);
         setPostCardioMin(t?.post_cardio_min ?? null);
@@ -52,6 +60,25 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
 
   // 운동 타이머: 시작 시각 기준이라 앱을 껐다 켜거나 화면을 나갔다 와도 이어서 흐른다
   const elapsed = useElapsed(s?.started_at, s?.status === 'active');
+
+  // 휴식 카운트다운: 끝나면 진동하고 '휴식 끝'을 잠깐 보여 준 뒤 사라진다
+  useEffect(() => {
+    if (!rest) return;
+    const t = setInterval(() => setNow(Date.now()), 250);
+    return () => clearInterval(t);
+  }, [rest]);
+  const restLeft = rest ? Math.max(0, Math.ceil((rest.endAt - now) / 1000)) : 0;
+  useEffect(() => {
+    if (rest && !rest.done && restLeft === 0) {
+      Vibration.vibrate([0, 250, 120, 250]);
+      setRest({ ...rest, done: true });
+    }
+  }, [rest, restLeft]);
+  useEffect(() => {
+    if (!rest?.done) return;
+    const t = setTimeout(() => setRest(null), 5000);
+    return () => clearTimeout(t);
+  }, [rest?.done, rest?.endAt]);
 
   if (!s) return <View style={{ flex: 1, backgroundColor: C.bg }}><Header title="불러오는 중" onBack={nav.close} /></View>;
 
@@ -86,6 +113,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
         await addCardio(db, { date: s.date, durationMin: postCardioMin, intensity: 'low', kind: 'post_weights', sessionId: s.id });
       }
       setFocus(null);
+      setRest(null);
       bump();
       await reload();
     };
@@ -103,7 +131,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
         onBack={nav.close}
         right={editable ? <T bold style={{ fontSize: 16 }}>{fmtElapsed(elapsed)}</T> : <T muted>{s.date}</T>}
       />
-      <ScrollView contentContainerStyle={{ padding: S.lg, paddingBottom: 170 }} keyboardShouldPersistTaps="handled">
+      <ScrollView contentContainerStyle={{ padding: S.lg, paddingBottom: 240 }} keyboardShouldPersistTaps="handled">
         {s.exercises.map((ex) => {
           const open = !collapsed[ex.id];
           const showOpts = !!opts[ex.id];
@@ -134,8 +162,8 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
                       <View key={row.id} style={{ marginBottom: S.sm }}>
                         <Row>
                           <Pressable
-                            disabled={!editable || !showOpts}
-                            onPress={() => patchSet(ex, row, { kind: row.is_rm ? 'working' : row.set_type === 'warmup' ? 'rm' : 'warmup' })}
+                            disabled={!editable}
+                            onPress={() => setKindOpen(kindOpen === row.id ? null : row.id)}
                             onLongPress={() => Alert.alert('세트 삭제', `${row.set_no}세트를 삭제할까요?`, [
                               { text: '취소' }, { text: '삭제', style: 'destructive', onPress: async () => { await deleteSet(db, row.id); bump(); reload(); } },
                             ])}
@@ -161,6 +189,10 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
                             onPress={() => {
                               setFocus(null);
                               if (row.done) return patchSet(ex, row, { done: false });
+                              // 세트를 끝내면 휴식 카운트다운 시작 (준비 세트·마지막 세트는 제외, 0이면 끔)
+                              const allOthersDone = allSets.every((x) => x.id === row.id || x.done);
+                              const sec = row.set_type === 'warmup' || allOthersDone ? 0 : restFor(rests[ex.id], restDefault);
+                              if (sec > 0) { const t = Date.now(); setNow(t); setRest({ endAt: t + sec * 1000, total: sec, done: false }); }
                               // ✓: 칸에 들어 있는(또는 흐리게 보이던) 숫자를 그대로 이 세트의 기록으로 확정
                               patchSet(ex, row, {
                                 done: true,
@@ -176,6 +208,19 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
                             <Text style={{ color: row.done ? C.onAccent : C.muted, fontWeight: '800', fontSize: 18 }}>✓</Text>
                           </Pressable>
                         </Row>
+                        {editable && kindOpen === row.id && (
+                          <Row style={{ marginTop: 6, marginLeft: 40, flexWrap: 'wrap' }}>
+                            <Chip label="본 세트" active={row.set_type === 'working' && !row.is_rm} onPress={() => { patchSet(ex, row, { kind: 'working' }); setKindOpen(null); }} />
+                            <Chip label="준비 세트" active={row.set_type === 'warmup'} onPress={() => { patchSet(ex, row, { kind: 'warmup' }); setKindOpen(null); }} />
+                            <Chip label="1RM 측정" active={!!row.is_rm} onPress={() => { patchSet(ex, row, { kind: 'rm' }); setKindOpen(null); }} />
+                            <Btn
+                              label="삭제" kind="danger" small
+                              onPress={() => Alert.alert('세트 삭제', `${row.set_no}세트를 삭제할까요?`, [
+                                { text: '취소' }, { text: '삭제', style: 'destructive', onPress: async () => { setKindOpen(null); await deleteSet(db, row.id); bump(); reload(); } },
+                              ])}
+                            />
+                          </Row>
+                        )}
                         {editable && focused && (
                           <Row style={{ marginTop: 6, marginLeft: 40 }}>
                             {(focused === 'weight' ? [-step * 2, -step, step, step * 2] : [-5, -1, 1, 5]).map((d) => (
@@ -223,7 +268,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
                           />
                         </Row>
                       )}
-                      <T muted style={{ fontSize: 11, marginTop: S.sm }}>세트 번호 탭: 본 → 준비 → 1RM 순서로 전환 · 길게 누름: 삭제</T>
+                      <T muted style={{ fontSize: 11, marginTop: S.sm }}>세트 번호를 누르면 본 / 준비 / 1RM 측정을 고르거나 삭제할 수 있어요</T>
                     </View>
                   )}
                 </View>
@@ -304,6 +349,13 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
 
       {editable && (
         <View style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: S.lg, backgroundColor: C.bg, borderTopWidth: 1, borderTopColor: C.line }}>
+          {rest && (
+            <Row style={{ marginBottom: S.sm, padding: S.md, borderRadius: 12, backgroundColor: C.card2, borderWidth: 1, borderColor: rest.done ? C.accent : C.line }}>
+              <T bold style={{ flex: 1, fontSize: 16 }}>{rest.done ? '휴식 끝 · 다음 세트' : `휴식 ${fmtElapsed(restLeft)}`}</T>
+              {!rest.done && <Btn label="+30초" kind="ghost" small onPress={() => setRest({ ...rest, endAt: rest.endAt + 30000, total: rest.total + 30 })} />}
+              <Btn label={rest.done ? '닫기' : '건너뛰기'} kind="ghost" small onPress={() => setRest(null)} />
+            </Row>
+          )}
           <Row style={{ justifyContent: 'space-between', marginBottom: S.sm }}>
             <T muted>시작 {fmtClock(s.started_at)}</T>
             <T bold style={{ fontSize: 22 }}>{fmtElapsed(elapsed)}</T>

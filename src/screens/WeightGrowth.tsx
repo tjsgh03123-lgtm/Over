@@ -216,7 +216,7 @@ function Detail({ ex, flat, today, onBack }: { ex: TrackedExercise; flat: FlatSe
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingVertical: S.md }}>
           <Chip label="전체" active={repsSel == null} onPress={() => { setReps(null); setSel(null); }} />
           {choices.options.map((r) => (
-            <Chip key={r} label={`${r}회`} active={repsSel === r} onPress={() => { setReps(r); setSel(null); }} />
+            <Chip key={r} label={`${r}회+`} active={repsSel === r} onPress={() => { setReps(r); setSel(null); }} />
           ))}
         </ScrollView>
       )}
@@ -238,7 +238,7 @@ function Detail({ ex, flat, today, onBack }: { ex: TrackedExercise; flat: FlatSe
         )}
       </Card>
       {tab === 'normal' && repsSel != null && (
-        <T muted style={{ fontSize: 11, marginBottom: S.sm }}>{repsSel}회 이상 한 세트 중 그날의 최고 중량입니다.</T>
+        <T muted style={{ fontSize: 11, marginBottom: S.sm }}>‘{repsSel}회+’는 {repsSel}회 이상 한 세트 중 그날의 최고 중량입니다.</T>
       )}
 
       {selRow && (

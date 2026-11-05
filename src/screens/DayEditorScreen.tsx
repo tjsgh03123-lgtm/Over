@@ -1,10 +1,12 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Alert, ScrollView, View } from 'react-native';
 import { useApp } from '../app/context.tsx';
 import { getDayDetail, getRoutines, upsertDay, type TemplateExerciseInput } from '../db/repo.ts';
 import type { DayKind, RoutineMode } from '../domain/routine.ts';
+import { moveItem } from '../domain/reorder.ts';
 import { Btn, Card, Chip, Header, NumInput, Row, T, TextField } from '../ui/components.tsx';
 import { ExercisePicker } from '../ui/ExercisePicker.tsx';
+import { ReorderList } from '../ui/ReorderList.tsx';
 import { C, S } from '../ui/theme.ts';
 
 const WD = ['일', '월', '화', '수', '목', '금', '토'];
@@ -13,7 +15,9 @@ const KINDS: { key: DayKind; label: string }[] = [
   { key: 'weights', label: '웨이트' }, { key: 'cardio', label: '유산소' }, { key: 'rest', label: '휴식' },
 ];
 
-interface EditEx extends TemplateExerciseInput { name: string }
+interface EditEx extends TemplateExerciseInput { name: string; key: string }
+let keySeq = 0;
+const newKey = () => `ex${++keySeq}`;
 
 /** 루틴의 '날' 한 개 편집: 이름·종류·(요일 지정 방식이면 요일)·종목 */
 export function DayEditorScreen({ routineId, dayId }: { routineId: string; dayId: string | null }) {
@@ -26,6 +30,9 @@ export function DayEditorScreen({ routineId, dayId }: { routineId: string; dayId
   const [exercises, setExercises] = useState<EditEx[]>([]);
   const [picker, setPicker] = useState(false);
   const [ready, setReady] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const scrollRef = useRef<ScrollView>(null);
+  const scrollY = useRef(0);
 
   useEffect(() => {
     (async () => {
@@ -36,7 +43,7 @@ export function DayEditorScreen({ routineId, dayId }: { routineId: string; dayId
         if (d) {
           setName(d.day.name); setKind(d.day.kind); setWeekday(d.day.weekday); setPostCardio(d.postCardioMin);
           setExercises(d.exercises.map((e) => ({
-            exerciseId: e.exercise_id, name: e.name, targetSets: e.target_sets, targetReps: e.target_reps,
+            key: newKey(), exerciseId: e.exercise_id, name: e.name, targetSets: e.target_sets, targetReps: e.target_reps,
             targetWeight: e.target_weight, intensity: e.intensity, restSec: e.rest_sec, note: e.note,
           })));
         }
@@ -46,21 +53,13 @@ export function DayEditorScreen({ routineId, dayId }: { routineId: string; dayId
   }, [db, today, routineId, dayId]);
 
   const patchEx = (i: number, p: Partial<EditEx>) => setExercises((l) => l.map((e, k) => (k === i ? { ...e, ...p } : e)));
-  const move = (i: number, dir: -1 | 1) =>
-    setExercises((l) => {
-      const j = i + dir;
-      if (j < 0 || j >= l.length) return l;
-      const arr = [...l];
-      [arr[i], arr[j]] = [arr[j], arr[i]];
-      return arr;
-    });
 
   const save = async () => {
     if (kind === 'weights' && !name.trim()) return Alert.alert('날 이름을 입력하세요', '예: 가슴·삼두');
     try {
       await upsertDay(db, today, routineId, {
         id: dayId ?? undefined, name, kind, weekday: mode === 'weekday' ? weekday : null,
-        postCardioMin: postCardio, exercises: exercises.map(({ name: _n, ...rest }) => rest),
+        postCardioMin: postCardio, exercises: exercises.map(({ name: _n, key: _k, ...rest }) => rest),
       });
       bump();
       nav.close();
@@ -74,7 +73,11 @@ export function DayEditorScreen({ routineId, dayId }: { routineId: string; dayId
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
       <Header title={dayId ? '날 편집' : '날 추가'} onBack={nav.close} />
-      <ScrollView contentContainerStyle={{ padding: S.lg, paddingBottom: 100 }} keyboardShouldPersistTaps="handled">
+      <ScrollView
+        ref={scrollRef} scrollEnabled={!dragging} scrollEventThrottle={16}
+        onScroll={(e) => { scrollY.current = e.nativeEvent.contentOffset.y; }}
+        contentContainerStyle={{ padding: S.lg, paddingBottom: 100 }} keyboardShouldPersistTaps="handled"
+      >
         <Card>
           <TextField value={name} onChangeText={setName} placeholder={kind === 'rest' ? '휴식' : kind === 'cardio' ? '유산소' : '날 이름 (예: 가슴·삼두)'} />
           <Row style={{ marginTop: S.md }}>
@@ -99,21 +102,29 @@ export function DayEditorScreen({ routineId, dayId }: { routineId: string; dayId
 
         {kind === 'weights' && (
           <>
-            {exercises.map((e, i) => (
-              <Card key={`${e.exerciseId}-${i}`}>
-                <Row>
-                  <T bold style={{ flex: 1 }}>{i + 1}. {e.name}</T>
-                  <Btn label="↑" kind="ghost" small onPress={() => move(i, -1)} />
-                  <Btn label="↓" kind="ghost" small onPress={() => move(i, 1)} />
-                  <Btn label="✕" kind="danger" small onPress={() => setExercises((l) => l.filter((_, k) => k !== i))} />
-                </Row>
-                <Row style={{ marginTop: 6, flexWrap: 'wrap' }}>
-                  <T muted>세트</T><NumInput value={e.targetSets ?? 3} decimal={false} width={52} onCommit={(v) => patchEx(i, { targetSets: Math.max(1, v ?? 3) })} />
-                  <T muted>횟수</T><NumInput value={e.targetReps ?? null} decimal={false} width={52} onCommit={(v) => patchEx(i, { targetReps: v })} />
-                  <T muted>kg</T><NumInput value={e.targetWeight ?? null} width={64} onCommit={(v) => patchEx(i, { targetWeight: v })} />
-                </Row>
-              </Card>
-            ))}
+            {exercises.length > 1 && <T muted style={{ fontSize: 12, marginBottom: S.sm }}>오른쪽 ≡를 길게 누른 채 위아래로 끌면 순서가 바뀝니다.</T>}
+            <ReorderList<EditEx>
+              items={exercises}
+              keyOf={(e) => e.key}
+              scroll={{ ref: scrollRef, offset: scrollY }}
+              onDragChange={setDragging}
+              onReorder={(from, to) => setExercises((l) => moveItem(l, from, to))}
+              renderItem={(e, i, handle) => (
+                <Card>
+                  <Row>
+                    <T bold style={{ flex: 1 }}>{i + 1}. {e.name}</T>
+                    <Btn label="✕" kind="danger" small onPress={() => setExercises((l) => l.filter((x) => x.key !== e.key))} />
+                    {handle}
+                  </Row>
+                  <Row style={{ marginTop: 6, flexWrap: 'wrap' }}>
+                    <T muted>세트</T><NumInput value={e.targetSets ?? 3} decimal={false} width={52} onCommit={(v) => patchEx(i, { targetSets: Math.max(1, v ?? 3) })} />
+                    <T muted>횟수</T><NumInput value={e.targetReps ?? null} decimal={false} width={52} onCommit={(v) => patchEx(i, { targetReps: v })} />
+                    <T muted>kg</T><NumInput value={e.targetWeight ?? null} width={64} onCommit={(v) => patchEx(i, { targetWeight: v })} />
+                    <T muted>휴식(초)</T><NumInput value={e.restSec ?? null} decimal={false} width={60} placeholder="기본" onCommit={(v) => patchEx(i, { restSec: v })} />
+                  </Row>
+                </Card>
+              )}
+            />
             <Btn label="+ 종목 추가" kind="ghost" onPress={() => setPicker(true)} />
           </>
         )}
@@ -124,7 +135,7 @@ export function DayEditorScreen({ routineId, dayId }: { routineId: string; dayId
       <ExercisePicker
         visible={picker}
         onClose={() => setPicker(false)}
-        onPick={(e) => { setPicker(false); setExercises((l) => [...l, { exerciseId: e.id, name: e.name, targetSets: 3 }]); }}
+        onPick={(e) => { setPicker(false); setExercises((l) => [...l, { key: newKey(), exerciseId: e.id, name: e.name, targetSets: 3 }]); }}
       />
     </View>
   );

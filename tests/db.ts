@@ -735,5 +735,53 @@ await test('첫 실행 설정: 새로 설치할 때만 표시 대기 상태가 �
   assert.equal(await repo.getSetting(old, 'setup_pending'), null);
 });
 
+console.log('날 끌어서 옮기기 / 휴식 설정');
+await test('날을 원하는 위치로 옮기기(moveDayTo): 앞·뒤·같은 자리·범위 밖, 사이클 일차가 순서를 따름', async () => {
+  const db = await emptyDb();
+  const today = '2026-11-05';
+  const rid = await repo.createRoutine(db, today, { name: '4분할' });
+  const ids: string[] = [];
+  for (const n of ['가슴', '등', '하체', '어깨']) ids.push(await repo.upsertDay(db, today, rid, { name: n, kind: 'weights', exercises: [] }));
+  const names = async () => (await repo.getRoutines(db, today)).routines[0].days.map((d) => d.name);
+  assert.deepEqual(await names(), ['가슴', '등', '하체', '어깨']);
+  await repo.moveDayTo(db, today, rid, ids[0], 2);
+  assert.deepEqual(await names(), ['등', '하체', '가슴', '어깨']);
+  await repo.moveDayTo(db, today, rid, ids[3], 0);
+  assert.deepEqual(await names(), ['어깨', '등', '하체', '가슴']);
+  await repo.moveDayTo(db, today, rid, ids[1], 1); // 같은 자리
+  await repo.moveDayTo(db, today, rid, ids[1], 99);
+  assert.deepEqual(await names(), ['어깨', '하체', '가슴', '등']);
+  await repo.moveDayTo(db, today, rid, 'nope', 0); // 없는 날은 무시
+  assert.equal((await names()).length, 4);
+});
+await test('세트 사이 휴식: 기본값(90초)·설정값·잘못된 값, 루틴에 정한 종목별 휴식을 운동에서 읽음', async () => {
+  const db = await emptyDb();
+  assert.equal(await repo.getRestDefault(db), 90);
+  await repo.setSetting(db, 'rest_default_sec', '0');
+  assert.equal(await repo.getRestDefault(db), 0);
+  await repo.setSetting(db, 'rest_default_sec', '120');
+  assert.equal(await repo.getRestDefault(db), 120);
+  await repo.setSetting(db, 'rest_default_sec', 'abc');
+  assert.equal(await repo.getRestDefault(db), 90);
+
+  const today = '2026-11-05';
+  const bench = await repo.getOrCreateExercise(db, '벤치프레스');
+  const fly = await repo.getOrCreateExercise(db, '플라이');
+  const rid = await repo.createRoutine(db, today, { name: '상체' });
+  const did = await repo.upsertDay(db, today, rid, { name: '가슴', kind: 'weights', exercises: [
+    { exerciseId: bench.id, targetSets: 3, targetReps: 8, targetWeight: null, restSec: 150 },
+    { exerciseId: fly.id, targetSets: 3, targetReps: 12, targetWeight: null } ] });
+  const day = (await repo.getDayDetail(db, today, rid, did))!;
+  const sid = await repo.startSessionFromTemplate(db, day.day.templateId!, today);
+  const full = (await repo.loadSession(db, sid))!;
+  const rests = await repo.getSessionRests(db, sid);
+  assert.equal(rests[full.exercises.find((e) => e.exercise_name === '벤치프레스')!.id], 150);
+  assert.equal(rests[full.exercises.find((e) => e.exercise_name === '플라이')!.id], null);
+  // 자유 운동에서 추가한 종목에는 정해 둔 휴식이 없음
+  const free = await repo.startFreeSession(db, today);
+  const seId = await repo.addSessionExercise(db, free, bench.id);
+  assert.equal((await repo.getSessionRests(db, free))[seId], null);
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

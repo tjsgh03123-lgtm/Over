@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, AppState, BackHandler, Pressable, Text, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
+import * as SystemUI from 'expo-system-ui';
 import { Ctx, type AppCtx, type Nav, type Tab } from './src/app/context.tsx';
 import { localDateStr, type Db } from './src/db/adapter.ts';
 import { openAppDb } from './src/db/expoAdapter.ts';
@@ -57,6 +58,7 @@ export default function App() {
       // 저장된 화면 모드·그래프 색상 복원 (없으면 다크 + 기본 색)
       const m = sanitizeMode(await getSetting(d, 'theme_mode'));
       applyTheme(m, sanitizeGraphColors(await getSetting(d, 'graph_colors')));
+      SystemUI.setBackgroundColorAsync(C.bg).catch(() => {}); // 앱 창 배경을 화면 모드에 맞춰 깜빡임 방지
       setModeState(m);
       setDb(d);
       if ((await getSetting(d, 'setup_pending')) === '1') setStack([{ name: 'setup' }]);
@@ -133,6 +135,7 @@ export default function App() {
     mode,
     setMode: (m: ThemeMode) => {
       applyTheme(m);
+      SystemUI.setBackgroundColorAsync(C.bg).catch(() => {});
       setModeState(m);
       setSetting(db, 'theme_mode', m);
     },

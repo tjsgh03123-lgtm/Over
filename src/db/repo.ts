@@ -6,6 +6,7 @@ import {
 import type { ParsedDay } from '../domain/parser.ts';
 import { addDays, weekStart } from '../domain/stats.ts';
 import { shiftStartForMissed } from '../domain/cycle.ts';
+import { moveItem } from '../domain/reorder.ts';
 import {
   dayForDate, EMPTY_ROUTINES, inferMode, MAX_DAYS, sanitizeRoutines,
   type DayKind, type Routine, type RoutineDay, type RoutineMode, type RoutinesState,
@@ -284,6 +285,15 @@ export async function moveDay(db: Db, today: string, routineId: string, dayId: s
   });
 }
 
+/** 끌어서 옮기기: 날을 toIndex 위치로 */
+export async function moveDayTo(db: Db, today: string, routineId: string, dayId: string, toIndex: number): Promise<void> {
+  await mutateRoutine(db, today, routineId, (x) => {
+    const i = x.days.findIndex((d) => d.id === dayId);
+    if (i < 0) return x;
+    return { ...x, days: moveItem(x.days, i, toIndex) };
+  });
+}
+
 /** 날 편집 화면용: 날 + 종목 */
 export async function getDayDetail(db: Db, today: string, routineId: string, dayId: string) {
   const st = await getRoutines(db, today);
@@ -396,6 +406,28 @@ export async function resolveMissed(db: Db, today: string, missed: MissedRoutine
 }
 
 /** 세트 입력의 ± 버튼 단위 (kg) */
+/** 세트 사이 기본 휴식(초). 0이면 휴식 타이머 끔. 설정하지 않았으면 90초 */
+export async function getRestDefault(db: Db): Promise<number> {
+  const raw = await getSetting(db, 'rest_default_sec');
+  if (raw == null) return 90;
+  const v = Number(raw);
+  return Number.isFinite(v) && v >= 0 ? Math.min(600, Math.round(v)) : 90;
+}
+
+/** 운동(세션)의 종목별로, 루틴에 정해 둔 세트 간 휴식(초). 정해 둔 값이 없으면 null */
+export async function getSessionRests(db: Db, sessionId: string): Promise<Record<string, number | null>> {
+  const rows = await db.all<{ id: string; rest: number | null }>(
+    `SELECT se.id AS id, t.rest_sec AS rest
+       FROM workout_session_exercises se
+       JOIN workout_sessions s ON s.id = se.session_id
+       LEFT JOIN workout_template_exercises t ON t.template_id = s.template_id AND t.exercise_id = se.exercise_id
+      WHERE se.session_id = ?
+      ORDER BY t.position`, [sessionId]);
+  const out: Record<string, number | null> = {};
+  for (const r of rows) if (!(r.id in out) || (out[r.id] == null && r.rest != null)) out[r.id] = r.rest;
+  return out;
+}
+
 export async function getWeightStep(db: Db): Promise<number> {
   const v = Number(await getSetting(db, 'weight_step'));
   return Number.isFinite(v) && v > 0 ? v : 2.5;

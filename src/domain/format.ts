@@ -37,3 +37,9 @@ export function suggestFor<T extends { set_type: string }>(
   }
   return type === 'working' ? last : null;
 }
+
+/** 세트 사이 휴식 시간(초): 종목에 정해 둔 값이 있으면 그것, 없으면 기본값. 0 이하면 휴식 타이머를 쓰지 않는다. */
+export function restFor(exerciseSec: number | null | undefined, defaultSec: number): number {
+  const v = exerciseSec != null && exerciseSec > 0 ? exerciseSec : defaultSec;
+  return Number.isFinite(v) && v > 0 ? Math.min(600, Math.round(v)) : 0;
+}
