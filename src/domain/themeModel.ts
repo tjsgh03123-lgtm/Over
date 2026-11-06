@@ -2,7 +2,7 @@ export type ThemeMode = 'dark' | 'light';
 
 /** 색을 쓰는 곳은 그래프뿐. 그래프 선마다 색을 고를 수 있다. */
 export const GRAPH_KEYS = [
-  'all', 'weight', 'skeletal_muscle', 'body_fat_mass', 'body_fat_pct',
+  'all', 'weight', 'skeletal_muscle', 'body_fat_mass', 'body_fat_pct', 'pose',
 ] as const;
 export type GraphKey = (typeof GRAPH_KEYS)[number];
 
@@ -12,6 +12,7 @@ export const GRAPH_LABEL: Record<GraphKey, string> = {
   skeletal_muscle: '골격근량',
   body_fat_mass: '체지방량',
   body_fat_pct: '체지방률',
+  pose: '영상 분석 각도',
 };
 
 export const GRAPH_PRESETS: { name: string; hex: string }[] = [
@@ -31,6 +32,7 @@ export const DEFAULT_GRAPH_COLORS: Record<GraphKey, string> = {
   skeletal_muscle: '#43A047',
   body_fat_mass: '#FB8C00',
   body_fat_pct: '#E53935',
+  pose: '#8E24AA',
 };
 
 const HEX = /^#[0-9a-fA-F]{6}$/;

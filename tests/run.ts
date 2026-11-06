@@ -13,6 +13,10 @@ import { AI_IMPORT_PROMPT, AI_PROMPT_DIVIDER } from '../src/domain/importSchema.
 import { fmtDuration, fmtElapsed, restFor, suggestFor } from '../src/domain/format.ts';
 import { clampDrag, moveItem, targetIndex } from '../src/domain/reorder.ts';
 import { DEFAULT_GRAPH_COLORS, GRAPH_KEYS, sanitizeGraphColors, sanitizeMode } from '../src/domain/themeModel.ts';
+import {
+  angleDeg, angleSeries, autoPickPreset, base64ToBytes, bytesToBase64, confidenceSeries, decodeTrack, detectReps, encodeTrack,
+  FRAME_STRIDE, frameCountFor, LM, lowRanges, PRESET_ANGLES, smoothSeries, summarizeReps,
+} from '../src/domain/pose.ts';
 import type { SessionRecord, SetRecord } from '../src/domain/types.ts';
 
 let passed = 0;
@@ -493,6 +497,115 @@ test('다음 세트는 앞 세트 값에서 시작, 첫 세트는 지난 기록,
   assert.equal(w(1, null), null); // 지난 기록 없음 → 빈 칸
   assert.equal(w(3, 40), 45); // 앞 세트를 45로 바꿨다면 거기서 시작
   assert.equal(w(0, 40), null); // 첫 준비 세트는 제안 없음
+});
+
+// ---- 영상 자세 분석 ----
+function fakeTrack(frames: number, fn: (f: number) => Partial<Record<number, [number, number, number]>>): Float32Array {
+  const t = new Float32Array(frames * FRAME_STRIDE);
+  for (let f = 0; f < frames; f++) {
+    const pts = fn(f);
+    for (const k of Object.keys(pts)) {
+      const i = Number(k), [x, y, v] = pts[i]!;
+      t[f * FRAME_STRIDE + i * 3] = x; t[f * FRAME_STRIDE + i * 3 + 1] = y; t[f * FRAME_STRIDE + i * 3 + 2] = v;
+    }
+  }
+  return t;
+}
+/** 오른쪽 팔꿈치가 주기적으로 굽혔다 펴지는 가짜 영상: 어깨(0.5,0.2) 팔꿈치(0.5,0.4) 손목이 팔꿈치 둘레를 돈다 */
+function curlTrack(frames: number, period: number, visible = (_f: number) => true): Float32Array {
+  return fakeTrack(frames, (f) => {
+    const v = visible(f) ? 0.99 : 0.1;
+    // 각도 θ: 170도(편) ↔ 40도(굽힘)
+    const theta = (105 + 65 * Math.cos((2 * Math.PI * f) / period)) * (Math.PI / 180);
+    const ex = 0.5, ey = 0.4;
+    return {
+      [LM.R_SHOULDER]: [0.5, 0.2, v],
+      [LM.R_ELBOW]: [ex, ey, v],
+      [LM.R_WRIST]: [ex + 0.2 * Math.sin(theta), ey - 0.2 * Math.cos(theta), v],
+    };
+  });
+}
+
+test('세 점 사이각: 직각·직선·겹침', () => {
+  assert.ok(Math.abs(angleDeg({ x: 1, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 1 }) - 90) < 1e-9);
+  assert.ok(Math.abs(angleDeg({ x: -1, y: 0 }, { x: 0, y: 0 }, { x: 1, y: 0 }) - 180) < 1e-9);
+  assert.equal(angleDeg({ x: 0, y: 0 }, { x: 0, y: 0 }, { x: 1, y: 1 }), 0);
+});
+test('각도는 가로세로 비율을 반영 (정규화 좌표 왜곡 없음)', () => {
+  const t = fakeTrack(1, () => ({ [LM.R_SHOULDER]: [0.5, 0.0, 1], [LM.R_ELBOW]: [0.5, 0.5, 1], [LM.R_WRIST]: [1.0, 0.5, 1] }));
+  const def = PRESET_ANGLES.find((d) => d.id === 'elbow_r')!;
+  assert.ok(Math.abs(angleSeries(t, def, 1, 1)[0]! - 90) < 1e-6);
+  // 영상이 1000x500이면 정사각 가정과 달리 (0,-250)·(500,0) 방향이라도 여전히 직각
+  assert.ok(Math.abs(angleSeries(t, def, 1000, 500)[0]! - 90) < 1e-6);
+  const t2 = fakeTrack(1, () => ({ [LM.R_SHOULDER]: [0.0, 0.0, 1], [LM.R_ELBOW]: [0.5, 0.5, 1], [LM.R_WRIST]: [1.0, 0.5, 1] }));
+  const a1 = angleSeries(t2, def, 1, 1)[0]!, a2 = angleSeries(t2, def, 1000, 500)[0]!;
+  assert.ok(Math.abs(a1 - a2) > 1);
+});
+test('신뢰도가 낮은 프레임은 각도 null, 낮은 구간 계산', () => {
+  const t = curlTrack(20, 10, (f) => f < 5 || f > 8);
+  const def = PRESET_ANGLES.find((d) => d.id === 'elbow_r')!;
+  const s = angleSeries(t, def, 1, 1);
+  assert.equal(s[6], null);
+  assert.notEqual(s[2], null);
+  const conf = confidenceSeries(t, [def.a, def.b, def.c]);
+  assert.deepEqual(lowRanges(conf), [[5, 8]]);
+  assert.deepEqual(lowRanges([1, 1, 0.2, 0.2]), [[2, 3]]);
+});
+test('짧은 빈칸은 이어 채우고 긴 빈칸은 null 유지', () => {
+  const s = smoothSeries([10, null, null, 40, 40, 40, 40, null, null, null, null, null, null, null, null, 90], 1, 6);
+  assert.ok(s[1]! > 10 && s[1]! < 40);
+  assert.equal(s[10], null);
+});
+test('횟수·렙당 시간·가동 범위: 10프레임 주기(15fps) 6회', () => {
+  const t = curlTrack(61, 10);
+  const def = PRESET_ANGLES.find((d) => d.id === 'elbow_r')!;
+  const series = smoothSeries(angleSeries(t, def, 1, 1), 1);
+  const reps = detectReps(series, 1000 / 15);
+  assert.equal(reps.length, 6);
+  assert.ok(Math.abs(reps[0].timeMs - (10 * 1000) / 15) < 1000 / 15 + 1);
+  const sum = summarizeReps(reps);
+  assert.equal(sum.count, 6);
+  assert.ok(sum.romDeg! > 120 && sum.romDeg! < 135, `rom ${sum.romDeg}`);
+  assert.ok(Math.abs(sum.minAngle! - 40) < 6);
+  assert.ok(reps[0].downMs > 0 && reps[0].upMs > 0);
+});
+test('움직임이 작거나 데이터가 없으면 횟수 0', () => {
+  assert.equal(detectReps([100, 101, 99, 100, 102, 100], 66).length, 0);
+  assert.equal(detectReps([], 66).length, 0);
+  assert.equal(detectReps([null, null, null], 66).length, 0);
+  assert.equal(summarizeReps([]).count, 0);
+});
+test('중간에 끝난 불완전한 동작은 세지 않는다', () => {
+  // 편 → 굽힘까지만 가고 끝남
+  const s = [170, 170, 160, 120, 80, 50, 45, 45];
+  assert.equal(detectReps(s, 66).length, 0);
+});
+test('자동 선택: 가장 많이 움직인 각도', () => {
+  const t = curlTrack(40, 10);
+  assert.equal(autoPickPreset(t, 1, 1)?.id, 'elbow_r');
+  assert.equal(autoPickPreset(new Float32Array(40 * FRAME_STRIDE), 1, 1), null); // 사람 없음
+});
+test('저장 압축: base64 왕복과 좌표 오차', () => {
+  for (const len of [0, 1, 2, 3, 4, 5, 100]) {
+    const b = new Uint8Array(len).map((_, i) => (i * 37 + 11) & 255);
+    assert.deepEqual(Array.from(base64ToBytes(bytesToBase64(b))), Array.from(b));
+  }
+  assert.equal(bytesToBase64(new Uint8Array([77, 97, 110])), 'TWFu');
+  const t = curlTrack(30, 10);
+  const back = decodeTrack(encodeTrack(t));
+  assert.equal(back.length, t.length);
+  let maxErr = 0;
+  for (let i = 0; i < t.length; i++) maxErr = Math.max(maxErr, Math.abs(back[i] - t[i]));
+  assert.ok(maxErr < 0.005, `err ${maxErr}`);
+  // 범위 밖 값도 안전하게 잘림
+  const odd = fakeTrack(1, () => ({ [LM.NOSE]: [-3, 9, 5] }));
+  const o2 = decodeTrack(encodeTrack(odd));
+  assert.ok(o2[0] >= -0.5 && o2[1] <= 1.5 && o2[2] <= 1);
+});
+test('분석 프레임 수', () => {
+  assert.equal(frameCountFor(0, 10000, 15), 151);
+  assert.equal(frameCountFor(5000, 5000, 30), 1);
+  assert.equal(frameCountFor(6000, 5000, 30), 0);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

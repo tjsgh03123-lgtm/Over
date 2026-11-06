@@ -6,6 +6,7 @@ import * as SystemUI from 'expo-system-ui';
 import { Ctx, type AppCtx, type Nav, type Tab } from './src/app/context.tsx';
 import { localDateStr, type Db } from './src/db/adapter.ts';
 import { openAppDb } from './src/db/expoAdapter.ts';
+import { AnalysisScreen } from './src/screens/AnalysisScreen.tsx';
 import { BodyEntryScreen } from './src/screens/BodyEntryScreen.tsx';
 import { CalendarScreen } from './src/screens/CalendarScreen.tsx';
 import { ExercisesScreen } from './src/screens/ExercisesScreen.tsx';
@@ -30,7 +31,8 @@ type Overlay =
   | { name: 'routine'; id: string }
   | { name: 'day'; routineId: string; dayId: string | null }
   | { name: 'exercises' }
-  | { name: 'setup' };
+  | { name: 'setup' }
+  | { name: 'analysis'; id: string | null };
 
 const TABS: { key: Tab; label: string }[] = [
   { key: 'home', label: '홈' },
@@ -111,6 +113,7 @@ export default function App() {
     openDay: (routineId, dayId) => push({ name: 'day', routineId, dayId }),
     openExercises: () => push({ name: 'exercises' }),
     openSetup: () => push({ name: 'setup' }),
+    openAnalysis: (id) => push({ name: 'analysis', id }),
     goTab: (t) => { setStack([]); setTab(t); },
     close,
   }), [push, close]);
@@ -164,7 +167,7 @@ export default function App() {
         <StatusBar style={mode === 'light' ? 'dark' : 'light'} />
         <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
           {top ? (
-            <Overlay o={top} key={stack.length + (top.name === 'session' || top.name === 'routine' ? top.id : top.name === 'day' ? `${top.routineId}${top.dayId}` : top.name)} />
+            <Overlay o={top} key={stack.length + (top.name === 'session' || top.name === 'routine' ? top.id : top.name === 'day' ? `${top.routineId}${top.dayId}` : top.name === 'analysis' ? String(top.id) : top.name)} />
           ) : (
             <>
               <View style={{ flex: 1 }}>
@@ -200,5 +203,6 @@ function Overlay({ o }: { o: Overlay }) {
     case 'day': return <DayEditorScreen routineId={o.routineId} dayId={o.dayId} />;
     case 'exercises': return <ExercisesScreen />;
     case 'setup': return <SetupScreen />;
+    case 'analysis': return <AnalysisScreen analysisId={o.id} />;
   }
 }

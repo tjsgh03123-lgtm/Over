@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { Pressable, ScrollView, Text, View } from 'react-native';
+import { Alert, Pressable, ScrollView, Text, View } from 'react-native';
+import * as FileSystem from 'expo-file-system/legacy';
 import { useApp } from '../app/context.tsx';
 import {
-  addCardio, getActiveSession, getTemplateBrief, listWatchedExercises, loadFlatSets, sessionsOnDate, slotForDate,
+  addCardio, deleteAnalysis, listAnalyses, type AnalysisMeta, getActiveSession, getTemplateBrief, listWatchedExercises, loadFlatSets, sessionsOnDate, slotForDate,
   startFreeSession, startSessionFromTemplate, weekStats, type DaySlot, type SessionMeta, type TemplateBrief, type WeekStats,
 } from '../db/repo.ts';
 import { fmtDuration, fmtElapsed } from '../domain/format.ts';
@@ -23,6 +24,7 @@ export function HomeScreen() {
   const [doneToday, setDoneToday] = useState<SessionMeta[]>([]);
   const [week, setWeek] = useState<WeekStats | null>(null);
   const [growth, setGrowth] = useState<Growth[]>([]);
+  const [analyses, setAnalyses] = useState<AnalysisMeta[]>([]);
   const [cardioMin, setCardioMin] = useState<number | null>(30);
   const elapsed = useElapsed(active?.started_at, !!active);
 
@@ -34,6 +36,7 @@ export function HomeScreen() {
       setActive(await getActiveSession(db));
       setDoneToday((await sessionsOnDate(db, today)).filter((x) => x.status === 'done'));
       setWeek(await weekStats(db, today));
+      setAnalyses(await listAnalyses(db, 5));
       const tracked = (await listWatchedExercises(db)).slice(0, 5);
       const flat = await loadFlatSets(db);
       setGrowth(tracked.flatMap((t) => {
@@ -130,6 +133,33 @@ export function HomeScreen() {
         <Btn label="AI 루틴 가져오기" kind="ghost" style={{ flex: 1 }} onPress={nav.openImport} />
         <Btn label="인바디 · 신체 기록" kind="ghost" style={{ flex: 1 }} onPress={nav.openBody} />
       </Row>
+
+      <Card>
+        <Row style={{ marginBottom: analyses.length ? S.sm : 0 }}>
+          <H style={{ fontSize: 16, flex: 1 }}>영상 분석</H>
+          <Btn label="새 영상 분석" small onPress={() => nav.openAnalysis(null)} />
+        </Row>
+        {analyses.length === 0 && <T muted style={{ marginTop: 4 }}>운동 영상에서 각도·횟수·렙당 시간을 재 봐요.</T>}
+        {analyses.map((a) => (
+          <Pressable key={a.id} onPress={() => nav.openAnalysis(a.id)} style={{ paddingVertical: 8, flexDirection: 'row', alignItems: 'center' }}>
+            <View style={{ flex: 1 }}>
+              <T bold>{a.exerciseName}</T>
+              <T muted style={{ fontSize: 12 }}>{a.date} · {a.summary.count}회{a.summary.avgRepMs != null ? ` · 렙당 ${(a.summary.avgRepMs / 1000).toFixed(1)}초` : ''}{a.summary.romDeg != null ? ` · ${Math.round(a.summary.romDeg)}°` : ''}</T>
+            </View>
+            <Btn
+              label="✕" kind="danger" small
+              onPress={() => Alert.alert('분석 기록 삭제', `‘${a.exerciseName}’ 분석을 삭제할까요?`, [
+                { text: '취소' },
+                { text: '삭제', style: 'destructive', onPress: async () => {
+                  await deleteAnalysis(db, a.id);
+                  await FileSystem.deleteAsync(`${FileSystem.documentDirectory}analysis/${a.id}.mp4`, { idempotent: true }).catch(() => {});
+                  bump();
+                } },
+              ])}
+            />
+          </Pressable>
+        ))}
+      </Card>
 
       <Card>
         <Row style={{ marginBottom: S.sm }}>
