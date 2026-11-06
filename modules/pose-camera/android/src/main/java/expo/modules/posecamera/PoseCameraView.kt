@@ -84,14 +84,32 @@ class PoseCameraView(context: Context, appContext: AppContext) : ExpoView(contex
   override fun onDetachedFromWindow() {
     super.onDetachedFromWindow()
     stop()
+    try { landmarker?.close() } catch (_: Exception) {}
+    landmarker = null
+    landmarkerModel = null
   }
+
+  private var generation = 0
 
   fun update() {
     if (!isAttachedToWindow) return
     if (!active) { stop(); return }
     if (running && boundFront == front && boundModel == model) return
+    val restarting = running
     stop()
-    start()
+    val gen = ++generation
+    // 이전 카메라가 완전히 닫힌 뒤, 그리고 화면 크기가 정해진 뒤에 켠다 (바로 다시 켜면 화면이 까맣게 남을 수 있음)
+    startWhenReady(gen, if (restarting) 300L else 0L, 0)
+  }
+
+  private fun startWhenReady(gen: Int, delayMs: Long, tries: Int) {
+    postDelayed({
+      if (gen != generation || !isAttachedToWindow || !active) return@postDelayed
+      if ((previewView.width == 0 || previewView.height == 0) && tries < 30) {
+        measureAndLayout.run()
+        startWhenReady(gen, 100L, tries + 1)
+      } else start()
+    }, delayMs)
   }
 
   private fun fail(code: String, msg: String) {
@@ -149,6 +167,7 @@ class PoseCameraView(context: Context, appContext: AppContext) : ExpoView(contex
   }
 
   private fun stop() {
+    generation++
     running = false
     try { provider?.unbindAll() } catch (_: Exception) {}
     provider = null

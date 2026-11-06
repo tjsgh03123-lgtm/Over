@@ -396,8 +396,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
 
       <LiveCountModal
         visible={!!live}
-        exerciseName={live?.name ?? ''}
-        onClose={() => setLive(null)}
+                onClose={() => setLive(null)}
         onUse={(n) => { const l = live; setLive(null); if (l) applyLiveCount(l.exId, n); }}
       />
       <ExercisePicker

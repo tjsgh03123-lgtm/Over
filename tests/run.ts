@@ -13,7 +13,7 @@ import { AI_IMPORT_PROMPT, AI_PROMPT_DIVIDER } from '../src/domain/importSchema.
 import { fmtDuration, fmtElapsed, restFor, suggestFor } from '../src/domain/format.ts';
 import { clampDrag, moveItem, targetIndex } from '../src/domain/reorder.ts';
 import { DEFAULT_GRAPH_COLORS, GRAPH_KEYS, sanitizeGraphColors, sanitizeMode } from '../src/domain/themeModel.ts';
-import { guessExercise, jointAngle, LIVE_EXERCISES, RepCounter } from '../src/domain/liveCount.ts';
+import { AutoRepCounter, JOINTS, jointAngle } from '../src/domain/liveCount.ts';
 import type { SessionRecord, SetRecord } from '../src/domain/types.ts';
 
 let passed = 0;
@@ -496,73 +496,77 @@ test('다음 세트는 앞 세트 값에서 시작, 첫 세트는 지난 기록,
   assert.equal(w(0, 40), null); // 첫 준비 세트는 제안 없음
 });
 
-// ---- 실시간 횟수 세기 ----
+// ---- 실시간 횟수 세기 (운동 종류 자동) ----
 function lmFrame(pts: Record<number, [number, number, number]>): Float32Array {
   const a = new Float32Array(99);
   for (const k of Object.keys(pts)) { const i = Number(k); a[i * 3] = pts[i][0]; a[i * 3 + 1] = pts[i][1]; a[i * 3 + 2] = pts[i][2]; }
   return a;
 }
-/** 각도를 angles에서 한 값씩 주며 15fps로 세어 본다 */
-function runAngles(c: RepCounter, angles: (number | null)[], fps = 15) {
-  angles.forEach((a, i) => c.pushAngle(a, (i * 1000) / fps));
+const wave = (n: number, perRep: number, lo: number, hi: number, offset = 0) =>
+  Array.from({ length: n }, (_, i) => lo + ((hi - lo) * (1 + Math.cos((2 * Math.PI * (i + offset)) / perRep))) / 2);
+/** 관절별 각도 배열을 15fps로 흘려 넣고 센 횟수를 돌려준다 */
+function runAuto(c: AutoRepCounter, series: Partial<Record<'elbow' | 'knee' | 'hip' | 'shoulder', (number | null)[]>>, fps = 15) {
+  const n = Math.max(...Object.values(series).map((s) => s!.length));
+  for (let i = 0; i < n; i++) {
+    c.pushAngles({
+      elbow: series.elbow?.[i] ?? null, knee: series.knee?.[i] ?? null, hip: series.hip?.[i] ?? null, shoulder: series.shoulder?.[i] ?? null,
+    }, (i * 1000) / fps);
+  }
 }
-const cosWave = (reps: number, perRep: number, lo: number, hi: number) =>
-  Array.from({ length: reps * perRep + 1 }, (_, i) => lo + ((hi - lo) * (1 + Math.cos((2 * Math.PI * i) / perRep))) / 2);
 
-test('실시간: 펴짐→굽힘→펴짐을 1회로 센다 (스쿼트 5회)', () => {
-  const c = new RepCounter(LIVE_EXERCISES.find((e) => e.id === 'squat')!);
-  runAngles(c, cosWave(5, 30, 80, 175));
+test('자동: 스쿼트처럼 무릎·고관절이 같이 움직여도 5회', () => {
+  const c = new AutoRepCounter();
+  runAuto(c, { knee: wave(151, 30, 80, 175), hip: wave(151, 30, 70, 172) });
   assert.equal(c.count, 5);
-  assert.equal(c.reps.length, 5);
-  assert.ok(c.reps[1].timeMs > 1200 && c.reps[1].timeMs < 2000, `time ${c.reps[1].timeMs}`); // 펴진 자세를 벗어나 있던 시간
-  assert.ok(c.reps[0].minAngle < 100);
+  assert.ok(['무릎', '고관절'].includes(c.jointLabel!));
+  assert.ok(c.avgRepMs! > 1000 && c.avgRepMs! < 2200);
 });
-test('실시간: 덜 내려가면 세지 않고, 쉬움 모드는 센다', () => {
-  const half = cosWave(4, 30, 120, 175); // 최저 120도 > 스쿼트 lo(110)
-  const a = new RepCounter(LIVE_EXERCISES[0]); runAngles(a, half);
+test('자동: 컬처럼 팔꿈치만 움직여도 5회 (운동 종류를 알려 주지 않음)', () => {
+  const c = new AutoRepCounter();
+  runAuto(c, { elbow: wave(121, 24, 45, 160), knee: Array(121).fill(172), hip: Array(121).fill(170) });
+  assert.equal(c.count, 5);
+  assert.equal(c.jointLabel, '팔꿈치');
+});
+test('자동: 가만히 서 있거나 작게 흔들리면 0회', () => {
+  const c = new AutoRepCounter();
+  runAuto(c, { knee: Array.from({ length: 200 }, (_, i) => 170 + Math.sin(i) * 4), elbow: wave(200, 20, 150, 170) });
+  assert.equal(c.count, 0);
+  assert.equal(c.jointLabel, null);
+});
+test('자동: 움직임이 작은 반복(진폭 약 30도)은 보통에서 0회, 쉬움에서는 센다', () => {
+  const small = { elbow: wave(150, 20, 118, 150) };
+  const a = new AutoRepCounter(); runAuto(a, small);
   assert.equal(a.count, 0);
-  const b = new RepCounter(LIVE_EXERCISES[0], 'easy'); runAngles(b, half);
-  assert.equal(b.count, 4);
+  const b = new AutoRepCounter(); b.setStrictness('easy'); runAuto(b, small);
+  assert.ok(b.count >= 6, `count ${b.count}`);
 });
-test('실시간: 가만히 서 있거나 흔들리는 것은 세지 않는다', () => {
-  const c = new RepCounter(LIVE_EXERCISES[0]);
-  runAngles(c, Array.from({ length: 150 }, (_, i) => 170 + Math.sin(i) * 4));
-  assert.equal(c.count, 0);
-  // 0.4초 미만의 급한 출렁임
-  const d = new RepCounter(LIVE_EXERCISES[0]);
-  runAngles(d, [175, 175, 90, 175, 175, 90, 175, 175], 30);
-  assert.equal(d.count, 0);
+test('자동: 쉬었다가 시작하고, 중간에 잠깐 안 보여도 이어서 센다', () => {
+  const c = new AutoRepCounter();
+  const rest = Array(40).fill(170);
+  const mv = wave(60, 20, 50, 165);
+  const gap = Array(8).fill(null);
+  runAuto(c, { elbow: [...rest, ...mv, ...gap, ...wave(60, 20, 50, 165, 0)] });
+  assert.ok(c.count >= 5 && c.count <= 7, `count ${c.count}`);
 });
-test('실시간: 굽힌 채 멈췄다가 올라오면 한 번, 중간에 안 보여도 이어서 센다', () => {
-  const c = new RepCounter(LIVE_EXERCISES[3]); // 컬 hi150 lo80
-  const seq: (number | null)[] = [170, 170, 120, 60, 60, 60, 60, null, null, 100, 160, 170, 170];
-  runAngles(c, seq, 10);
-  assert.equal(c.count, 1);
-  assert.equal(c.phase, 'up');
+test('자동: 세트가 끝나고 가만히 있어도 횟수가 늘지 않는다', () => {
+  const c = new AutoRepCounter();
+  runAuto(c, { knee: [...wave(91, 30, 80, 175), ...Array(300).fill(172)] });
+  assert.equal(c.count, 3);
 });
-test('실시간: 3초 넘게 안 보이면 처음부터 (굽힌 채 사라졌다 나타나도 헛세지 않음)', () => {
-  const c = new RepCounter(LIVE_EXERCISES[0]);
-  runAngles(c, [170, 170, 90, 90]);
-  for (let i = 0; i < 60; i++) c.pushAngle(null, 300 + i * 100);
-  assert.equal(c.phase, 'unknown');
-  c.pushAngle(170, 9000);
-  assert.equal(c.count, 0);
+test('자동: 1회가 완성되는 프레임에서만 이벤트를 준다', () => {
+  const c = new AutoRepCounter();
+  let evs = 0;
+  const s = wave(121, 24, 45, 160);
+  s.forEach((a, i) => { if (c.pushAngles({ elbow: a }, (i * 1000) / 15)) evs++; });
+  assert.equal(evs, c.count);
 });
-test('실시간: 관절 각도는 더 잘 보이는 쪽을 쓰고 화면 비율을 반영', () => {
-  // 오른쪽 무릎 90도(엉덩이 위, 발목 옆), 왼쪽은 안 보임
+test('자동: 관절 각도는 더 잘 보이는 쪽을 쓰고 화면 비율을 반영', () => {
+  const knee = JOINTS.find((j) => j.id === 'knee')!;
   const f = lmFrame({ 24: [0.5, 0.2, 0.9], 26: [0.5, 0.5, 0.9], 28: [0.8, 0.5, 0.9], 23: [0.1, 0.1, 0.1], 25: [0.1, 0.2, 0.1], 27: [0.1, 0.3, 0.1] });
-  assert.ok(Math.abs(jointAngle(f, 'knee', 1, 1)! - 90) < 1e-6);
-  assert.equal(jointAngle(new Float32Array(99), 'knee', 1, 1), null);
+  assert.ok(Math.abs(jointAngle(f, knee, 1, 1)! - 90) < 1e-6);
+  assert.equal(jointAngle(new Float32Array(99), knee, 1, 1), null);
   const g = lmFrame({ 24: [0.2, 0.0, 0.9], 26: [0.5, 0.5, 0.9], 28: [0.8, 0.5, 0.9] });
-  assert.ok(Math.abs(jointAngle(g, 'knee', 1, 1)! - jointAngle(g, 'knee', 1000, 500)!) > 1);
-});
-test('실시간: 운동 이름으로 종류 짐작', () => {
-  assert.equal(guessExercise('바벨 백 스쿼트')?.id, 'squat');
-  assert.equal(guessExercise('덤벨 컬')?.id, 'curl');
-  assert.equal(guessExercise('인클라인 벤치프레스')?.id, 'bench');
-  assert.equal(guessExercise('숄더 프레스')?.id, 'press');
-  assert.equal(guessExercise('루마니안 데드리프트')?.id, 'deadlift');
-  assert.equal(guessExercise('케이블 크로스오버'), null);
+  assert.ok(Math.abs(jointAngle(g, knee, 1, 1)! - jointAngle(g, knee, 1000, 500)!) > 1);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);
