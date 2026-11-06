@@ -54,14 +54,26 @@ class PoseCameraView(context: Context, appContext: AppContext) : ExpoView(contex
     addView(previewView)
   }
 
+  // React Native는 안드로이드 기본 레이아웃을 건너뛰므로, 미리보기 화면(TextureView)이 크기를 갖도록 직접 측정·배치한다
+  private val measureAndLayout = Runnable {
+    val w = width
+    val h = height
+    if (w > 0 && h > 0) {
+      previewView.measure(
+        View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY),
+        View.MeasureSpec.makeMeasureSpec(h, View.MeasureSpec.EXACTLY),
+      )
+      previewView.layout(0, 0, w, h)
+    }
+  }
+
+  override fun requestLayout() {
+    super.requestLayout()
+    post(measureAndLayout)
+  }
+
   override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
-    val w = r - l
-    val h = b - t
-    previewView.measure(
-      View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY),
-      View.MeasureSpec.makeMeasureSpec(h, View.MeasureSpec.EXACTLY),
-    )
-    previewView.layout(0, 0, w, h)
+    measureAndLayout.run()
   }
 
   override fun onAttachedToWindow() {

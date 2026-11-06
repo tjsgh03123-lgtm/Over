@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Modal, PermissionsAndroid, Platform, Text, Vibration, View, useWindowDimensions } from 'react-native';
+import { Alert, Modal, PermissionsAndroid, Platform, ScrollView, Text, Vibration, View, useWindowDimensions } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { requireNativeView } from 'expo';
 import { useKeepAwake } from 'expo-keep-awake';
 import Svg, { Circle, Line } from 'react-native-svg';
@@ -46,6 +47,8 @@ export function LiveCountModal({
 function LiveBody({ exerciseName, onClose, onUse }: { exerciseName: string; onClose: () => void; onUse: (n: number) => void }) {
   useKeepAwake();
   const { width: winW, height: winH } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const [frames, setFrames] = useState(0);
   const [ex, setEx] = useState<LiveExercise>(guessExercise(exerciseName) ?? LIVE_EXERCISES[0]);
   const [strict, setStrict] = useState<Strictness>('normal');
   const [model, setModel] = useState<'lite' | 'full'>('lite');
@@ -80,7 +83,7 @@ function LiveBody({ exerciseName, onClose, onUse }: { exerciseName: string; onCl
     const ok = r === PermissionsAndroid.RESULTS.GRANTED;
     setPerm(ok);
     if (!ok) return Alert.alert('카메라 권한이 필요합니다', '설정에서 카메라 권한을 허용해 주세요.');
-    counter.current.reset(); setCount(0); setLastMs(null);
+    counter.current.reset(); setCount(0); setLastMs(null); setFrames(0);
     setRunning(true);
   };
 
@@ -91,6 +94,7 @@ function LiveBody({ exerciseName, onClose, onUse }: { exerciseName: string; onCl
     for (let i = 11; i <= 28; i++) if (lm[i * 3 + 2] > 0.5) { any = true; break; }
     if (any) lastSeen.current = Date.now();
     setFrame({ lm, w, h });
+    setFrames((n) => n + 1);
     const ev = counter.current.push(lm, w, h, t);
     setAngle(counter.current.angle);
     if (ev) {
@@ -102,7 +106,7 @@ function LiveBody({ exerciseName, onClose, onUse }: { exerciseName: string; onCl
 
   // 화면: 카메라 영상은 비율을 유지(FIT)해서 보이므로, 같은 비율의 상자에 영상과 뼈대를 겹쳐 그린다
   const ar = frame ? frame.w / frame.h : 3 / 4;
-  const maxH = winH * 0.5;
+  const maxH = winH * 0.4;
   const boxW = Math.min(winW - S.lg * 2, maxH * ar);
   const boxH = boxW / ar;
   const lm = frame?.lm;
@@ -115,9 +119,9 @@ function LiveBody({ exerciseName, onClose, onUse }: { exerciseName: string; onCl
   }, [count, angle]);
 
   return (
-    <View style={{ flex: 1, backgroundColor: C.bg }}>
+    <View style={{ flex: 1, backgroundColor: C.bg, paddingTop: insets.top }}>
       <Header title="실시간 횟수 세기" onBack={onClose} />
-      <View style={{ padding: S.lg }}>
+      <ScrollView contentContainerStyle={{ padding: S.lg, paddingBottom: insets.bottom + 40 }}>
         <View style={{ width: boxW, height: boxH, alignSelf: 'center', backgroundColor: '#000', borderRadius: 10, overflow: 'hidden' }}>
           {running && CameraView ? (
             <>
@@ -190,7 +194,8 @@ function LiveBody({ exerciseName, onClose, onUse }: { exerciseName: string; onCl
         <T muted style={{ fontSize: 12, marginTop: S.sm, textAlign: 'center' }}>
           횟수가 틀리면 ‘쉬움/엄격’으로 바꿔 보세요. 쉬움은 덜 굽혀도 세고, 엄격은 깊게 굽혀야 셉니다.
         </T>
-      </View>
+        {running && <T muted style={{ fontSize: 11, marginTop: 4, textAlign: 'center' }}>카메라 프레임 {frames}</T>}
+      </ScrollView>
     </View>
   );
 }
