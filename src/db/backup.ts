@@ -1,5 +1,5 @@
 import { nowIso, type Db, type SqlParam } from './adapter.ts';
-import { SCHEMA_VERSION, TABLE_COLUMNS, TABLE_ORDER } from './schema.ts';
+import { OPTIONAL_TABLES, SCHEMA_VERSION, TABLE_COLUMNS, TABLE_ORDER } from './schema.ts';
 
 export interface BackupFile {
   app: 'overdrive';
@@ -24,6 +24,7 @@ export function validateBackup(data: unknown): asserts data is BackupFile {
   }
   if (!d.tables || typeof d.tables !== 'object') throw new Error('백업에 tables가 없습니다');
   for (const t of TABLE_ORDER) {
+    if (OPTIONAL_TABLES.has(t) && d.tables[t] === undefined) continue;
     if (!Array.isArray(d.tables[t])) throw new Error(`백업에 ${t} 테이블이 없습니다`);
   }
 }
@@ -38,7 +39,7 @@ export async function restoreBackup(db: Db, data: unknown): Promise<{ rows: numb
     for (const t of TABLE_ORDER) {
       const cols = TABLE_COLUMNS[t];
       const sql = `INSERT INTO ${t} (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`;
-      for (const row of backup.tables[t]) {
+      for (const row of backup.tables[t] ?? []) {
         await db.run(sql, cols.map((c) => (row[c] === undefined ? null : row[c])));
         rows++;
       }
