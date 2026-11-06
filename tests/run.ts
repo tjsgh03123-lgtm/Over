@@ -13,7 +13,7 @@ import { AI_IMPORT_PROMPT, AI_PROMPT_DIVIDER } from '../src/domain/importSchema.
 import { fmtDuration, fmtElapsed, restFor, suggestFor } from '../src/domain/format.ts';
 import { clampDrag, moveItem, targetIndex } from '../src/domain/reorder.ts';
 import { DEFAULT_GRAPH_COLORS, GRAPH_KEYS, sanitizeGraphColors, sanitizeMode } from '../src/domain/themeModel.ts';
-import { AutoRepCounter, JOINTS, jointAngle } from '../src/domain/liveCount.ts';
+import { AutoRepCounter, countWord, JOINTS, jointAngle } from '../src/domain/liveCount.ts';
 import type { SessionRecord, SetRecord } from '../src/domain/types.ts';
 
 let passed = 0;
@@ -567,6 +567,63 @@ test('자동: 관절 각도는 더 잘 보이는 쪽을 쓰고 화면 비율을 
   assert.equal(jointAngle(new Float32Array(99), knee, 1, 1), null);
   const g = lmFrame({ 24: [0.2, 0.0, 0.9], 26: [0.5, 0.5, 0.9], 28: [0.8, 0.5, 0.9] });
   assert.ok(Math.abs(jointAngle(g, knee, 1, 1)! - jointAngle(g, knee, 1000, 500)!) > 1);
+});
+
+/** 서 있는 사람 한 프레임: 어깨(0.4/0.6, sy), 팔 길이만큼 아래의 손목. showHip=false면 골반 안 보임 */
+function standing(opts: { sy?: number; wristDy?: number; wristDx?: number; hip?: boolean }): Float32Array {
+  const sy = opts.sy ?? 0.3;
+  const pts: Record<number, [number, number, number]> = {
+    0: [0.5, sy - 0.1, 0.9], 11: [0.6, sy, 0.9], 12: [0.4, sy, 0.9],
+    15: [0.6 + (opts.wristDx ?? 0), sy + (opts.wristDy ?? 0.4), 0.9], 16: [0.4 - (opts.wristDx ?? 0), sy + (opts.wristDy ?? 0.4), 0.9],
+    13: [0.6, sy + 0.2, 0.9], 14: [0.4, sy + 0.2, 0.9],
+  };
+  if (opts.hip !== false) { pts[23] = [0.58, sy + 0.4, 0.9]; pts[24] = [0.42, sy + 0.4, 0.9]; }
+  return lmFrame(pts);
+}
+function runFrames(c: AutoRepCounter, frames: Float32Array[], fps = 15) {
+  frames.forEach((f, i) => c.push(f, 1000, 1000, (i * 1000) / fps));
+}
+
+test('자동(위치): 사이드 레터럴 레이즈 — 팔꿈치는 펴진 채, 골반이 안 보여도 손목 움직임으로 5회', () => {
+  const c = new AutoRepCounter();
+  const dys = wave(121, 24, -0.05, 0.4); // 손목이 어깨 아래 0.4 ↔ 어깨 높이 근처
+  runFrames(c, dys.map((d) => standing({ wristDy: d, wristDx: 0.2 + (0.4 - d) * 0.5, hip: false })));
+  assert.equal(c.count, 5);
+  assert.ok(c.jointLabel!.includes('손목'), String(c.jointLabel));
+});
+test('자동(위치): 어깨만 보여도 몸이 위아래로 오르내리면(정면 스쿼트) 센다', () => {
+  const c = new AutoRepCounter();
+  runFrames(c, wave(151, 30, 0.3, 0.55).map((sy) => standing({ sy, hip: false, wristDy: 0.4 })));
+  assert.equal(c.count, 5);
+  assert.ok(c.jointLabel!.includes('몸'), String(c.jointLabel));
+});
+test('자동(위치): 가만히 서 있거나 숨만 쉬면 0회', () => {
+  const c = new AutoRepCounter();
+  runFrames(c, Array.from({ length: 200 }, (_, i) => standing({ sy: 0.3 + Math.sin(i / 3) * 0.004, wristDy: 0.4 + Math.sin(i / 2) * 0.005 })));
+  assert.equal(c.count, 0);
+});
+test('자동: 한 동작을 여러 신호가 중복해서 세지 않는다 (같은 레이즈를 두 팔이 해도 5회)', () => {
+  const c = new AutoRepCounter();
+  runFrames(c, wave(121, 24, -0.05, 0.4).map((d) => standing({ wristDy: d })));
+  assert.equal(c.count, 5);
+});
+test('자동: 동작이 바뀌면(4초 이상 쉰 뒤) 이어서 쌓인다', () => {
+  const c = new AutoRepCounter();
+  const first = wave(61, 24, -0.05, 0.4).map((d) => standing({ wristDy: d })); // 약 2~3회
+  const rest = Array.from({ length: 80 }, () => standing({ wristDy: 0.4 }));
+  const second = wave(61, 24, 0.3, 0.55).map((sy) => standing({ sy, hip: false, wristDy: 0.4 }));
+  runFrames(c, [...first, ...rest, ...second]);
+  assert.ok(c.count >= 4, `count ${c.count}`);
+});
+test('횟수를 소리로 읽는 말', () => {
+  assert.equal(countWord(1), '하나');
+  assert.equal(countWord(2), '둘');
+  assert.equal(countWord(10), '열');
+  assert.equal(countWord(11), '열하나');
+  assert.equal(countWord(20), '스물');
+  assert.equal(countWord(37), '서른일곱');
+  assert.equal(countWord(100), '100');
+  assert.equal(countWord(0), '');
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

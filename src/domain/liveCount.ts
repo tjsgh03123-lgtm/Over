@@ -1,6 +1,7 @@
 /**
  * 실시간 횟수 세기의 순수 계산. 운동 종류를 몰라도 되도록, 카메라가 돌려주는 33개 관절에서
- * 팔꿈치·무릎·고관절·어깨 각도를 동시에 지켜보다가 '크게 반복해서 움직이는 관절'을 찾아 그 반복 횟수를 센다.
+ * (1) 팔꿈치·무릎·고관절·어깨 각도와 (2) 손목·몸·뒤꿈치 같은 점의 위치 변화를 동시에 지켜보다가
+ * '크게 반복해서 움직이는 것'을 찾아 그 반복 횟수를 센다.
  */
 
 export const LM_COUNT = 33;
@@ -46,35 +47,42 @@ export function jointAngle(lm: ArrayLike<number>, def: JointDef, w: number, h: n
   return best ? best.ang : null;
 }
 
-export interface RepEvent { n: number; timeMs: number; minAngle: number; joint: JointId }
+export interface RepEvent { n: number; timeMs: number; minAngle: number; joint: string }
 
-const DECAY_DEG_PER_SEC = 3; // 움직임이 멈추면 '위/아래 끝' 기억이 이 속도로 좁혀진다
-const MIN_REP_MS = 400;
-
-/** 관절 하나의 오르내림 추적 */
-class JointTracker {
+/** 한 신호(각도 또는 위치)의 오르내림 추적. 단위는 신호마다 다르다(도 또는 어깨너비 배수). */
+class SignalTracker {
   count = 0;
   reps: RepEvent[] = [];
-  angle: number | null = null;
+  value: number | null = null;
   hi = 0;
   lo = 0;
   phase: 'unknown' | 'up' | 'down' = 'unknown';
+  lastRepT = -1e9;
+  /** 이 추적기가 선택된 뒤부터 센 횟수의 기준 */
+  base = 0;
   private smooth: number | null = null;
   private lastT = 0;
   private lastHiT = 0;
-  private minAngle = 999;
+  private minVal = 1e9;
   private lostSince: number | null = null;
+  readonly id: string;
+  readonly label: string;
+  readonly baseMin: number;
+  /** 움직임이 멈추면 '위/아래 끝' 기억이 초당 이만큼 좁혀진다 */
+  readonly decay: number;
 
-  readonly id: JointId;
-  constructor(id: JointId) { this.id = id; }
+  constructor(id: string, label: string, baseMin: number, decay: number) {
+    this.id = id; this.label = label; this.baseMin = baseMin; this.decay = decay;
+  }
 
   get amp() { return this.hi - this.lo; }
 
   reset() {
-    this.count = 0; this.reps = []; this.angle = null; this.smooth = null; this.phase = 'unknown'; this.hi = 0; this.lo = 0;
-    this.lostSince = null; this.minAngle = 999;
+    this.count = 0; this.reps = []; this.value = null; this.smooth = null; this.phase = 'unknown'; this.hi = 0; this.lo = 0;
+    this.lostSince = null; this.minVal = 1e9; this.base = 0; this.lastRepT = -1e9;
   }
 
+  /** minAmp: 한 번으로 인정할 최소 오르내림 크기 */
   push(raw: number | null, tMs: number, minAmp: number): RepEvent | null {
     if (raw == null) {
       if (this.lostSince == null) this.lostSince = tMs;
@@ -85,12 +93,12 @@ class JointTracker {
     const first = this.smooth == null;
     this.smooth = first ? raw : (this.smooth as number) * 0.5 + raw * 0.5;
     const a = this.smooth;
-    this.angle = a;
+    this.value = a;
     if (first) { this.hi = a; this.lo = a; this.lastT = tMs; }
     const dt = Math.max(0, Math.min(1, (tMs - this.lastT) / 1000));
     this.lastT = tMs;
-    this.hi = Math.max(a, this.hi - DECAY_DEG_PER_SEC * dt);
-    this.lo = Math.min(a, this.lo + DECAY_DEG_PER_SEC * dt);
+    this.hi = Math.max(a, this.hi - this.decay * dt);
+    this.lo = Math.min(a, this.lo + this.decay * dt);
     const amp = this.amp;
     const hiT = this.lo + amp * 0.7;
     const loT = this.lo + amp * 0.3;
@@ -101,71 +109,164 @@ class JointTracker {
         const timeMs = tMs - this.lastHiT;
         if (amp >= minAmp && timeMs >= MIN_REP_MS) {
           this.count++;
-          ev = { n: this.count, timeMs, minAngle: this.minAngle, joint: this.id };
+          this.lastRepT = tMs;
+          ev = { n: this.count, timeMs, minAngle: this.minVal, joint: this.label };
           this.reps.push(ev);
         }
-        this.minAngle = 999;
+        this.minVal = 1e9;
       }
       this.phase = 'up';
       this.lastHiT = tMs;
       return ev;
     }
-    if (a <= loT && this.phase !== 'down') { this.phase = 'down'; this.minAngle = a; }
-    else if (this.phase === 'down' && a < this.minAngle) this.minAngle = a;
+    if (a <= loT && this.phase !== 'down') { this.phase = 'down'; this.minVal = a; }
+    else if (this.phase === 'down' && a < this.minVal) this.minVal = a;
     return null;
   }
 }
 
+const MIN_REP_MS = 400;
+const ANGLE_DECAY = 3; // 도/초
+const POS_DECAY = 0.04; // 어깨너비/초
+/** 위치 신호의 최소 크기(어깨너비 배수): 손목·몸·골반·으쓱·뒤꿈치 */
+const POS_MIN = { wrist: 0.5, body: 0.35, shrug: 0.12, heel: 0.1 };
+const POS_MULT: Record<Strictness, number> = { easy: 0.6, normal: 1, strict: 1.5 };
+/** 한 동작이 이 시간(ms) 넘게 멈추면 다른 동작으로 넘어갈 수 있다 */
+const IDLE_SWITCH_MS = 4000;
+
+export type SignalKey = 'elbow' | 'knee' | 'hip' | 'shoulder';
+
+/** 프레임에서 위치 신호를 꺼낸다. 어깨너비로 나눠 카메라 거리와 상관없게 만든다. */
+function positionSignals(lm: ArrayLike<number>, w: number, h: number, scaleRef: { v: number }): Record<string, number | null> {
+  const P = (i: number) => ({ x: lm[i * 3] * w, y: lm[i * 3 + 1] * h, v: lm[i * 3 + 2] });
+  const ok = (i: number) => lm[i * 3 + 2] >= MIN_VIS;
+  const out: Record<string, number | null> = {
+    wristLy: null, wristRy: null, wristLx: null, wristRx: null, bodyY: null, hipY: null, shrug: null, heelL: null, heelR: null,
+  };
+  const sL = P(11), sR = P(12);
+  if (ok(11) && ok(12)) {
+    const sw = Math.hypot(sL.x - sR.x, sL.y - sR.y);
+    // 옆으로 서면 어깨너비가 줄어들므로 몸통 길이도 같이 본다
+    let ref = sw;
+    if (ok(23) && ok(24)) {
+      const mx = (sL.x + sR.x) / 2, my = (sL.y + sR.y) / 2;
+      const hx = (P(23).x + P(24).x) / 2, hy = (P(23).y + P(24).y) / 2;
+      ref = Math.max(sw, 0.6 * Math.hypot(mx - hx, my - hy));
+    }
+    scaleRef.v = Math.max(ref, 0.04 * h);
+  }
+  const sc = scaleRef.v;
+  if (sc <= 0) return out;
+  for (const [side, sh, wr] of [['L', 11, 15], ['R', 12, 16]] as const) {
+    if (ok(sh) && ok(wr)) {
+      out[`wrist${side}y`] = (P(wr).y - P(sh).y) / sc;
+      out[`wrist${side}x`] = (P(wr).x - P(sh).x) / sc;
+    }
+  }
+  if (ok(11) && ok(12)) {
+    out.bodyY = ((sL.y + sR.y) / 2) / sc;
+    if (ok(0)) out.shrug = (((sL.y + sR.y) / 2) - P(0).y) / sc;
+  }
+  if (ok(23) && ok(24)) out.hipY = ((P(23).y + P(24).y) / 2) / sc;
+  for (const [side, heel, toe] of [['L', 29, 31], ['R', 30, 32]] as const) {
+    if (ok(heel) && ok(toe)) out[`heel${side}`] = (P(heel).y - P(toe).y) / sc;
+  }
+  return out;
+}
+
 /**
- * 운동 종류와 상관없이 횟수를 센다. 팔꿈치·무릎·고관절·어깨를 모두 지켜보고,
- * 가장 많이 반복된 관절(같으면 더 크게 움직인 관절)의 횟수를 보여 준다.
+ * 운동 종류와 상관없이 횟수를 센다. 각도(팔꿈치·무릎·고관절·어깨)와 위치(손목·몸·골반·어깨 으쓱·뒤꿈치)를
+ * 모두 지켜보다가, 처음으로 크게 반복된 동작을 골라 그 횟수를 보여 준다. 같은 동작을 여러 신호가 중복해서 세지 않는다.
+ * 그 동작이 4초 넘게 멈춘 뒤 다른 동작이 시작되면 그쪽으로 넘어가며, 횟수는 이어서 쌓인다.
  */
 export class AutoRepCounter {
-  private trackers = JOINTS.map((j) => new JointTracker(j.id));
+  private angleT = JOINTS.map((j) => new SignalTracker(j.id, j.label, 0, ANGLE_DECAY));
+  private posT: SignalTracker[] = [
+    new SignalTracker('wristLy', '손목 위아래', POS_MIN.wrist, POS_DECAY),
+    new SignalTracker('wristRy', '손목 위아래', POS_MIN.wrist, POS_DECAY),
+    new SignalTracker('wristLx', '손목 좌우', POS_MIN.wrist, POS_DECAY),
+    new SignalTracker('wristRx', '손목 좌우', POS_MIN.wrist, POS_DECAY),
+    new SignalTracker('bodyY', '몸 위아래', POS_MIN.body, POS_DECAY),
+    new SignalTracker('hipY', '골반 위아래', POS_MIN.body, POS_DECAY),
+    new SignalTracker('shrug', '어깨 으쓱', POS_MIN.shrug, POS_DECAY),
+    new SignalTracker('heelL', '뒤꿈치 들기', POS_MIN.heel, POS_DECAY),
+    new SignalTracker('heelR', '뒤꿈치 들기', POS_MIN.heel, POS_DECAY),
+  ];
   private minAmp = MIN_AMP.normal;
+  private mult = POS_MULT.normal;
+  private active: SignalTracker | null = null;
+  private offset = 0; // 이전 동작들에서 쌓인 횟수
+  private all: RepEvent[] = [];
+  private scale = { v: 0 };
 
-  setStrictness(s: Strictness) { this.minAmp = MIN_AMP[s]; }
+  setStrictness(s: Strictness) { this.minAmp = MIN_AMP[s]; this.mult = POS_MULT[s]; }
 
-  reset() { this.trackers.forEach((t) => t.reset()); }
-
-  /** 지금 가장 유력한 관절 */
-  private get primary(): JointTracker {
-    return this.trackers.reduce((b, t) => (t.count > b.count || (t.count === b.count && t.amp > b.amp) ? t : b));
+  reset() {
+    [...this.angleT, ...this.posT].forEach((t) => t.reset());
+    this.active = null; this.offset = 0; this.all = []; this.scale = { v: 0 };
   }
 
-  get count() { return this.primary.count; }
-  get reps() { return this.primary.reps; }
-  get angle() { return this.primary.angle; }
-  get phase() { return this.primary.phase; }
-  /** 반복이 감지된 관절 이름 (아직 없으면 null) */
-  get jointLabel(): string | null {
-    const p = this.primary;
-    return p.count > 0 ? JOINTS.find((j) => j.id === p.id)!.label : null;
-  }
+  get count() { return this.active ? this.offset + (this.active.count - this.active.base) : this.offset; }
+  get reps() { return this.all; }
+  get angle() { return this.active ? this.active.value : null; }
+  /** 반복이 감지된 동작 이름 (아직 없으면 null) */
+  get jointLabel(): string | null { return this.active ? this.active.label : null; }
   get avgRepMs(): number | null {
-    const r = this.reps;
+    const r = this.all;
     return r.length ? r.reduce((s, x) => s + x.timeMs, 0) / r.length : null;
   }
 
-  /** 관절별 각도를 직접 넣는다 (테스트·재사용용). 이번 프레임에 1회가 완성되면 그 기록을 돌려준다. */
-  pushAngles(angles: Partial<Record<JointId, number | null>>, tMs: number): RepEvent | null {
-    const before = this.primary.count;
-    const beforeId = this.primary.id;
-    let completed: RepEvent | null = null;
-    for (const t of this.trackers) {
-      const ev = t.push(angles[t.id] ?? null, tMs, this.minAmp);
-      if (ev) completed = ev;
+  private step(angles: Partial<Record<SignalKey, number | null>>, pos: Record<string, number | null>, tMs: number): RepEvent | null {
+    const done: { t: SignalTracker; ev: RepEvent; ratio: number }[] = [];
+    const run = (t: SignalTracker, v: number | null, min: number) => {
+      const ev = t.push(v, tMs, min);
+      if (ev) done.push({ t, ev, ratio: t.amp / min });
+    };
+    for (const t of this.angleT) run(t, angles[t.id as SignalKey] ?? null, this.minAmp);
+    for (const t of this.posT) run(t, pos[t.id] ?? null, t.baseMin * this.mult);
+    if (!done.length) return null;
+
+    const act = this.active;
+    if (act) {
+      const mine = done.find((d) => d.t === act);
+      if (mine) { this.all.push(mine.ev); return { ...mine.ev, n: this.count }; }
+      // 지금 동작이 한동안 멈췄고 다른 동작이 시작됐다면 그쪽으로 넘어간다
+      if (tMs - act.lastRepT > IDLE_SWITCH_MS) {
+        const best = done.reduce((b, d) => (d.ratio > b.ratio ? d : b));
+        this.offset = this.count;
+        best.t.base = best.t.count - 1;
+        this.active = best.t;
+        this.all.push(best.ev);
+        return { ...best.ev, n: this.count };
+      }
+      return null;
     }
-    const p = this.primary;
-    if (p.count > before || (p.id !== beforeId && p.count > 0 && completed)) {
-      return p.reps[p.reps.length - 1] ?? null;
-    }
-    return null;
+    // 처음 반복이 완성된 동작을 고른다 (동시에 여럿이면 가장 크게 움직인 것)
+    const best = done.reduce((b, d) => (d.ratio > b.ratio ? d : b));
+    this.active = best.t;
+    best.t.base = best.t.count - 1;
+    this.all.push(best.ev);
+    return { ...best.ev, n: this.count };
   }
 
-  push(lm: ArrayLike<number>, w: number, h: number, tMs: number): RepEvent | null {
-    const a: Partial<Record<JointId, number | null>> = {};
-    for (const j of JOINTS) a[j.id] = jointAngle(lm, j, w, h);
-    return this.pushAngles(a, tMs);
+  /** 관절별 각도를 직접 넣는다 (테스트·재사용용). 이번 프레임에 1회가 완성되면 그 기록을 돌려준다. */
+  pushAngles(angles: Partial<Record<SignalKey, number | null>>, tMs: number): RepEvent | null {
+    return this.step(angles, {}, tMs);
   }
+
+  /** 관절 33개(x,y,신뢰도) 한 프레임을 넣는다. w,h는 영상 가로·세로 픽셀. */
+  push(lm: ArrayLike<number>, w: number, h: number, tMs: number): RepEvent | null {
+    const a: Partial<Record<SignalKey, number | null>> = {};
+    for (const j of JOINTS) a[j.id] = jointAngle(lm, j, w, h);
+    return this.step(a, positionSignals(lm, w, h, this.scale), tMs);
+  }
+}
+
+const NATIVE = ['', '하나', '둘', '셋', '넷', '다섯', '여섯', '일곱', '여덟', '아홉'];
+const TENS = ['', '열', '스물', '서른', '마흔', '쉰', '예순', '일흔', '여든', '아흔'];
+/** 소리로 읽어 줄 횟수: 1→하나, 2→둘 … 11→열하나, 20→스물 (99 넘으면 숫자 그대로) */
+export function countWord(n: number): string {
+  if (!Number.isInteger(n) || n < 1) return '';
+  if (n > 99) return String(n);
+  return `${TENS[Math.floor(n / 10)]}${NATIVE[n % 10]}`;
 }

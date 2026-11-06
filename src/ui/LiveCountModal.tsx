@@ -1,11 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Alert, Modal, PermissionsAndroid, Platform, ScrollView, Text, Vibration, View, useWindowDimensions } from 'react-native';
+import { Modal, PermissionsAndroid, Platform, ScrollView, Text, Vibration, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { requireNativeView } from 'expo';
 import { useKeepAwake } from 'expo-keep-awake';
 import Svg, { Circle, Line } from 'react-native-svg';
 import { AutoRepCounter, STRICT_LABEL, type Strictness } from '../domain/liveCount.ts';
-import { Btn, Header, Row, Segmented, T } from './components.tsx';
+import { speakCount, stopSpeaking } from '../services/speak.ts';
+import { Btn, Chip, Header, Row, Segmented, T } from './components.tsx';
 import { C, GC, S } from './theme.ts';
 
 interface PoseEvent { nativeEvent: { lm: number[]; w: number; h: number; t: number } }
@@ -48,6 +49,7 @@ function LiveBody({ onClose, onUse }: { onClose: () => void; onUse: (n: number) 
   const { width: winW, height: winH } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const [strict, setStrict] = useState<Strictness>('normal');
+  const [sound, setSound] = useState(true); // 횟수를 소리로 읽기
   const [model, setModel] = useState<'lite' | 'full'>('lite');
   const [front, setFront] = useState(false);
   const [ready, setReady] = useState(false); // 카메라 권한 확인 끝, 카메라 켜짐
@@ -64,6 +66,7 @@ function LiveBody({ onClose, onUse }: { onClose: () => void; onUse: (n: number) 
   const [, force] = useState(0);
 
   useEffect(() => { counter.current.setStrictness(strict); }, [strict]);
+  useEffect(() => stopSpeaking, []);
 
   // 열자마자 권한을 확인하고 카메라를 켠다 (시작 버튼 없음)
   useEffect(() => {
@@ -110,11 +113,12 @@ function LiveBody({ onClose, onUse }: { onClose: () => void; onUse: (n: number) 
       setCount(counter.current.count);
       setLastMs(ev.timeMs);
       Vibration.vibrate(40);
+      if (sound) speakCount(counter.current.count);
     }
     force((n) => (n + 1) % 1000);
   };
 
-  const reset = () => { counter.current.reset(); setCount(0); setLastMs(null); };
+  const reset = () => { stopSpeaking(); counter.current.reset(); setCount(0); setLastMs(null); };
   const restartCamera = () => { setFrames(0); setFrame(null); setErr(null); setCamKey((k) => k + 1); };
 
   // 영상은 비율을 유지(FIT)해서 보이므로, 같은 비율의 상자에 영상과 뼈대를 겹쳐 그린다
@@ -187,6 +191,9 @@ function LiveBody({ onClose, onUse }: { onClose: () => void; onUse: (n: number) 
         <Row style={{ marginTop: S.md }}>
           <Btn label="처음부터" kind="ghost" style={{ flex: 1 }} onPress={reset} />
           <Btn label={front ? '뒷카메라로' : '앞카메라로'} kind="ghost" style={{ flex: 1 }} onPress={() => setFront((f) => !f)} />
+        </Row>
+        <Row style={{ marginTop: S.sm }}>
+          <Chip label={sound ? '🔊 횟수 소리 켜짐' : '🔇 횟수 소리 꺼짐'} active={sound} onPress={() => { if (sound) stopSpeaking(); setSound((v) => !v); }} />
         </Row>
         <Row style={{ marginTop: S.sm }}>
           <View style={{ flex: 1 }}>
