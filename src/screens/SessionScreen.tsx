@@ -173,6 +173,9 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
 
               {open && (
                 <View style={{ paddingHorizontal: S.lg, paddingBottom: S.lg }}>
+                  {editable && (
+                    <Btn label="📷 실시간 횟수 세기" kind="ghost" small style={{ marginBottom: S.sm }} onPress={() => setLive({ exId: ex.id, name: ex.exercise_name })} />
+                  )}
                   {ex.sets.map((row, idx) => {
                     const sugW = suggestFor(ex.sets, idx, (x) => x.weight, last?.weight ?? null);
                     const sugR = suggestFor(ex.sets, idx, (x) => x.reps, last?.reps ?? null);
@@ -262,7 +265,6 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
                   {editable && (
                     <Row style={{ marginTop: 4 }}>
                       <Btn label="+ 세트" kind="ghost" small onPress={async () => { await addSet(db, ex.id, 'working'); reload(); }} />
-                      <Btn label="📷 횟수 세기" kind="ghost" small onPress={() => setLive({ exId: ex.id, name: ex.exercise_name })} style={{ marginLeft: 6 }} />
                       <View style={{ flex: 1 }} />
                       <Btn label={showOpts ? '옵션 닫기' : '옵션'} kind="ghost" small onPress={() => setOpts((o) => ({ ...o, [ex.id]: !showOpts }))} />
                     </Row>
