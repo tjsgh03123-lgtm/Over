@@ -57,12 +57,12 @@ async function logSession(
 }
 
 console.log('스키마 / 시드');
-await test('13개 테이블 생성', async () => {
+await test('12개 테이블 생성', async () => {
   const db = await freshDb();
   const rows = await db.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'");
   const names = rows.map((r) => r.name).sort();
   assert.deepEqual(names, [...TABLE_ORDER].sort());
-  assert.equal(TABLE_ORDER.length, 13);
+  assert.equal(TABLE_ORDER.length, 12);
 });
 await test('새로 설치하면 기본 루틴·종목이 하나도 없음 (직접 만들거나 AI에서 가져옴)', async () => {
   const db = await emptyDb();
@@ -325,46 +325,6 @@ await test('JSON 백업 → 초기화 → 복원 후 모든 테이블 동일', a
   const flat = await repo.loadFlatSets(other, ex.id);
   assert.equal(flat[0].intensity, 'high');
   assert.equal((await repo.findExercise(other, '복원 전 임시 데이터')), null);
-});
-await test('영상 분석 저장·목록(좌표 제외)·불러오기·삭제, 백업 왕복, 옛 백업(해당 테이블 없음)도 복원', async () => {
-  const db = await freshDb();
-  const angle = { id: 'elbow_r', label: '오른쪽 팔꿈치', a: 12, b: 14, c: 16 };
-  const reps = [{ startFrame: 0, minFrame: 5, endFrame: 10, timeMs: 667, downMs: 333, upMs: 333, minAngle: 40, maxAngle: 170, romDeg: 130 }];
-  const summary = { count: 1, avgRepMs: 667, romDeg: 130, minAngle: 40, maxAngle: 170 };
-  const id = await repo.saveAnalysis(db, '2026-11-05', {
-    exerciseName: '바벨 컬', videoUri: 'content://v/1', startMs: 1000, endMs: 9000, fps: 15, model: 'full', videoW: 1080, videoH: 1920,
-    frames: 121, trackB64: 'QUJD', angle, reps, summary, note: null,
-  });
-  const list = await repo.listAnalyses(db);
-  assert.equal(list.length, 1);
-  assert.equal(list[0].exerciseName, '바벨 컬');
-  assert.equal((list[0] as any).trackB64, undefined);
-  assert.deepEqual(list[0].reps, reps);
-  const full = await repo.getAnalysis(db, id);
-  assert.equal(full?.trackB64, 'QUJD');
-  assert.equal(full?.date, '2026-11-05');
-  await repo.setAnalysisVideoUri(db, id, null);
-  assert.equal((await repo.getAnalysis(db, id))?.videoUri, null);
-  // 백업 왕복
-  const json = JSON.stringify(await exportBackup(db));
-  const other = await freshDb();
-  await restoreBackup(other, JSON.parse(json));
-  assert.deepEqual((await exportBackup(other)).tables.video_analyses, (await exportBackup(db)).tables.video_analyses);
-  // 옛 백업: 해당 테이블 키가 없음
-  const old = JSON.parse(json);
-  delete old.tables.video_analyses;
-  await restoreBackup(other, old);
-  assert.equal((await repo.listAnalyses(other)).length, 0);
-  await repo.deleteAnalysis(db, id);
-  assert.equal((await repo.listAnalyses(db)).length, 0);
-});
-await test('분석 시간 추정: 기본값 → 측정값으로 보정', async () => {
-  const db = await freshDb();
-  assert.equal((await repo.getMsPerFrame(db, 'full')).measured, false);
-  await repo.recordMsPerFrame(db, 'full', 200);
-  assert.deepEqual(await repo.getMsPerFrame(db, 'full'), { ms: 200, measured: true });
-  await repo.recordMsPerFrame(db, 'full', 100);
-  assert.equal((await repo.getMsPerFrame(db, 'full')).ms, 150);
 });
 await test('잘못된 백업 파일은 거부하고 기존 데이터를 건드리지 않음', async () => {
   const db = await freshDb();

@@ -13,15 +13,7 @@
       }
     },
     "plugins": [
-      "expo-sqlite",
-      [
-        "expo-image-picker",
-        {
-          "cameraPermission": "운동 영상을 촬영하려면 카메라 접근이 필요합니다.",
-          "microphonePermission": false,
-          "photosPermission": false
-        }
-      ]
+      "expo-sqlite"
     ]
   }
 }

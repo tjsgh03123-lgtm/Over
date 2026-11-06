@@ -131,27 +131,6 @@ CREATE TABLE IF NOT EXISTS imported_routines (
   parsed_json TEXT NOT NULL,
   applied INTEGER NOT NULL DEFAULT 0
 );
-
-CREATE TABLE IF NOT EXISTS video_analyses (
-  id TEXT PRIMARY KEY NOT NULL,
-  created_at TEXT NOT NULL,
-  date TEXT NOT NULL,
-  exercise_name TEXT NOT NULL,
-  video_uri TEXT,
-  start_ms INTEGER NOT NULL,
-  end_ms INTEGER NOT NULL,
-  fps REAL NOT NULL,
-  model TEXT NOT NULL,
-  video_w INTEGER NOT NULL,
-  video_h INTEGER NOT NULL,
-  frames INTEGER NOT NULL,
-  track_b64 TEXT NOT NULL,
-  angle_json TEXT NOT NULL,
-  reps_json TEXT NOT NULL,
-  summary_json TEXT NOT NULL,
-  note TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_va_date ON video_analyses(date);
 `;
 
 /** 부모 → 자식 순서. 복원 시 삭제는 역순, 삽입은 이 순서. */
@@ -172,11 +151,5 @@ export const TABLE_COLUMNS: Record<string, string[]> = {
   cardio_sessions: ['id', 'date', 'session_id', 'kind', 'intensity', 'duration_min', 'note', 'created_at'],
   schedule_rules: ['id', 'weekday', 'kind', 'template_id', 'default_intensity', 'label'],
   imported_routines: ['id', 'created_at', 'raw_text', 'format', 'parsed_json', 'applied'],
-  video_analyses: [
-    'id', 'created_at', 'date', 'exercise_name', 'video_uri', 'start_ms', 'end_ms', 'fps', 'model', 'video_w', 'video_h',
-    'frames', 'track_b64', 'angle_json', 'reps_json', 'summary_json', 'note',
-  ],
 };
 export const TABLE_ORDER = Object.keys(TABLE_COLUMNS);
-/** 예전 백업에는 없을 수 있는 테이블 (없으면 빈 것으로 복원) */
-export const OPTIONAL_TABLES = new Set(['video_analyses']);
