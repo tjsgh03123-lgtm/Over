@@ -13,8 +13,6 @@ export interface Nav {
   openDay(routineId: string, dayId: string | null): void;
   openExercises(): void;
   openSetup(): void;
-  /** id가 null이면 새 영상 분석, 아니면 저장된 분석 열기 */
-  openAnalysis(id: string | null): void;
   goTab(t: Tab): void;
   close(): void;
 }
