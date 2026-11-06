@@ -7,6 +7,7 @@ import {
   setSessionNote, updateSet, type SessionExRow, type SessionFull, type SetRow,
 } from '../db/repo.ts';
 import { fmtClock, fmtDuration, fmtElapsed, restFor, suggestFor } from '../domain/format.ts';
+import { LiveCountModal } from '../ui/LiveCountModal.tsx';
 import { Btn, Card, Chip, Header, NumInput, Row, T, TextField } from '../ui/components.tsx';
 import { ExercisePicker } from '../ui/ExercisePicker.tsx';
 import { C, S } from '../ui/theme.ts';
@@ -35,6 +36,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
   const [restDefault, setRestDefault] = useState(90);
   const [rest, setRest] = useState<Rest>(null); // 세트 사이 휴식 카운트다운
   const [now, setNow] = useState(Date.now());
+  const [live, setLive] = useState<{ exId: string; name: string } | null>(null); // 실시간 횟수 세기 중인 종목
 
   const reload = useCallback(async () => {
     const full = await loadSession(db, sessionId);
@@ -103,6 +105,23 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
       }),
     });
     updateSet(db, row.id, patch).then(bump);
+  };
+
+  /** 실시간 횟수 세기 결과를 그 종목의 첫 번째 미완료 본 세트 횟수에 넣는다 (없으면 세트를 추가) */
+  const applyLiveCount = async (exId: string, n: number) => {
+    const ex = s.exercises.find((e) => e.id === exId);
+    if (!ex) return;
+    const target = ex.sets.find((x) => !x.done && x.set_type !== 'warmup');
+    if (target) patchSet(ex, target, { reps: n });
+    else {
+      await addSet(db, ex.id, 'working');
+      const full = await loadSession(db, sessionId);
+      const sets = full?.exercises.find((e) => e.id === exId)?.sets ?? [];
+      const last = sets[sets.length - 1];
+      if (last) await updateSet(db, last.id, { reps: n });
+      bump();
+      await reload();
+    }
   };
 
   const finish = async () => {
@@ -243,6 +262,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
                   {editable && (
                     <Row style={{ marginTop: 4 }}>
                       <Btn label="+ 세트" kind="ghost" small onPress={async () => { await addSet(db, ex.id, 'working'); reload(); }} />
+                      <Btn label="📷 횟수 세기" kind="ghost" small onPress={() => setLive({ exId: ex.id, name: ex.exercise_name })} style={{ marginLeft: 6 }} />
                       <View style={{ flex: 1 }} />
                       <Btn label={showOpts ? '옵션 닫기' : '옵션'} kind="ghost" small onPress={() => setOpts((o) => ({ ...o, [ex.id]: !showOpts }))} />
                     </Row>
@@ -372,6 +392,12 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
         </View>
       )}
 
+      <LiveCountModal
+        visible={!!live}
+        exerciseName={live?.name ?? ''}
+        onClose={() => setLive(null)}
+        onUse={(n) => { const l = live; setLive(null); if (l) applyLiveCount(l.exId, n); }}
+      />
       <ExercisePicker
         visible={picker}
         onClose={() => setPicker(false)}

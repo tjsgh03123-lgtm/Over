@@ -17,6 +17,14 @@ jobs:
       - run: npm install
       - run: npx expo install --fix
       - run: npm test
+      - name: 포즈 모델 내려받기 (실시간 횟수 세기용, 앱에 포함됨)
+        run: |
+          mkdir -p modules/pose-camera/android/src/main/assets
+          for m in lite full; do
+            curl --fail -L --retry 4 --retry-delay 3 -o "modules/pose-camera/android/src/main/assets/pose_landmarker_${m}.task" \
+              "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_${m}/float16/latest/pose_landmarker_${m}.task"
+          done
+          ls -l modules/pose-camera/android/src/main/assets
       - run: npx expo prebuild --platform android --no-install
       - run: ./gradlew assembleRelease
         working-directory: android

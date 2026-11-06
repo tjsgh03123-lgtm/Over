@@ -13,6 +13,7 @@ import { AI_IMPORT_PROMPT, AI_PROMPT_DIVIDER } from '../src/domain/importSchema.
 import { fmtDuration, fmtElapsed, restFor, suggestFor } from '../src/domain/format.ts';
 import { clampDrag, moveItem, targetIndex } from '../src/domain/reorder.ts';
 import { DEFAULT_GRAPH_COLORS, GRAPH_KEYS, sanitizeGraphColors, sanitizeMode } from '../src/domain/themeModel.ts';
+import { guessExercise, jointAngle, LIVE_EXERCISES, RepCounter } from '../src/domain/liveCount.ts';
 import type { SessionRecord, SetRecord } from '../src/domain/types.ts';
 
 let passed = 0;
@@ -493,6 +494,75 @@ test('다음 세트는 앞 세트 값에서 시작, 첫 세트는 지난 기록,
   assert.equal(w(1, null), null); // 지난 기록 없음 → 빈 칸
   assert.equal(w(3, 40), 45); // 앞 세트를 45로 바꿨다면 거기서 시작
   assert.equal(w(0, 40), null); // 첫 준비 세트는 제안 없음
+});
+
+// ---- 실시간 횟수 세기 ----
+function lmFrame(pts: Record<number, [number, number, number]>): Float32Array {
+  const a = new Float32Array(99);
+  for (const k of Object.keys(pts)) { const i = Number(k); a[i * 3] = pts[i][0]; a[i * 3 + 1] = pts[i][1]; a[i * 3 + 2] = pts[i][2]; }
+  return a;
+}
+/** 각도를 angles에서 한 값씩 주며 15fps로 세어 본다 */
+function runAngles(c: RepCounter, angles: (number | null)[], fps = 15) {
+  angles.forEach((a, i) => c.pushAngle(a, (i * 1000) / fps));
+}
+const cosWave = (reps: number, perRep: number, lo: number, hi: number) =>
+  Array.from({ length: reps * perRep + 1 }, (_, i) => lo + ((hi - lo) * (1 + Math.cos((2 * Math.PI * i) / perRep))) / 2);
+
+test('실시간: 펴짐→굽힘→펴짐을 1회로 센다 (스쿼트 5회)', () => {
+  const c = new RepCounter(LIVE_EXERCISES.find((e) => e.id === 'squat')!);
+  runAngles(c, cosWave(5, 30, 80, 175));
+  assert.equal(c.count, 5);
+  assert.equal(c.reps.length, 5);
+  assert.ok(c.reps[1].timeMs > 1200 && c.reps[1].timeMs < 2000, `time ${c.reps[1].timeMs}`); // 펴진 자세를 벗어나 있던 시간
+  assert.ok(c.reps[0].minAngle < 100);
+});
+test('실시간: 덜 내려가면 세지 않고, 쉬움 모드는 센다', () => {
+  const half = cosWave(4, 30, 120, 175); // 최저 120도 > 스쿼트 lo(110)
+  const a = new RepCounter(LIVE_EXERCISES[0]); runAngles(a, half);
+  assert.equal(a.count, 0);
+  const b = new RepCounter(LIVE_EXERCISES[0], 'easy'); runAngles(b, half);
+  assert.equal(b.count, 4);
+});
+test('실시간: 가만히 서 있거나 흔들리는 것은 세지 않는다', () => {
+  const c = new RepCounter(LIVE_EXERCISES[0]);
+  runAngles(c, Array.from({ length: 150 }, (_, i) => 170 + Math.sin(i) * 4));
+  assert.equal(c.count, 0);
+  // 0.4초 미만의 급한 출렁임
+  const d = new RepCounter(LIVE_EXERCISES[0]);
+  runAngles(d, [175, 175, 90, 175, 175, 90, 175, 175], 30);
+  assert.equal(d.count, 0);
+});
+test('실시간: 굽힌 채 멈췄다가 올라오면 한 번, 중간에 안 보여도 이어서 센다', () => {
+  const c = new RepCounter(LIVE_EXERCISES[3]); // 컬 hi150 lo80
+  const seq: (number | null)[] = [170, 170, 120, 60, 60, 60, 60, null, null, 100, 160, 170, 170];
+  runAngles(c, seq, 10);
+  assert.equal(c.count, 1);
+  assert.equal(c.phase, 'up');
+});
+test('실시간: 3초 넘게 안 보이면 처음부터 (굽힌 채 사라졌다 나타나도 헛세지 않음)', () => {
+  const c = new RepCounter(LIVE_EXERCISES[0]);
+  runAngles(c, [170, 170, 90, 90]);
+  for (let i = 0; i < 60; i++) c.pushAngle(null, 300 + i * 100);
+  assert.equal(c.phase, 'unknown');
+  c.pushAngle(170, 9000);
+  assert.equal(c.count, 0);
+});
+test('실시간: 관절 각도는 더 잘 보이는 쪽을 쓰고 화면 비율을 반영', () => {
+  // 오른쪽 무릎 90도(엉덩이 위, 발목 옆), 왼쪽은 안 보임
+  const f = lmFrame({ 24: [0.5, 0.2, 0.9], 26: [0.5, 0.5, 0.9], 28: [0.8, 0.5, 0.9], 23: [0.1, 0.1, 0.1], 25: [0.1, 0.2, 0.1], 27: [0.1, 0.3, 0.1] });
+  assert.ok(Math.abs(jointAngle(f, 'knee', 1, 1)! - 90) < 1e-6);
+  assert.equal(jointAngle(new Float32Array(99), 'knee', 1, 1), null);
+  const g = lmFrame({ 24: [0.2, 0.0, 0.9], 26: [0.5, 0.5, 0.9], 28: [0.8, 0.5, 0.9] });
+  assert.ok(Math.abs(jointAngle(g, 'knee', 1, 1)! - jointAngle(g, 'knee', 1000, 500)!) > 1);
+});
+test('실시간: 운동 이름으로 종류 짐작', () => {
+  assert.equal(guessExercise('바벨 백 스쿼트')?.id, 'squat');
+  assert.equal(guessExercise('덤벨 컬')?.id, 'curl');
+  assert.equal(guessExercise('인클라인 벤치프레스')?.id, 'bench');
+  assert.equal(guessExercise('숄더 프레스')?.id, 'press');
+  assert.equal(guessExercise('루마니안 데드리프트')?.id, 'deadlift');
+  assert.equal(guessExercise('케이블 크로스오버'), null);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);
