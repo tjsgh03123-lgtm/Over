@@ -8,7 +8,10 @@ import {
 } from '../src/domain/bodyMetrics.ts';
 import { parseRoutine } from '../src/domain/parser.ts';
 import { cycleIndex, daysBetween, shiftStartForMissed, startForDayNumber } from '../src/domain/cycle.ts';
-import { cycleDayNumber, dayForDate, inferMode, MAX_DAYS, sanitizeRoutines, type Routine } from '../src/domain/routine.ts';
+import {
+  autoFillSlots, convertMode, cycleDayNumber, dayForDate, inferMode, MAX_DAYS, placeDay, resizeCycle, sanitizeRoutines, setSlotAt, swapSlots, unplacedDays,
+  type Routine,
+} from '../src/domain/routine.ts';
 import { AI_IMPORT_PROMPT, AI_PROMPT_DIVIDER } from '../src/domain/importSchema.ts';
 import { fmtDuration, fmtElapsed, restFor, suggestFor } from '../src/domain/format.ts';
 import { clampDrag, moveItem, targetIndex } from '../src/domain/reorder.ts';
@@ -420,6 +423,7 @@ const R = (over: Partial<Routine> = {}): Routine => ({
     { id: 'b', name: 'B', kind: 'weights', templateId: 't2', weekday: 3 },
     { id: 'c', name: '휴식', kind: 'rest', templateId: null, weekday: null },
   ],
+  slots: over.mode === 'weekday' ? [null, 'a', null, 'b', null, null, null] : ['a', 'b', 'c'],
   ...over,
 });
 test('사이클 순환: 시작일 기준으로 N일마다 반복, 시작일 이전 날짜도 정상', () => {
@@ -434,7 +438,7 @@ test('오늘이 N일차가 되도록 시작일 계산', () => {
   const r = R({ startDate: start });
   assert.equal(cycleDayNumber(r, '2026-11-05'), 3);
   assert.equal(cycleDayNumber(r, '2026-11-06'), 1); // 3일 사이클이라 4일차 없음 → 1일차
-  assert.equal(cycleDayNumber(R({ days: [] }), '2026-11-05'), 1);
+  assert.equal(cycleDayNumber(R({ days: [], slots: [] }), '2026-11-05'), 1);
 });
 test('dayForDate: 사이클은 순환, 요일 지정은 같은 요일의 날(없으면 휴식=null), 날이 없으면 null', () => {
   const c = R();
@@ -445,7 +449,7 @@ test('dayForDate: 사이클은 순환, 요일 지정은 같은 요일의 날(없
   assert.equal(dayForDate(w, '2026-11-02').day!.name, 'A'); // 11/02 = 월
   assert.equal(dayForDate(w, '2026-11-04').day!.name, 'B'); // 수
   assert.equal(dayForDate(w, '2026-11-03').day, null); // 화: 지정 없음
-  assert.equal(dayForDate(R({ days: [] }), '2026-11-03').day, null);
+  assert.equal(dayForDate(R({ days: [], slots: [] }), '2026-11-03').day, null);
 });
 test('저장값이 깨져도 안전한 빈 상태로 복구, 잘못된 필드는 기본값', () => {
   assert.deepEqual(sanitizeRoutines(null, '2026-11-05'), { activeId: null, routines: [] });
@@ -463,10 +467,67 @@ test('저장값이 깨져도 안전한 빈 상태로 복구, 잘못된 필드는
   assert.deepEqual([r.name, r.mode, r.startDate], ['루틴', 'cycle', '2026-11-05']);
   assert.deepEqual(r.days.map((d) => [d.kind, d.templateId, d.weekday]), [['weights', null, null], ['rest', null, null]]);
   assert.equal(sanitizeRoutines({ activeId: 'r', routines: [{ id: 'r', days: [] }] }, '2026-11-05').activeId, 'r');
+  assert.deepEqual(r.slots, ['d1', 'd2']); // 예전 형식(칸 없음)은 날 순서 그대로 칸이 된다
 });
 test('길이 제한: 한 루틴의 날은 최대 28개', () => {
   const days = Array.from({ length: 40 }, (_, i) => ({ id: `d${i}`, name: 'x', kind: 'rest' }));
   assert.equal(sanitizeRoutines({ routines: [{ id: 'r', days }] }, '2026-11-05').routines[0].days.length, MAX_DAYS);
+});
+test('예전 요일 지정 루틴은 날의 요일 칸으로 옮겨진다 (같은 요일이 겹치면 먼저 온 날만)', () => {
+  const r = sanitizeRoutines({ routines: [{ id: 'r', mode: 'weekday', days: [
+    { id: 'a', kind: 'weights', weekday: 1 }, { id: 'b', kind: 'weights', weekday: 1 }, { id: 'c', kind: 'weights', weekday: 5 }, { id: 'd', kind: 'rest', weekday: null },
+  ] }] }, '2026-11-05').routines[0];
+  assert.deepEqual(r.slots, [null, 'a', null, null, null, 'c', null]);
+  assert.deepEqual(unplacedDays(r).map((d) => d.id), ['b', 'd']);
+});
+test('칸 저장값 검증: 없는 날은 빈 칸, 요일 방식은 항상 7칸, 반복은 1~28칸', () => {
+  const day = { id: 'a', kind: 'weights' };
+  const r = (extra: object) => sanitizeRoutines({ routines: [{ id: 'r', days: [day], ...extra }] }, '2026-11-05').routines[0];
+  assert.deepEqual(r({ mode: 'weekday', slots: ['a', 'zzz', 5] }).slots, ['a', null, null, null, null, null, null]);
+  assert.equal(r({ mode: 'cycle', slots: Array(40).fill('a') }).slots.length, 28);
+  assert.equal(r({ mode: 'cycle', slots: [] }).slots.length, 7);
+  assert.deepEqual(r({ mode: 'cycle', slots: ['a', null, 'a'] }).slots, ['a', null, 'a']); // 같은 날을 여러 칸에
+});
+test('칸 배치: 같은 날을 여러 요일에, 빈 칸은 휴식, 반복 일수 바꾸기·칸 옮기기', () => {
+  // 월·수·금에 같은 날 A
+  const w = R({ mode: 'weekday', slots: [null, 'a', null, 'a', null, 'a', null] });
+  assert.deepEqual([2, 4, 6].map((d) => dayForDate(w, `2026-11-0${d}`).day!.name), ['A', 'A', 'A']);
+  assert.equal(dayForDate(w, '2026-11-03').day, null);
+  // 10일 반복
+  let c = R({ slots: ['a', null, 'b'] });
+  c = { ...c, slots: resizeCycle(c, 10) };
+  assert.equal(c.slots.length, 10);
+  assert.equal(cycleDayNumber(c, '2026-11-11'), 1);
+  assert.equal(dayForDate(c, '2026-11-02').day, null); // 2일차 = 빈 칸 = 휴식
+  assert.equal(dayForDate(c, '2026-11-02').cycleLength, 10);
+  assert.deepEqual(resizeCycle(c, 2), ['a', null]); // 줄이면 뒤쪽 칸이 사라진다
+  assert.equal(resizeCycle(c, 99).length, 28);
+  assert.equal(resizeCycle(c, 0).length, 1);
+  // 칸 옮기기 / 비우기
+  assert.deepEqual(swapSlots(R({ slots: ['a', null, 'b'] }), 0, 2), ['b', null, 'a']);
+  assert.deepEqual(swapSlots(R(), 0, 9), ['a', 'b', 'c']);
+  assert.deepEqual(setSlotAt(R(), 1, null), ['a', null, 'c']);
+});
+test('날 놓기: 첫 빈 칸(요일은 월요일부터)에, 원하는 요일이 비어 있으면 그곳에, 자동 채우기', () => {
+  const w = R({ mode: 'weekday', slots: Array(7).fill(null) });
+  assert.deepEqual(placeDay(w, 'a'), [null, 'a', null, null, null, null, null]); // 월
+  assert.deepEqual(placeDay(w, 'a', 5), [null, null, null, null, null, 'a', null]);
+  assert.deepEqual(placeDay({ ...w, slots: [null, 'b', null, null, null, null, null] }, 'a', 1), [null, 'b', 'a', null, null, null, null]); // 월 칸이 이미 차 있으면 월요일부터 첫 빈 칸(화)
+  const c = R({ slots: ['a', null, null] });
+  assert.deepEqual(placeDay(c, 'b'), ['a', 'b', null]);
+  assert.deepEqual(placeDay({ ...c, slots: ['a', 'b', 'c'] }, 'c'), ['a', 'b', 'c']);
+  assert.deepEqual(autoFillSlots(R({ slots: [null, 'b', null] })), ['a', 'b', 'c']);
+});
+test('방식 바꾸기: Day 1~7 ↔ 월~일, 7칸을 넘는 Day는 빠짐', () => {
+  const c = R({ slots: ['a', null, 'b', null, null, null, 'c'] });
+  const w = convertMode(c, 'weekday');
+  assert.deepEqual(w.slots, ['c', 'a', null, 'b', null, null, null]); // 일=Day7, 월=Day1, 수=Day3
+  assert.equal(w.lost, 0);
+  const back = convertMode({ ...c, mode: 'weekday', slots: w.slots }, 'cycle');
+  assert.deepEqual(back.slots, c.slots);
+  const long = R({ slots: ['a', null, null, null, null, null, null, 'b', 'c'] });
+  assert.equal(convertMode(long, 'weekday').lost, 2);
+  assert.equal(convertMode(long, 'cycle').lost, 0);
 });
 test('루틴대로 하기: 놓친 날만큼 시작일이 밀려 오늘이 그 칸이 됨', () => {
   const start2 = shiftStartForMissed('2026-11-01', '2026-11-03', '2026-11-05');

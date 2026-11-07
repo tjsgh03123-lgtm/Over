@@ -10,7 +10,7 @@ import { moveItem } from '../domain/reorder.ts';
 import { adjustForCondition, type Cond } from '../domain/condition.ts';
 import { decodeOverride, encodeOverride, parseIds, partSummary } from '../domain/homeCards.ts';
 import {
-  dayForDate, EMPTY_ROUTINES, inferMode, MAX_DAYS, sanitizeRoutines,
+  autoFillSlots, convertMode, dayForDate, DEFAULT_REPEAT, EMPTY_ROUTINES, fitSlots, inferMode, MAX_DAYS, placeDay, resizeCycle, sanitizeRoutines, setSlotAt, swapSlots,
   type DayKind, type Routine, type RoutineDay, type RoutineMode, type RoutinesState,
 } from '../domain/routine.ts';
 
@@ -222,18 +222,39 @@ async function mutateRoutine(db: Db, today: string, id: string, fn: (r: Routine)
 
 /** 새 루틴을 만든다. 첫 루틴이면 자동으로 사용 중이 된다. */
 export async function createRoutine(
-  db: Db, today: string, v: { name: string; mode?: RoutineMode; startDate?: string },
+  db: Db, today: string, v: { name: string; mode?: RoutineMode; startDate?: string; repeat?: number },
 ): Promise<string> {
   const st = await getRoutines(db, today);
   const id = uid('rt');
-  const routine: Routine = { id, name: v.name.trim() || '새 루틴', mode: v.mode ?? 'cycle', startDate: v.startDate ?? today, days: [] };
+  const mode = v.mode ?? 'cycle';
+  const routine: Routine = { id, name: v.name.trim() || '새 루틴', mode, startDate: v.startDate ?? today, days: [], slots: fitSlots(mode, Array(mode === 'weekday' ? 7 : v.repeat ?? DEFAULT_REPEAT).fill(null)) };
   await saveRoutines(db, { activeId: st.activeId ?? id, routines: [...st.routines, routine] });
   return id;
 }
 export const renameRoutine = (db: Db, today: string, id: string, name: string) =>
   mutateRoutine(db, today, id, (r) => ({ ...r, name: name.trim() || r.name }));
-export const setRoutineMode = (db: Db, today: string, id: string, mode: RoutineMode) =>
-  mutateRoutine(db, today, id, (r) => ({ ...r, mode }));
+/** 방식을 바꾼다. 칸은 월~일 ↔ Day 1~7로 옮기고, 7칸을 넘는 Day는 빠진다(날 자체는 남는다). 빠지는 날의 수를 돌려준다. */
+export async function setRoutineMode(db: Db, today: string, id: string, mode: RoutineMode): Promise<number> {
+  let lost = 0;
+  await mutateRoutine(db, today, id, (r) => {
+    const c = convertMode(r, mode);
+    lost = c.lost;
+    return { ...r, mode, slots: c.slots };
+  });
+  return lost;
+}
+/** cycle: 반복 일수(칸 수) 바꾸기 */
+export const setRepeatDays = (db: Db, today: string, id: string, n: number) =>
+  mutateRoutine(db, today, id, (r) => ({ ...r, slots: resizeCycle(r, n) }));
+/** 칸에 날 놓기 / 비우기(null) */
+export const setSlot = (db: Db, today: string, id: string, index: number, dayId: string | null) =>
+  mutateRoutine(db, today, id, (r) => ({ ...r, slots: setSlotAt(r, index, dayId) }));
+/** 두 칸의 내용 맞바꾸기 */
+export const swapRoutineSlots = (db: Db, today: string, id: string, a: number, b: number) =>
+  mutateRoutine(db, today, id, (r) => ({ ...r, slots: swapSlots(r, a, b) }));
+/** 놓이지 않은 날을 빈 칸에 차례로 채우기 */
+export const autoFillRoutine = (db: Db, today: string, id: string) =>
+  mutateRoutine(db, today, id, (r) => ({ ...r, slots: autoFillSlots(r) }));
 export const setRoutineStart = (db: Db, today: string, id: string, startDate: string) =>
   mutateRoutine(db, today, id, (r) => ({ ...r, startDate }));
 export async function setActiveRoutine(db: Db, today: string, id: string | null): Promise<void> {
@@ -257,6 +278,9 @@ export interface DayInput {
   id?: string;
   name: string;
   kind: DayKind;
+  /** 새 날을 놓을 칸 번호 (비우면 첫 빈 칸). 요일 방식의 칸 번호는 요일(0=일 … 6=토) */
+  slot?: number | null;
+  /** 예전 방식: 요일 방식 루틴에서 새 날을 놓을 요일 */
   weekday?: number | null;
   exercises?: TemplateExerciseInput[];
   postCardioMin?: number | null;
@@ -281,10 +305,14 @@ export async function upsertDay(db: Db, today: string, routineId: string, input:
       await deleteTemplate(db, templateId);
       templateId = null;
     }
-    const day: RoutineDay = { id: dayId, name, kind: input.kind, templateId, weekday: input.weekday ?? null };
-    await mutateRoutine(db, today, routineId, (x) => ({
-      ...x, days: existing ? x.days.map((d) => (d.id === dayId ? day : d)) : [...x.days, day],
-    }));
+    const day: RoutineDay = { id: dayId, name, kind: input.kind, templateId, weekday: null };
+    await mutateRoutine(db, today, routineId, (x) => {
+      const withDay = { ...x, days: existing ? x.days.map((d) => (d.id === dayId ? day : d)) : [...x.days, day] };
+      // 새 날은 빈 칸에 자동으로 놓는다 (요일을 지정해 만들면 그 요일에). 칸은 나중에 자유롭게 옮길 수 있다.
+      if (existing) return withDay;
+      const at = input.slot ?? null;
+      return { ...withDay, slots: at != null && at >= 0 && at < withDay.slots.length ? setSlotAt(withDay, at, dayId) : placeDay(withDay, dayId, input.weekday) };
+    });
   });
   return dayId;
 }
@@ -295,7 +323,9 @@ export async function deleteDay(db: Db, today: string, routineId: string, dayId:
   if (!d) return;
   await db.transaction(async () => {
     if (d.templateId) await deleteTemplate(db, d.templateId);
-    await mutateRoutine(db, today, routineId, (x) => ({ ...x, days: x.days.filter((y) => y.id !== dayId) }));
+    await mutateRoutine(db, today, routineId, (x) => ({
+      ...x, days: x.days.filter((y) => y.id !== dayId), slots: x.slots.map((s) => (s === dayId ? null : s)),
+    }));
   });
 }
 
@@ -355,9 +385,9 @@ async function templateExists(db: Db, id: string | null): Promise<string | null>
  */
 export async function slotForDate(db: Db, date: string): Promise<DaySlot | null> {
   const r = await getActiveRoutine(db, date);
-  if (!r || !r.days.length) return null;
+  if (!r || !r.slots.some(Boolean)) return null;
   const hit = dayForDate(r, date);
-  if (!hit.day) return { kind: 'rest', template_id: null, label: '휴식', routineName: r.name };
+  if (!hit.day) return { kind: 'rest', template_id: null, label: '휴식', routineName: r.name, cycleDay: hit.cycleDay, cycleLength: hit.cycleLength };
   return {
     kind: hit.day.kind,
     template_id: hit.day.kind === 'weights' ? await templateExists(db, hit.day.templateId) : null,
@@ -424,7 +454,7 @@ export async function resolveMissed(db: Db, today: string, missed: MissedRoutine
   if (choice === 'skip') return null;
   if (choice === 'free') return startFreeSession(db, today);
   const r = await getActiveRoutine(db, today);
-  if (r && r.mode === 'cycle' && r.days.length) {
+  if (r && r.mode === 'cycle' && r.slots.some(Boolean)) {
     await setRoutineStart(db, today, r.id, shiftStartForMissed(r.startDate, missed.date, today));
   }
   return startSessionFromTemplate(db, missed.templateId, today);
@@ -1023,6 +1053,7 @@ export async function applyImportedRoutine(
   const mode = opts.mode ?? inferMode(days);
   let routineId = '';
   let count = 0;
+  const placed: { id: string; weekday: number | null; rest: boolean }[] = [];
   await db.transaction(async () => {
     routineId = await createRoutine(db, today, { name: opts.name || '가져온 루틴', mode });
     for (const d of days) {
@@ -1035,9 +1066,17 @@ export async function applyImportedRoutine(
           exs.push({ exerciseId: ex.id, targetSets: e.sets, targetReps: e.reps, targetWeight: e.weight, restSec: e.restSec });
         }
       }
-      await upsertDay(db, today, routineId, { name: d.title, kind, weekday: mode === 'weekday' ? d.weekday : null, exercises: exs });
+      const dayId = await upsertDay(db, today, routineId, { name: d.title, kind, exercises: exs });
+      placed.push({ id: dayId, weekday: d.weekday, rest: kind === 'rest' });
       count++;
     }
+    // 칸 배치: 사이클은 가져온 순서대로 N칸(반복 일수 = 날 수), 요일 방식은 각 날의 요일 칸에 (휴식은 빈 칸)
+    await mutateRoutine(db, today, routineId, (x) => {
+      if (mode === 'cycle') return { ...x, slots: fitSlots('cycle', placed.map((p) => p.id)) };
+      const slots: (string | null)[] = Array(7).fill(null);
+      for (const p of placed) if (!p.rest && p.weekday != null && slots[p.weekday] == null) slots[p.weekday] = p.id;
+      return { ...x, slots };
+    });
     if (opts.activate) await setActiveRoutine(db, today, routineId);
     await db.run('INSERT INTO imported_routines (id, created_at, raw_text, format, parsed_json, applied) VALUES (?,?,?,?,?,1)', [
       uid('imp'), nowIso(), raw, format, JSON.stringify(days),

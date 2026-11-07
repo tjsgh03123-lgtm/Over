@@ -10,7 +10,7 @@ export interface Nav {
   openBody(): void;
   openRoutine(id: string): void;
   /** dayId가 null이면 새 날 추가 */
-  openDay(routineId: string, dayId: string | null): void;
+  openDay(routineId: string, dayId: string | null, slot?: number | null): void;
   openExercises(): void;
   openSetup(): void;
   openSettings(): void;

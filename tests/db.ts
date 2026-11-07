@@ -19,7 +19,7 @@ async function test(name: string, fn: () => Promise<void>) {
     console.log(`  ✓ ${name}`);
   } catch (e) {
     failed++;
-    console.log(`  ✗ ${name}\n    ${(e as Error).stack?.split('\n').slice(0, 3).join('\n    ')}`);
+    console.log(`  ✗ ${name}\n    ${(e as Error).stack?.split("\n").slice(0, 12).join('\n    ')}`);
   }
 }
 
@@ -258,7 +258,8 @@ await test('AI 텍스트 → 파싱 → 루틴(사이클) 한 개로 저장 → 
   const rt = st.routines[0];
   assert.equal(rt.name, '내 AI 루틴');
   assert.equal(rt.mode, 'weekday'); // 운동일에 모두 요일이 있으면 요일 지정 방식으로 추정
-  assert.deepEqual(rt.days.map((d) => [d.kind, d.weekday]), [['weights', 1], ['rest', 2]]);
+  assert.deepEqual(rt.days.map((d) => d.kind), ['weights', 'rest']);
+  assert.deepEqual(rt.slots, [null, rt.days[0].id, null, null, null, null, null]); // 월요일 칸에만 (화 휴식은 빈 칸)
   const tplEx = await repo.getTemplateExercises(db, rt.days[0].templateId!);
   assert.deepEqual(tplEx.map((e) => [e.name, e.target_sets, e.target_weight]), [['벤치프레스', 4, 60], ['새로운 머신 프레스', 3, null]]);
   assert.equal((await repo.listExercises(db)).filter((e) => e.name === '벤치프레스').length, 1);
@@ -414,6 +415,7 @@ await test('N일 반복 방식: 시작일 기준으로 순환, 몇 일차인지,
   const a = await weightDay(db, id, 'A', '벤치프레스');
   const b = await weightDay(db, id, 'B', '렛풀다운');
   await repo.upsertDay(db, '2026-11-05', id, { name: '휴식', kind: 'rest' });
+  await repo.setRepeatDays(db, '2026-11-05', id, 3); // 3일 반복
   const labels: (string | null)[] = [];
   for (let d = 1; d <= 6; d++) {
     const s = (await repo.slotForDate(db, `2026-11-0${d}`))!;
@@ -432,6 +434,65 @@ await test('N일 반복 방식: 시작일 기준으로 순환, 몇 일차인지,
   const db2 = await emptyDb();
   await restoreBackup(db2, backup);
   assert.equal((await repo.slotForDate(db2, '2026-11-02'))!.label, 'B');
+});
+await test('칸 배치: 같은 날을 여러 요일에, 반복 일수, 칸 옮기기·비우기, 방식 바꾸기, 날 삭제 시 칸 비움', async () => {
+  const db = await emptyDb();
+  const id = await repo.createRoutine(db, '2026-11-01', { name: '주 3회', mode: 'weekday' });
+  const a = await weightDay(db, id, 'A', '벤치프레스', 1); // 월에 자동 배치
+  await repo.setSlot(db, '2026-11-01', id, 3, a); // 수에도
+  await repo.setSlot(db, '2026-11-01', id, 5, a); // 금에도
+  assert.deepEqual([2, 4, 6].map((d) => `2026-11-0${d}`), ['2026-11-02', '2026-11-04', '2026-11-06']);
+  for (const d of ['2026-11-02', '2026-11-04', '2026-11-06']) assert.equal((await repo.slotForDate(db, d))!.label, 'A');
+  assert.equal((await repo.slotForDate(db, '2026-11-03'))!.kind, 'rest');
+  // 월 칸을 화로 옮기기
+  await repo.swapRoutineSlots(db, '2026-11-01', id, 1, 2);
+  assert.equal((await repo.slotForDate(db, '2026-11-02'))!.kind, 'rest');
+  assert.equal((await repo.slotForDate(db, '2026-11-03'))!.label, 'A');
+  // 요일 → N일 반복: 월~일이 Day 1~7
+  assert.equal(await repo.setRoutineMode(db, '2026-11-01', id, 'cycle'), 0);
+  let r = (await repo.getRoutines(db, '2026-11-01')).routines[0];
+  assert.equal(r.mode, 'cycle');
+  assert.deepEqual(r.slots, [null, a, a, null, a, null, null]);
+  // 반복 일수 4일로 줄이면 5일차 이후 칸이 사라짐
+  await repo.setRepeatDays(db, '2026-11-01', id, 4);
+  r = (await repo.getRoutines(db, '2026-11-01')).routines[0];
+  assert.deepEqual(r.slots, [null, a, a, null]);
+  const s = (await repo.slotForDate(db, '2026-11-02'))!; // 시작일 11/01이 Day 1 → 11/02는 Day 2
+  assert.deepEqual([s.label, s.cycleDay, s.cycleLength], ['A', 2, 4]);
+  const rest = (await repo.slotForDate(db, '2026-11-04'))!; // Day 4 = 빈 칸 = 휴식, 며칠째인지는 표시
+  assert.deepEqual([rest.kind, rest.cycleDay, rest.cycleLength], ['rest', 4, 4]);
+  // 날을 지우면 그 날이 놓인 모든 칸이 비워짐
+  await repo.deleteDay(db, '2026-11-01', id, a);
+  r = (await repo.getRoutines(db, '2026-11-01')).routines[0];
+  assert.deepEqual(r.slots, [null, null, null, null]);
+  assert.equal(await repo.slotForDate(db, '2026-11-02'), null); // 놓인 날이 하나도 없으면 일정 없음
+});
+await test('방식 바꾸기: 8일째 이후 Day는 요일에서 빠지지만 날 자체는 남고, 다시 배치할 수 있음', async () => {
+  const db = await emptyDb();
+  const id = await repo.createRoutine(db, '2026-11-01', { name: '10일', mode: 'cycle', repeat: 10 });
+  const ids: string[] = [];
+  for (let i = 0; i < 10; i++) ids.push(await repo.upsertDay(db, '2026-11-01', id, { name: `D${i + 1}`, kind: 'rest' }));
+  let r = (await repo.getRoutines(db, '2026-11-01')).routines[0];
+  assert.deepEqual(r.slots, ids); // 새 날은 빈 칸에 차례로 자동 배치
+  assert.equal(await repo.setRoutineMode(db, '2026-11-01', id, 'weekday'), 3);
+  r = (await repo.getRoutines(db, '2026-11-01')).routines[0];
+  assert.equal(r.slots.length, 7);
+  assert.equal(r.days.length, 10);
+  await repo.autoFillRoutine(db, '2026-11-01', id); // 빈 칸이 없으니 그대로
+  assert.equal((await repo.getRoutines(db, '2026-11-01')).routines[0].slots.filter(Boolean).length, 7);
+});
+await test('가져온 루틴: 사이클은 반복 일수 = 날 수, 요일 방식은 각 요일 칸에(휴식은 빈 칸), 같은 요일 여러 개 지정 가능', async () => {
+  const db = await emptyDb();
+  const p1 = parseRoutine('## 월요일 - 가슴\n1. 벤치프레스 4x8\n\n화요일: 휴식\n\n## 금요일 - 등\n1. 렛풀다운 3x10');
+  const r1 = await repo.applyImportedRoutine(db, '2026-11-05', p1.days, 'raw', p1.format, { name: '요일', mode: 'weekday' });
+  const a = (await repo.getRoutines(db, '2026-11-05')).routines.find((x) => x.id === r1.routineId)!;
+  assert.equal(a.slots.length, 7);
+  assert.deepEqual(a.slots.map((s) => (s ? a.days.find((d) => d.id === s)!.name : null)), [null, '가슴', null, null, null, '등', null]);
+  const p2 = parseRoutine('## 1일차 - 가슴\n1. 벤치프레스 4x8\n\n## 2일차 - 등\n1. 렛풀다운 3x10');
+  const r2 = await repo.applyImportedRoutine(db, '2026-11-05', p2.days, 'raw', p2.format, { name: '사이클', mode: 'cycle' });
+  const b = (await repo.getRoutines(db, '2026-11-05')).routines.find((x) => x.id === r2.routineId)!;
+  assert.equal(b.slots.length, 2);
+  assert.deepEqual(b.slots, b.days.map((d) => d.id));
 });
 await test('자유 운동을 루틴의 새 날로 저장 (루틴이 없으면 ‘내 루틴’ 생성)', async () => {
   const db = await emptyDb();
@@ -494,6 +555,7 @@ await test('앱 시작 팝업 선택: 루틴대로 하기(사이클은 일정이
     await weightDay(db, id, 'A', '벤치프레스'); // 11/01, 11/04, 11/07
     await weightDay(db, id, 'B', '렛풀다운'); // 11/02, 11/05
     await repo.upsertDay(db, '2026-11-01', id, { name: '휴식', kind: 'rest' }); // 11/03, 11/06
+    await repo.setRepeatDays(db, '2026-11-01', id, 3);
     return { db, id };
   };
   const { db, id } = await build();

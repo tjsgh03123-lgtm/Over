@@ -1,31 +1,28 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Alert, ScrollView, View } from 'react-native';
 import { useApp } from '../app/context.tsx';
-import { getDayDetail, getRoutines, upsertDay, type TemplateExerciseInput } from '../db/repo.ts';
-import type { DayKind, RoutineMode } from '../domain/routine.ts';
+import { getDayDetail, upsertDay, type TemplateExerciseInput } from '../db/repo.ts';
+import type { DayKind } from '../domain/routine.ts';
 import { moveItem } from '../domain/reorder.ts';
 import { Btn, Card, Chip, Header, NumInput, Row, T, TextField } from '../ui/components.tsx';
 import { ExercisePicker } from '../ui/ExercisePicker.tsx';
 import { ReorderList } from '../ui/ReorderList.tsx';
 import { C, S } from '../ui/theme.ts';
 
-const WD = ['일', '월', '화', '수', '목', '금', '토'];
-const WD_ORDER = [1, 2, 3, 4, 5, 6, 0];
+/** 휴식은 '날'이 아니라 비어 있는 칸이다. 예전에 만든 휴식 날만 종류에 남겨 둔다. */
 const KINDS: { key: DayKind; label: string }[] = [
-  { key: 'weights', label: '웨이트' }, { key: 'cardio', label: '유산소' }, { key: 'rest', label: '휴식' },
+  { key: 'weights', label: '웨이트' }, { key: 'cardio', label: '유산소' },
 ];
 
 interface EditEx extends TemplateExerciseInput { name: string; key: string }
 let keySeq = 0;
 const newKey = () => `ex${++keySeq}`;
 
-/** 루틴의 '날' 한 개 편집: 이름·종류·(요일 지정 방식이면 요일)·종목 */
-export function DayEditorScreen({ routineId, dayId }: { routineId: string; dayId: string | null }) {
+/** 루틴의 '날' 한 개 편집: 이름·종류·종목. 새 날은 slot 칸에(없으면 첫 빈 칸에) 놓인다. */
+export function DayEditorScreen({ routineId, dayId, slot }: { routineId: string; dayId: string | null; slot: number | null }) {
   const { db, today, nav, bump } = useApp();
-  const [mode, setMode] = useState<RoutineMode>('cycle');
   const [name, setName] = useState('');
   const [kind, setKind] = useState<DayKind>('weights');
-  const [weekday, setWeekday] = useState<number | null>(null);
   const [postCardio, setPostCardio] = useState<number | null>(null);
   const [exercises, setExercises] = useState<EditEx[]>([]);
   const [picker, setPicker] = useState(false);
@@ -36,12 +33,10 @@ export function DayEditorScreen({ routineId, dayId }: { routineId: string; dayId
 
   useEffect(() => {
     (async () => {
-      const st = await getRoutines(db, today);
-      setMode(st.routines.find((r) => r.id === routineId)?.mode ?? 'cycle');
       if (dayId) {
         const d = await getDayDetail(db, today, routineId, dayId);
         if (d) {
-          setName(d.day.name); setKind(d.day.kind); setWeekday(d.day.weekday); setPostCardio(d.postCardioMin);
+          setName(d.day.name); setKind(d.day.kind); setPostCardio(d.postCardioMin);
           setExercises(d.exercises.map((e) => ({
             key: newKey(), exerciseId: e.exercise_id, name: e.name, targetSets: e.target_sets, targetReps: e.target_reps,
             targetWeight: e.target_weight, intensity: e.intensity, restSec: e.rest_sec, note: e.note, ss: e.ss,
@@ -58,7 +53,7 @@ export function DayEditorScreen({ routineId, dayId }: { routineId: string; dayId
     if (kind === 'weights' && !name.trim()) return Alert.alert('날 이름을 입력하세요', '예: 가슴·삼두');
     try {
       await upsertDay(db, today, routineId, {
-        id: dayId ?? undefined, name, kind, weekday: mode === 'weekday' ? weekday : null,
+        id: dayId ?? undefined, name, kind, slot,
         postCardioMin: postCardio, exercises: exercises.map(({ name: _n, key: _k, ...rest }) => rest),
       });
       bump();
@@ -81,17 +76,8 @@ export function DayEditorScreen({ routineId, dayId }: { routineId: string; dayId
         <Card>
           <TextField value={name} onChangeText={setName} placeholder={kind === 'rest' ? '휴식' : kind === 'cardio' ? '유산소' : '날 이름 (예: 가슴·삼두)'} />
           <Row style={{ marginTop: S.md }}>
-            {KINDS.map((k) => <Chip key={k.key} label={k.label} active={kind === k.key} onPress={() => setKind(k.key)} />)}
+            {(kind === 'rest' ? [...KINDS, { key: 'rest' as DayKind, label: '휴식' }] : KINDS).map((k) => <Chip key={k.key} label={k.label} active={kind === k.key} onPress={() => setKind(k.key)} />)}
           </Row>
-          {mode === 'weekday' && (
-            <>
-              <T muted style={{ fontSize: 12, marginTop: S.md, marginBottom: 6 }}>요일</T>
-              <Row style={{ flexWrap: 'wrap', gap: 6 }}>
-                <Chip label="없음" active={weekday == null} onPress={() => setWeekday(null)} />
-                {WD_ORDER.map((w) => <Chip key={w} label={WD[w]} active={weekday === w} onPress={() => setWeekday(w)} />)}
-              </Row>
-            </>
-          )}
           {kind === 'weights' && (
             <Row style={{ marginTop: S.md }}>
               <T muted style={{ flex: 1 }}>웨이트 후 유산소(분, 비우면 없음)</T>

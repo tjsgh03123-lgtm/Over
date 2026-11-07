@@ -30,7 +30,7 @@ type Overlay =
   | { name: 'import' }
   | { name: 'body' }
   | { name: 'routine'; id: string }
-  | { name: 'day'; routineId: string; dayId: string | null }
+  | { name: 'day'; routineId: string; dayId: string | null; slot?: number | null }
   | { name: 'exercises' }
   | { name: 'setup' }
   | { name: 'settings' };
@@ -111,7 +111,7 @@ export default function App() {
     openImport: () => push({ name: 'import' }),
     openBody: () => push({ name: 'body' }),
     openRoutine: (id) => push({ name: 'routine', id }),
-    openDay: (routineId, dayId) => push({ name: 'day', routineId, dayId }),
+    openDay: (routineId, dayId, slot) => push({ name: 'day', routineId, dayId, slot }),
     openExercises: () => push({ name: 'exercises' }),
     openSetup: () => push({ name: 'setup' }),
     openSettings: () => push({ name: 'settings' }),
@@ -201,7 +201,7 @@ function Overlay({ o }: { o: Overlay }) {
     case 'import': return <ImportScreen />;
     case 'body': return <BodyEntryScreen />;
     case 'routine': return <RoutineDetailScreen routineId={o.id} />;
-    case 'day': return <DayEditorScreen routineId={o.routineId} dayId={o.dayId} />;
+    case 'day': return <DayEditorScreen routineId={o.routineId} dayId={o.dayId} slot={o.slot ?? null} />;
     case 'exercises': return <ExercisesScreen />;
     case 'setup': return <SetupScreen />;
     case 'settings': return <SettingsOverlay />;
