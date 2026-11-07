@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { FlatList, Modal, Pressable, Text, View } from 'react-native';
 import { useApp } from '../app/context.tsx';
 import { getOrCreateExercise, listExercises, type ExerciseRow } from '../db/repo.ts';
@@ -13,6 +14,7 @@ type Line = { kind: 'head'; part: string; count: number } | { kind: 'item'; item
 /** 종목 선택/추가 모달. 목록은 하나이고 부위별로 묶인다 (직접 추가한 종목은 각 부위 맨 위). 이름이 같거나 별칭이 같으면 기존 종목으로 통합된다. */
 export function ExercisePicker({ visible, onClose, onPick, newMode }: { visible: boolean; onClose: () => void; onPick: (e: ExerciseRow) => void; /** 새로 만드는 종목의 기본 방식 (맨몸 운동에서는 체중) */ newMode?: WeightMode }) {
   const { db, version } = useApp();
+  const insets = useSafeAreaInsets();
   const [q, setQ] = useState('');
   const [list, setList] = useState<ExerciseRow[]>([]);
   const [part, setPart] = useState<string | null>(null);
@@ -42,7 +44,7 @@ export function ExercisePicker({ visible, onClose, onPick, newMode }: { visible:
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose} transparent>
       <View style={{ flex: 1, backgroundColor: C.overlay, justifyContent: 'flex-end' }}>
-        <View style={{ backgroundColor: C.bg, height: '88%', borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: S.lg }}>
+        <View style={{ backgroundColor: C.bg, height: '88%', borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: S.lg, paddingBottom: S.lg + insets.bottom }}>
           <Row style={{ marginBottom: S.md }}>
             <TextField value={q} onChangeText={setQ} placeholder="종목 검색 또는 새 종목 이름" style={{ flex: 1 }} autoFocus />
             <Btn label="닫기" kind="ghost" small onPress={() => { reset(); onClose(); }} />

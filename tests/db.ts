@@ -971,5 +971,57 @@ await test('홈 카드: 루틴별 종목 수·부위 요약·마지막으로 한
   assert.deepEqual(await repo.getArchivedTemplates(db), [t2]);
 });
 
+console.log('빈 루틴 정리 · 대체 운동 · 연습 세트');
+await test('빈 루틴 정리: 기본 이름 그대로 날이 없는 루틴만 지우고, 사용 중이던 루틴이면 다른 루틴으로 넘김', async () => {
+  const db = await emptyDb();
+  const keep = await repo.createRoutine(db, '2026-11-05', { name: '내 루틴' }); // 날 없음이지만 이름을 정함 → 유지
+  const junk = await repo.createRoutine(db, '2026-11-05', { name: '' }); // '새 루틴'
+  const filled = await repo.createRoutine(db, '2026-11-05', { name: '새 루틴' });
+  await weightDay(db, filled, '가슴', '벤치프레스');
+  assert.equal(await repo.pruneEmptyRoutines(db, '2026-11-05'), 1);
+  const st = await repo.getRoutines(db, '2026-11-05');
+  assert.deepEqual(st.routines.map((r) => r.id), [keep, filled]);
+  assert.ok(!st.routines.some((r) => r.id === junk));
+  assert.equal(await repo.pruneEmptyRoutines(db, '2026-11-05'), 0);
+  // 첫 루틴(자동으로 사용 중)이 빈 새 루틴이면 지운 뒤 다른 루틴이 사용 중
+  const db2 = await emptyDb();
+  const first = await repo.createRoutine(db2, '2026-11-05', { name: '' });
+  const other = await repo.createRoutine(db2, '2026-11-05', { name: '다른 루틴' });
+  assert.equal((await repo.getRoutines(db2, '2026-11-05')).activeId, first);
+  await repo.pruneEmptyRoutines(db2, '2026-11-05');
+  assert.equal((await repo.getRoutines(db2, '2026-11-05')).activeId, other);
+});
+await test('대체 운동: 완료한 세트가 없을 때만 바꾸고 세트 수·순서는 그대로, 입력만 한 값은 비움', async () => {
+  const db = await emptyDb();
+  const bench = await repo.getOrCreateExercise(db, '벤치프레스');
+  const dumb = await repo.getOrCreateExercise(db, '덤벨 벤치프레스');
+  const sid = await repo.startFreeSession(db, '2026-11-05');
+  const se = await repo.addSessionExercise(db, sid, bench.id, 3);
+  let ses = (await repo.loadSession(db, sid))!;
+  await repo.updateSet(db, ses.exercises[0].sets[0].id, { weight: 60, reps: 8 }); // 입력만, 완료 아님
+  assert.equal(await repo.replaceSessionExercise(db, se, dumb.id), true);
+  ses = (await repo.loadSession(db, sid))!;
+  assert.equal(ses.exercises[0].exercise_name, '덤벨 벤치프레스');
+  assert.equal(ses.exercises[0].exercise_id, dumb.id);
+  assert.equal(ses.exercises[0].sets.length, 3);
+  assert.equal(ses.exercises[0].sets[0].weight, null);
+  // 완료한 세트가 있으면 바꾸지 않음
+  await repo.updateSet(db, ses.exercises[0].sets[0].id, { weight: 20, reps: 10, done: true });
+  assert.equal(await repo.replaceSessionExercise(db, se, bench.id), false);
+  assert.equal((await repo.loadSession(db, sid))!.exercises[0].exercise_name, '덤벨 벤치프레스');
+  assert.equal(await repo.replaceSessionExercise(db, se, 'nope'), false); // 없는 종목
+});
+await test('연습 세트 추가: 정해진 무게·횟수의 준비 세트가 완료 표시 없이 붙고, 통계에는 들어가지 않음', async () => {
+  const db = await emptyDb();
+  const ex = await repo.getOrCreateExercise(db, '스쿼트');
+  const sid = await repo.startFreeSession(db, '2026-11-05');
+  const se = await repo.addSessionExercise(db, sid, ex.id, 3);
+  await repo.addWarmupSets(db, se, [{ weight: 40, reps: 8 }, { weight: 60, reps: 5 }]);
+  const sets = (await repo.loadSession(db, sid))!.exercises[0].sets;
+  const warm = sets.filter((x) => x.set_type === 'warmup');
+  assert.deepEqual(warm.map((x) => [x.weight, x.reps, x.done]), [[40, 8, 0], [60, 5, 0]]);
+  assert.equal(sets.filter((x) => x.set_type === 'working').length, 3);
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

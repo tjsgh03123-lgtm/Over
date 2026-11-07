@@ -3,7 +3,8 @@ import { Modal, PermissionsAndroid, Platform, ScrollView, Text, Vibration, View,
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { requireNativeView } from 'expo';
 import { useKeepAwake } from 'expo-keep-awake';
-import Svg, { Circle, Line } from 'react-native-svg';
+import Svg, { Circle, Line, Polyline } from 'react-native-svg';
+import { jointPoint, PathTrail, TRAIL_LABEL, type TrailJoint } from '../domain/pathTrail.ts';
 import { useApp } from '../app/context.tsx';
 import { setSetting } from '../db/repo.ts';
 import { AutoRepCounter, countWord, FOCUS_LABEL, type Focus, STRICT_LABEL, type Strictness } from '../domain/liveCount.ts';
@@ -87,6 +88,8 @@ function LiveBody({ onClose, onUse, defaults }: { onClose: () => void; onUse: (c
   const [lastMs, setLastMs] = useState<number | null>(null);
   const [frame, setFrame] = useState<{ lm: number[]; w: number; h: number } | null>(null);
   const [frames, setFrames] = useState(0);
+  const [trailJoint, setTrailJoint] = useState<TrailJoint>('off'); // 관절이 지나간 길 표시
+  const trail = useRef(new PathTrail(90));
   const [seen, setSeen] = useState(false);
   const [camKey, setCamKey] = useState(0); // 카메라 화면이 안 나올 때 새로 만들기 위한 값
   const counter = useRef(new AutoRepCounter());
@@ -168,6 +171,7 @@ function LiveBody({ onClose, onUse, defaults }: { onClose: () => void; onUse: (c
     let any = false;
     for (let i = 11; i <= 28; i++) if (lm[i * 3 + 2] > 0.5) { any = true; break; }
     if (any) lastSeen.current = Date.now();
+    trail.current.push(jointPoint(lm, trailJoint));
     setFrame({ lm, w, h });
     setFrames((n) => n + 1);
     const f = flow.current;
@@ -231,7 +235,7 @@ function LiveBody({ onClose, onUse, defaults }: { onClose: () => void; onUse: (c
     const f = flow.current;
     if (f && f.phase === 'counting' && d > 0) handleFlow(f.onCount(n, Date.now()));
   };
-  const reset = () => { stopSpeaking(); counter.current.reset(); setCount(0); setLastMs(null); nextAt.current = 0; if (mode === 'sets') { flow.current = newFlow(cfg); flowRender((n) => n + 1); } };
+  const reset = () => { trail.current.reset(); stopSpeaking(); counter.current.reset(); setCount(0); setLastMs(null); nextAt.current = 0; if (mode === 'sets') { flow.current = newFlow(cfg); flowRender((n) => n + 1); } };
   const restartCamera = () => { setFrames(0); setFrame(null); setErr(null); setCamKey((k) => k + 1); };
 
   // 영상은 비율을 유지(FIT)해서 보이므로, 같은 비율의 상자에 영상과 뼈대를 겹쳐 그린다
@@ -265,6 +269,9 @@ function LiveBody({ onClose, onUse, defaults }: { onClose: () => void; onUse: (c
                 {lm && BONES.map(([a, b], i) => (vis(a) && vis(b) ? (
                   <Line key={i} x1={lm[a * 3] * boxW} y1={lm[a * 3 + 1] * boxH} x2={lm[b * 3] * boxW} y2={lm[b * 3 + 1] * boxH} stroke="#FFFFFF" strokeOpacity={0.6} strokeWidth={2} />
                 ) : null))}
+                {trailJoint !== 'off' && trail.current.points.length > 1 && (
+                  <Polyline points={trail.current.points.map((p) => `${p.x * boxW},${p.y * boxH}`).join(' ')} fill="none" stroke={GC.all} strokeWidth={3} strokeOpacity={0.9} strokeLinejoin="round" />
+                )}
                 {lm && [11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28].map((i) => (vis(i) ? (
                   <Circle key={i} cx={lm[i * 3] * boxW} cy={lm[i * 3 + 1] * boxH} r={4} fill={GC.all} />
                 ) : null))}
@@ -383,6 +390,15 @@ function LiveBody({ onClose, onUse, defaults }: { onClose: () => void; onUse: (c
             <Chip key={k} label={FOCUS_LABEL[k]} active={focus === k} onPress={() => setFocus(k)} />
           ))}
         </View>
+        <T muted style={{ marginTop: S.md, fontSize: 12 }}>움직인 길 보기 (화면에 선으로 그려요 · 손목은 바벨이 지나간 길과 비슷해요)</T>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
+          {(Object.keys(TRAIL_LABEL) as TrailJoint[]).map((k) => (
+            <Chip key={k} label={TRAIL_LABEL[k]} active={trailJoint === k} onPress={() => { trail.current.reset(); setTrailJoint(k); }} />
+          ))}
+        </View>
+        {trailJoint !== 'off' && trail.current.points.length > 1 && (
+          <T muted style={{ fontSize: 12, marginTop: 4 }}>위아래로 움직인 폭: 화면 높이의 약 {trail.current.verticalRangePct}%</T>
+        )}
         <Row style={{ marginTop: S.sm }}>
           <View style={{ flex: 1 }}>
             <Segmented<Strictness> options={(['easy', 'normal', 'strict'] as Strictness[]).map((k) => ({ key: k, label: STRICT_LABEL[k] }))} value={strict} onChange={setStrict} />

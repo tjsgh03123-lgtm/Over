@@ -1,4 +1,5 @@
 import React, { useRef } from 'react';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Alert, Modal, ScrollView, View } from 'react-native';
 import * as Sharing from 'expo-sharing';
 import { fmtDuration } from '../domain/format.ts';
@@ -16,6 +17,7 @@ const K = { bg: '#0A0A0A', line: '#2C2C2C', text: '#F2F2F2', muted: '#8E8E8E' };
 /** 운동 완료 요약 카드 + 이미지 공유(저장) */
 export function SummaryModal({ data, onClose }: { data: SummaryData | null; onClose: () => void }) {
   const ref = useRef<View>(null);
+  const insets = useSafeAreaInsets();
   if (!data) return null;
 
   const share = async () => {
@@ -32,7 +34,7 @@ export function SummaryModal({ data, onClose }: { data: SummaryData | null; onCl
 
   return (
     <Modal visible animationType="slide" onRequestClose={onClose}>
-      <View style={{ flex: 1, backgroundColor: '#000' }}>
+      <View style={{ flex: 1, backgroundColor: '#000', paddingTop: insets.top }}>
         <ScrollView contentContainerStyle={{ padding: S.lg, paddingBottom: 24 }}>
           <View ref={ref} collapsable={false} style={{ backgroundColor: K.bg, borderRadius: 16, padding: S.lg, borderWidth: 1, borderColor: K.line }}>
             <T bold style={{ color: K.text, letterSpacing: 3, fontSize: 12 }}>OVERDRIVE</T>
@@ -54,7 +56,7 @@ export function SummaryModal({ data, onClose }: { data: SummaryData | null; onCl
             ))}
           </View>
         </ScrollView>
-        <Row style={{ padding: S.lg }}>
+        <Row style={{ padding: S.lg, paddingBottom: S.lg + insets.bottom }}>
           <Btn label="닫기" kind="ghost" style={{ flex: 1 }} onPress={onClose} />
           <Btn label="이미지 저장·공유" style={{ flex: 2 }} onPress={share} />
         </Row>

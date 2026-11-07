@@ -262,6 +262,14 @@ export async function setActiveRoutine(db: Db, today: string, id: string | null)
   await saveRoutines(db, { ...st, activeId: id && st.routines.some((r) => r.id === id) ? id : null });
 }
 
+/** 만들기 도중 나가서 남은 빈 루틴(기본 이름 그대로, 날 없음)을 정리한다. 지운 개수를 돌려준다. */
+export async function pruneEmptyRoutines(db: Db, today: string): Promise<number> {
+  const st = await getRoutines(db, today);
+  const empty = st.routines.filter((r) => r.days.length === 0 && r.name === '새 루틴');
+  for (const r of empty) await deleteRoutine(db, today, r.id);
+  return empty.length;
+}
+
 /** 루틴을 지우면 그 루틴 날들의 종목도 함께 지운다. 완료한 운동 기록과 성장 그래프는 그대로 유지된다. */
 export async function deleteRoutine(db: Db, today: string, id: string): Promise<void> {
   const st = await getRoutines(db, today);
@@ -678,6 +686,21 @@ export async function addSessionExercise(db: Db, sessionId: string, exerciseId: 
   return seId;
 }
 
+/**
+ * 대체 운동: 아직 완료한 세트가 없는 종목을 다른 종목으로 바꾼다 (세트 수·순서·슈퍼세트·메모는 그대로,
+ * 입력만 해 두고 완료하지 않은 중량·횟수는 비운다). 완료한 세트가 있으면 false를 돌려주고 바꾸지 않는다.
+ */
+export async function replaceSessionExercise(db: Db, seId: string, newExerciseId: string): Promise<boolean> {
+  const ex = await db.first<ExerciseRow>('SELECT * FROM exercises WHERE id = ?', [newExerciseId]);
+  const done = await db.first<{ n: number }>('SELECT COUNT(*) AS n FROM workout_sets WHERE session_exercise_id = ? AND done = 1', [seId]);
+  if (!ex || !done || done.n > 0) return false;
+  await db.transaction(async () => {
+    await db.run('UPDATE workout_session_exercises SET exercise_id = ?, exercise_name = ?, weight_mode = ? WHERE id = ?', [ex.id, ex.name, ex.weight_mode, seId]);
+    await db.run('UPDATE workout_sets SET weight = NULL, reps = NULL WHERE session_exercise_id = ? AND done = 0', [seId]);
+  });
+  return true;
+}
+
 export async function removeSessionExercise(db: Db, seId: string): Promise<void> {
   await db.run('DELETE FROM workout_session_exercises WHERE id = ?', [seId]);
 }
@@ -685,6 +708,16 @@ export async function removeSessionExercise(db: Db, seId: string): Promise<void>
 export async function addSet(db: Db, seId: string, type: SetType = 'working'): Promise<void> {
   const prev = await db.first<{ n: number | null }>('SELECT MAX(set_no) AS n FROM workout_sets WHERE session_exercise_id = ?', [seId]);
   await newSet(db, seId, (prev?.n ?? 0) + 1, type, null, null);
+}
+
+/** 연습 세트를 정해진 무게·횟수로 추가한다(완료 표시는 하지 않음) */
+export async function addWarmupSets(db: Db, seId: string, plan: { weight: number; reps: number }[]): Promise<void> {
+  await db.transaction(async () => {
+    for (const w of plan) {
+      const prev = await db.first<{ n: number | null }>('SELECT MAX(set_no) AS n FROM workout_sets WHERE session_exercise_id = ?', [seId]);
+      await newSet(db, seId, (prev?.n ?? 0) + 1, 'warmup', w.weight, w.reps);
+    }
+  });
 }
 
 export async function deleteSet(db: Db, setId: string): Promise<void> {

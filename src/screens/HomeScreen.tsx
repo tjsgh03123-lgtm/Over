@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Alert, Modal, Pressable, ScrollView, Text, View } from 'react-native';
 import { useApp } from '../app/context.tsx';
 import {
@@ -8,22 +9,36 @@ import {
 } from '../db/repo.ts';
 import { fmtDuration, fmtElapsed } from '../domain/format.ts';
 import { fmtDaysAgo, weekDays } from '../domain/homeCards.ts';
-import { summarize, weekdayOf } from '../domain/stats.ts';
+import { dailyPoints, filterSets, summarize, weekdayOf } from '../domain/stats.ts';
 import { streakWeeks } from '../domain/workoutStats.ts';
 import { Btn, Card, Chip, H, NumInput, Row, T } from '../ui/components.tsx';
 import { RoutinePreview, type StartOpts } from '../ui/RoutinePreview.tsx';
-import { C, S } from '../ui/theme.ts';
+import { C, GC, S } from '../ui/theme.ts';
 import { useElapsed } from '../ui/useElapsed.ts';
 
 const DAY = ['일', '월', '화', '수', '목', '금', '토'];
 const WEEK_HEAD = ['월', '화', '수', '목', '금', '토', '일'];
 
-interface Growth { id: string; name: string; best: number; kg: number | null; pct: number | null }
+interface Growth { id: string; name: string; best: number; kg: number | null; pct: number | null; series: number[] }
+
+/** 최근 기록의 최고 중량을 작은 막대 그래프로 (색은 그래프에만 쓴다) */
+function Spark({ values }: { values: number[] }) {
+  if (values.length < 2) return <View style={{ width: 64 }} />;
+  const lo = Math.min(...values); const hi = Math.max(...values); const span = hi - lo || 1;
+  return (
+    <View style={{ width: 64, height: 28, flexDirection: 'row', alignItems: 'flex-end', gap: 2, marginRight: 8 }}>
+      {values.map((v, i) => (
+        <View key={i} style={{ flex: 1, height: 6 + ((v - lo) / span) * 22, borderRadius: 2, backgroundColor: GC.all, opacity: i === values.length - 1 ? 1 : 0.55 }} />
+      ))}
+    </View>
+  );
+}
 
 const partsText = (c: TemplateCard, n = 3) => c.parts.slice(0, n).map((p) => `${p.part} ${p.sets}`).join(' · ');
 
 export function HomeScreen() {
   const { db, today, version, nav, bump } = useApp();
+  const insets = useSafeAreaInsets();
   const [slot, setSlot] = useState<DaySlot | null>(null);
   const [cards, setCards] = useState<TemplateCard[]>([]);
   const [archived, setArchived] = useState<string[]>([]);
@@ -54,7 +69,8 @@ export function HomeScreen() {
       setGrowth(tracked.flatMap((t) => {
         const sm = summarize(flat, t.id, t.weight_mode);
         if (!sm.currentBest) return [];
-        return [{ id: t.id, name: t.name, best: sm.currentBest.best, kg: sm.vsPrevious?.kg ?? null, pct: sm.vsPrevious?.pct ?? null }];
+        const series = dailyPoints(filterSets(flat, { exerciseId: t.id }), t.weight_mode).slice(-8).map((p) => p.best);
+        return [{ id: t.id, name: t.name, best: sm.currentBest.best, kg: sm.vsPrevious?.kg ?? null, pct: sm.vsPrevious?.pct ?? null, series }];
       }));
     })();
   }, [db, today, version]);
@@ -76,6 +92,8 @@ export function HomeScreen() {
   const visible = cards.filter((c) => !archived.includes(c.id));
   const hidden = cards.filter((c) => archived.includes(c.id));
   const cycleTag = slot?.cycleDay ? `Day ${slot.cycleDay}/${slot.cycleLength}` : null;
+  // 오른쪽 위 표시: 오늘이 반복의 며칠째인지(요일 고정이면 요일), 오늘만 바꿨으면 바꾼 날의 이름
+  const dayTag = override && todayCard ? todayCard.name : slot?.cycleDay ? `Day ${slot.cycleDay}` : `${DAY[weekdayOf(today)]}요일`;
 
   const week7 = weekDays(today);
   const doneSet = new Set(doneDates);
@@ -132,7 +150,12 @@ export function HomeScreen() {
           <Card>
             <Row style={{ marginBottom: 6 }}>
               <T muted style={{ flex: 1 }}>오늘의 운동{slot && !override ? ` · ${slot.routineName}` : ''}</T>
-              {cards.length > 0 && <Btn label={`${cycleTag && !override ? `${cycleTag} ` : '다른 날 '}▾`} kind="ghost" small onPress={() => setDaySheet(true)} />}
+              {cards.length > 0 && (
+                <Pressable onPress={() => setDaySheet(true)} hitSlop={10} style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <T bold style={{ fontSize: 22 }}>{dayTag}</T>
+                  <Text style={{ color: C.muted, fontSize: 22, marginLeft: 8 }}>›</Text>
+                </Pressable>
+              )}
             </Row>
 
             {doneToday.length > 0 && (
@@ -248,8 +271,9 @@ export function HomeScreen() {
             growth.map((g) => (
               <Pressable key={g.id} onPress={() => nav.goTab('growth')} style={{ paddingVertical: 8, flexDirection: 'row', alignItems: 'center' }}>
                 <T style={{ flex: 1 }}>{g.name}</T>
+                <Spark values={g.series} />
                 <T bold>{g.best}kg</T>
-                <Text style={{ width: 92, textAlign: 'right', color: g.kg == null ? C.muted : g.kg > 0 ? C.ok : g.kg < 0 ? C.danger : C.muted, fontSize: 12 }}>
+                <Text style={{ width: 84, textAlign: 'right', color: g.kg == null ? C.muted : g.kg > 0 ? C.ok : g.kg < 0 ? C.danger : C.muted, fontSize: 12 }}>
                   {g.kg == null ? '첫 기록' : `${g.kg > 0 ? '+' : ''}${g.kg}kg${g.pct != null ? ` (${g.pct > 0 ? '+' : ''}${g.pct}%)` : ''}`}
                 </Text>
               </Pressable>
@@ -278,7 +302,7 @@ export function HomeScreen() {
 
       <Modal visible={daySheet} transparent animationType="slide" onRequestClose={() => setDaySheet(false)}>
         <Pressable style={{ flex: 1, backgroundColor: C.overlay }} onPress={() => setDaySheet(false)} />
-        <View style={{ backgroundColor: C.bg, borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: S.lg, maxHeight: '75%' }}>
+        <View style={{ backgroundColor: C.bg, borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: S.lg, paddingBottom: S.lg + insets.bottom, maxHeight: '75%' }}>
           <H style={{ fontSize: 18, textAlign: 'center', marginBottom: S.md }}>오늘 어떤 운동을 할까요?</H>
           <ScrollView>
             {override && (

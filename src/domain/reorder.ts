@@ -38,3 +38,22 @@ export function clampDrag(heights: readonly number[], from: number, dy: number):
   const v = Math.max(-before, Math.min(after, dy));
   return v === 0 ? 0 : v; // -0 방지
 }
+
+/**
+ * 슈퍼세트를 깨지 않는 위/아래 한 칸 이동: 같은 ss로 묶인 종목은 한 덩어리로 움직인다.
+ * i번째 종목이 속한 덩어리를 바로 위(-1)/아래(+1) 덩어리와 자리를 바꾼다. 맨 끝이면 그대로.
+ */
+export function moveBlock<T extends { ss?: string | null }>(arr: readonly T[], i: number, dir: -1 | 1): T[] {
+  if (i < 0 || i >= arr.length) return [...arr];
+  const blocks: T[][] = [];
+  let at = -1;
+  arr.forEach((x, k) => {
+    const prev = blocks[blocks.length - 1];
+    if (prev && x.ss && prev[prev.length - 1].ss === x.ss) prev.push(x); else blocks.push([x]);
+    if (k === i) at = blocks.length - 1;
+  });
+  const to = at + dir;
+  if (to < 0 || to >= blocks.length) return [...arr];
+  [blocks[at], blocks[to]] = [blocks[to], blocks[at]];
+  return blocks.flat();
+}

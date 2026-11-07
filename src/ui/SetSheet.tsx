@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Modal, Pressable, ScrollView, View } from 'react-native';
 import { barbellTotal } from '../domain/workoutStats.ts';
 import { Btn, Chip, Row, T } from './components.tsx';
@@ -23,6 +24,7 @@ export function SetSheet({
   const [w, setW] = useState(0);
   const [r, setR] = useState(0);
   const [plates, setPlates] = useState<number[]>([]);
+  const insets = useSafeAreaInsets();
   useEffect(() => {
     if (!visible || !set) return;
     setW(set.weight ?? recommend?.weight ?? last?.weight ?? 0);
@@ -52,7 +54,7 @@ export function SetSheet({
   return (
     <Modal visible transparent animationType="slide" onRequestClose={onClose}>
       <Pressable style={{ flex: 1, backgroundColor: C.overlay }} onPress={onClose} />
-      <View style={{ backgroundColor: C.bg, borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: S.lg, maxHeight: '88%' }}>
+      <View style={{ backgroundColor: C.bg, borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: S.lg, paddingBottom: S.lg + insets.bottom, maxHeight: '88%' }}>
         <ScrollView keyboardShouldPersistTaps="handled">
           <Row style={{ marginBottom: S.sm }}>
             <T bold style={{ flex: 1, fontSize: 16 }}>{title} · {set.setNo}세트</T>

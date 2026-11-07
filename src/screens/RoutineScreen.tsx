@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
 import { useApp } from '../app/context.tsx';
-import { createRoutine, getRoutines, setActiveRoutine } from '../db/repo.ts';
+import { createRoutine, getRoutines, pruneEmptyRoutines, setActiveRoutine } from '../db/repo.ts';
 import type { RoutinesState } from '../domain/routine.ts';
 import { Btn, Card, Empty, H, Row, T } from '../ui/components.tsx';
 import { C, S } from '../ui/theme.ts';
@@ -11,7 +11,12 @@ export function RoutineScreen() {
   const { db, today, version, nav, bump } = useApp();
   const [st, setSt] = useState<RoutinesState>({ activeId: null, routines: [] });
 
-  useEffect(() => { getRoutines(db, today).then(setSt); }, [db, today, version]);
+  useEffect(() => {
+    (async () => {
+      if (await pruneEmptyRoutines(db, today)) bump();
+      setSt(await getRoutines(db, today));
+    })();
+  }, [db, today, version]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** 바로 만들고 1단계(방식·이름)부터 차례로 진행한다 */
   const create = async () => {

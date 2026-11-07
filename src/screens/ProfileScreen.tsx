@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Modal, Pressable, ScrollView, Text, View } from 'react-native';
 import { useApp } from '../app/context.tsx';
 import { getSetting, listDoneDates, listMeasurements, loadFlatSets, setSetting, type Measurement } from '../db/repo.ts';
@@ -179,13 +180,14 @@ function MenuRow({ label, onPress, last }: { label: string; onPress: () => void;
 
 /** 무게×횟수로 예상 1RM과 %별 무게표를 보여 준다 */
 function OneRmModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
+  const insets = useSafeAreaInsets();
   const [w, setW] = useState<number | null>(60);
   const [r, setR] = useState<number | null>(8);
   const one = e1rm(w, r);
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <Pressable style={{ flex: 1, backgroundColor: C.overlay }} onPress={onClose} />
-      <View style={{ backgroundColor: C.bg, borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: S.lg }}>
+      <View style={{ backgroundColor: C.bg, borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: S.lg, paddingBottom: S.lg + insets.bottom }}>
         <Row style={{ marginBottom: S.md }}>
           <H style={{ fontSize: 18, flex: 1 }}>1RM 계산기</H>
           <Btn label="닫기" kind="ghost" small onPress={onClose} />

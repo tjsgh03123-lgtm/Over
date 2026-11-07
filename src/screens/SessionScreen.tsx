@@ -1,12 +1,13 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Modal, Pressable, ScrollView, Switch, Text, Vibration, View } from 'react-native';
 import { useApp } from '../app/context.tsx';
 import {
-  addCardio, addSessionExercise, addSet, deleteSet, deleteSession, finishSession, getExerciseRest, getLastSets, getRestDefault, getSessionRests, getSetting, setSetting, listDoneDates, setExerciseRestFor, setRestDefault, getWeightStep, lastPerformance, loadCategoryMap,
-  loadSession, removeSessionExercise, reopenSession, saveSessionAsDay, setExerciseNote, setExerciseRest,
+  addCardio, addSessionExercise, addSet, addWarmupSets, deleteSet, deleteSession, finishSession, getExerciseRest, getLastSets, getRestDefault, getSessionRests, getSetting, setSetting, listDoneDates, setExerciseRestFor, setRestDefault, getWeightStep, lastPerformance, loadCategoryMap,
+  loadSession, removeSessionExercise, replaceSessionExercise, reopenSession, saveSessionAsDay, setExerciseNote, setExerciseRest,
   setSessionExerciseMode, setSessionNote, updateSet, type SessionExRow, type SessionFull, type SetRow,
 } from '../db/repo.ts';
 import { matchProfile, partOf, WEIGHT_LABEL, type Equip } from '../domain/exerciseCatalog.ts';
+import { warmupPlan } from '../domain/warmup.ts';
 import { bestE1rm, doneWorkingCount, e1rm, recommendNext, streakWeeks, volumeOf } from '../domain/workoutStats.ts';
 import { SetSheet } from '../ui/SetSheet.tsx';
 import { SummaryModal, type SummaryData } from '../ui/SummaryModal.tsx';
@@ -35,6 +36,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [opts, setOpts] = useState<Record<string, boolean>>({}); // 종목별 '옵션'(메모·준비 세트·삭제) 펼침
   const [picker, setPicker] = useState(false);
+  const [swapFor, setSwapFor] = useState<string | null>(null); // 대체 운동으로 바꿀 세션 종목 id
   const [lasts, setLasts] = useState<Record<string, Last | null>>({}); // 세션 종목 id → 지난 기록
   const [step, setStep] = useState(2.5);
   const [focus, setFocus] = useState<Focus>(null);
@@ -59,6 +61,23 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
   const [tempoSec, setTempoSec] = useState(3);
   const [restMini, setRestMini] = useState(false); // 휴식 화면을 작게(아래 줄) 보기
   const insets = useSafeAreaInsets();
+
+  // 나중에 하기·건너뜀은 화면을 나갔다 와도 이어지도록 이 운동(세션)별로 저장해 둔다
+  const gKey = `guided_state_${sessionId}`;
+  const gLoaded = useRef(false);
+  useEffect(() => {
+    gLoaded.current = false;
+    getSetting(db, gKey).then((raw) => {
+      try {
+        const v = raw ? JSON.parse(raw) : null;
+        if (v && Array.isArray(v.deferred) && Array.isArray(v.skipped)) { setDeferred(v.deferred.map(String)); setSkipped(v.skipped.map(String)); }
+      } catch { /* 깨진 값은 무시 */ }
+      gLoaded.current = true;
+    });
+  }, [db, gKey]);
+  useEffect(() => {
+    if (gLoaded.current) setSetting(db, gKey, JSON.stringify({ deferred, skipped }));
+  }, [db, gKey, deferred, skipped]);
 
   const reload = useCallback(async () => {
     const full = await loadSession(db, sessionId);
@@ -476,8 +495,24 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
                         onEndEditing={(e) => setExerciseNote(db, ex.id, e.nativeEvent.text)}
                       />
                       {editable && (
-                        <Row style={{ marginTop: S.md }}>
+                        <Row style={{ marginTop: S.md, flexWrap: 'wrap' }}>
                           <Btn label="+ 준비 세트" kind="ghost" small onPress={async () => { await addSet(db, ex.id, 'warmup'); reload(); }} />
+                          <Btn
+                            label="연습 세트 추천" kind="ghost" small
+                            onPress={async () => {
+                              const top = ex.sets.find((x) => x.set_type === 'working' && x.weight)?.weight ?? lasts[ex.id]?.weight ?? null;
+                              const plan = warmupPlan(top, step);
+                              if (!plan.length) return Alert.alert('추천할 수 없어요', '본 세트 무게를 먼저 입력하거나 지난 기록이 있어야 연습 세트를 추천할 수 있어요.');
+                              await addWarmupSets(db, ex.id, plan); bump(); reload();
+                            }}
+                          />
+                          <Btn
+                            label="⇄ 대체 운동" kind="ghost" small
+                            onPress={() => {
+                              if (ex.sets.some((x) => x.done)) return Alert.alert('바꿀 수 없어요', '이미 완료한 세트가 있는 종목은 바꿀 수 없어요. 새 종목을 추가하거나 세트를 삭제한 뒤 바꿔 주세요.');
+                              setSwapFor(ex.id); setPicker(true);
+                            }}
+                          />
                           <View style={{ flex: 1 }} />
                           <Btn
                             label="종목 삭제" kind="danger" small
@@ -676,8 +711,13 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
       />
       <ExercisePicker
         visible={picker}
-                onClose={() => setPicker(false)}
-        onPick={async (e) => { setPicker(false); await addSessionExercise(db, s.id, e.id); bump(); reload(); }}
+        onClose={() => { setPicker(false); setSwapFor(null); }}
+        onPick={async (e) => {
+          setPicker(false);
+          const target = swapFor; setSwapFor(null);
+          if (target) await replaceSessionExercise(db, target, e.id); else await addSessionExercise(db, s.id, e.id);
+          bump(); reload();
+        }}
       />
     </View>
   );

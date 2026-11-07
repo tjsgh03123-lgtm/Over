@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Modal, Pressable, ScrollView, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useApp } from '../app/context.tsx';
 import {
   getExerciseRest, getRestDefault, getSetting, getTemplateExercises, getWeightStep, listTemplates, setSetting,
@@ -7,7 +8,7 @@ import {
 } from '../db/repo.ts';
 import { adjustForCondition, COND_LABEL, CONDS, RUN_LABEL, sanitizeRunMode, type Cond, type RunMode } from '../domain/condition.ts';
 import { partOf } from '../domain/exerciseCatalog.ts';
-import { moveItem } from '../domain/reorder.ts';
+import { moveBlock } from '../domain/reorder.ts';
 import { estimateMinutes } from '../domain/workoutStats.ts';
 import { Btn, Chip, H, Row, T } from './components.tsx';
 import { C, S } from './theme.ts';
@@ -20,6 +21,7 @@ export interface StartOpts { templateId: string; order: string[]; cond: Cond }
  */
 export function RoutinePreview({ templateId, title, onClose, onStart }: { templateId: string | null; title: string; onClose: () => void; onStart: (o: StartOpts) => void }) {
   const { db } = useApp();
+  const insets = useSafeAreaInsets();
   const [tplId, setTplId] = useState<string | null>(templateId);
   const [tpls, setTpls] = useState<TemplateRow[]>([]);
   const [pickOpen, setPickOpen] = useState(false);
@@ -59,12 +61,13 @@ export function RoutinePreview({ templateId, title, onClose, onStart }: { templa
   const heading = tplId === templateId ? title : curTpl?.name ?? title;
 
   const setRun = (m: RunMode) => { setRunModeState(m); setSetting(db, 'run_mode', m); };
-  const move = (i: number, d: number) => setRows((rs) => moveItem(rs, i, i + d));
+  // 슈퍼세트로 묶인 종목은 함께 움직여서 묶음이 깨지지 않는다
+  const move = (i: number, d: -1 | 1) => setRows((rs) => moveBlock(rs, i, d));
 
   return (
     <Modal visible transparent animationType="slide" onRequestClose={onClose}>
       <Pressable style={{ flex: 1, backgroundColor: C.overlay }} onPress={onClose} />
-      <View style={{ backgroundColor: C.bg, borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: S.lg, maxHeight: '90%' }}>
+      <View style={{ backgroundColor: C.bg, borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: S.lg, paddingBottom: S.lg + insets.bottom, maxHeight: '92%' }}>
         <Pressable onPress={() => setPickOpen((v) => !v)} style={{ alignItems: 'center' }}>
           <H style={{ fontSize: 20, textAlign: 'center' }}>{heading} {pickOpen ? '▴' : '▾'}</H>
           <T muted style={{ fontSize: 11 }}>다른 루틴으로 바꾸려면 눌러요</T>
@@ -79,6 +82,7 @@ export function RoutinePreview({ templateId, title, onClose, onStart }: { templa
             ))}
           </ScrollView>
         )}
+        <ScrollView style={{ flexShrink: 1 }} showsVerticalScrollIndicator={false} nestedScrollEnabled>
         <T muted style={{ textAlign: 'center', marginTop: S.sm, marginBottom: S.md }}>{rows.length}종목 · 약 {h > 0 ? `${h}시간 ` : ''}{minutes % 60}분</T>
 
         <T muted style={{ fontSize: 12, marginBottom: 4 }}>오늘 컨디션</T>
@@ -102,7 +106,7 @@ export function RoutinePreview({ templateId, title, onClose, onStart }: { templa
           <Btn label={reorder ? '순서 변경 끝' : '순서 변경'} kind="ghost" small onPress={() => setReorder((v) => !v)} />
         </Row>
 
-        <ScrollView style={{ marginBottom: S.md }}>
+        <View style={{ marginBottom: S.md }}>
           {shown.map(({ r, adj }, i) => (
             <Row key={r.id} style={{ paddingVertical: 10, borderTopWidth: 1, borderTopColor: C.line }}>
               <View style={{ flex: 1 }}>
@@ -120,6 +124,7 @@ export function RoutinePreview({ templateId, title, onClose, onStart }: { templa
               )}
             </Row>
           ))}
+        </View>
         </ScrollView>
         <Row>
           <Btn label="닫기" kind="ghost" style={{ flex: 1 }} onPress={onClose} />

@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Alert, Modal, Pressable, ScrollView, Text, View } from 'react-native';
 import { useApp } from '../app/context.tsx';
 import {
@@ -34,6 +35,7 @@ const KIND_LABEL = { weights: '웨이트', cardio: '유산소', rest: '휴식' }
 /** 루틴 만들기·편집: 한 번에 한 단계씩 (방식·이름 → 반복 일수 → 날 만들기 → 칸 배치 → 확인) */
 export function RoutineDetailScreen({ routineId }: { routineId: string }) {
   const { db, today, version, nav, bump } = useApp();
+  const insets = useSafeAreaInsets();
   const [r, setR] = useState<Routine | null>(null);
   const [active, setActive] = useState(false);
   const [name, setName] = useState('');
@@ -292,7 +294,7 @@ export function RoutineDetailScreen({ routineId }: { routineId: string }) {
 
       <Modal visible={sheet != null} transparent animationType="slide" onRequestClose={() => setSheet(null)}>
         <Pressable style={{ flex: 1, backgroundColor: C.overlay }} onPress={() => setSheet(null)} />
-        <View style={{ backgroundColor: C.bg, borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: S.lg, maxHeight: '75%' }}>
+        <View style={{ backgroundColor: C.bg, borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: S.lg, paddingBottom: S.lg + insets.bottom, maxHeight: '75%' }}>
           {sheet != null && (
             <>
               <T bold style={{ fontSize: 17, textAlign: 'center', marginBottom: S.sm }}>

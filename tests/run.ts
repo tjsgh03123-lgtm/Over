@@ -25,6 +25,9 @@ import { barbellTotal, bestE1rm, estimateMinutes, monthDays, monthWeeks, partTot
 import { blocksOf, currentOf, restAfter, type GEx } from '../src/domain/guided.ts';
 import { AutoRepCounter, countWord, JOINTS, jointAngle } from '../src/domain/liveCount.ts';
 import type { SessionRecord, SetRecord } from '../src/domain/types.ts';
+import { moveBlock } from '../src/domain/reorder.ts';
+import { warmupPlan } from '../src/domain/warmup.ts';
+import { jointPoint, PathTrail } from '../src/domain/pathTrail.ts';
 
 let passed = 0;
 let failed = 0;
@@ -932,6 +935,46 @@ test('홈 카드: 오늘 변경은 오늘 날짜일 때만 유효, 보관 목록
   assert.deepEqual(parseIds('깨진'), []);
   assert.deepEqual(parseIds(null), []);
   assert.deepEqual(parseIds('{"a":1}'), []);
+});
+
+
+console.log('슈퍼세트 이동 · 연습 세트 · 움직임 경로');
+test('순서 바꾸기: 슈퍼세트로 묶인 종목은 한 덩어리로 움직여 묶음이 깨지지 않음', () => {
+  const rows = [{ n: 'A', ss: null }, { n: 'B', ss: 'x' }, { n: 'C', ss: 'x' }, { n: 'D', ss: null }];
+  assert.deepEqual(moveBlock(rows, 0, 1).map((r) => r.n), ['B', 'C', 'A', 'D']); // A가 묶음 B·C 아래로
+  assert.deepEqual(moveBlock(rows, 2, -1).map((r) => r.n), ['B', 'C', 'A', 'D']); // C를 올리면 묶음 전체가 위로
+  assert.deepEqual(moveBlock(rows, 3, -1).map((r) => r.n), ['A', 'D', 'B', 'C']);
+  assert.deepEqual(moveBlock(rows, 0, -1).map((r) => r.n), ['A', 'B', 'C', 'D']); // 맨 위에서 위로: 그대로
+  assert.deepEqual(moveBlock(rows, 3, 1).map((r) => r.n), ['A', 'B', 'C', 'D']);
+  assert.deepEqual(moveBlock(rows, 9, 1).map((r) => r.n), ['A', 'B', 'C', 'D']); // 범위 밖
+  const two = [{ n: 'A', ss: 'x' }, { n: 'B', ss: 'x' }, { n: 'C', ss: 'y' }, { n: 'D', ss: 'y' }];
+  assert.deepEqual(moveBlock(two, 0, 1).map((r) => r.n), ['C', 'D', 'A', 'B']);
+});
+test('연습 세트 추천: 본 세트의 40%·60%·80%를 증량 단위에 맞춰, 겹치거나 본 세트 이상이면 제외', () => {
+  assert.deepEqual(warmupPlan(100, 2.5), [{ weight: 40, reps: 8 }, { weight: 60, reps: 5 }, { weight: 80, reps: 3 }]);
+  assert.deepEqual(warmupPlan(20, 2.5), [{ weight: 7.5, reps: 8 }, { weight: 12.5, reps: 5 }, { weight: 15, reps: 3 }]);
+  assert.deepEqual(warmupPlan(5, 2.5), [{ weight: 2.5, reps: 8 }]);
+  assert.deepEqual(warmupPlan(null, 2.5), []);
+  assert.deepEqual(warmupPlan(0, 2.5), []);
+  assert.ok(warmupPlan(60, 5).every((w) => w.weight % 5 === 0 && w.weight < 60));
+});
+test('움직임 경로: 보이는 관절의 위치(양쪽이면 평균), 안 보이면 없음, 최근 N개만, 거의 안 움직이면 쌓지 않음', () => {
+  const lm = new Array(99).fill(0);
+  assert.equal(jointPoint(lm, 'wrist'), null); // 가시성 0
+  lm[15 * 3] = 0.2; lm[15 * 3 + 1] = 0.4; lm[15 * 3 + 2] = 0.9;
+  assert.deepEqual(jointPoint(lm, 'wrist'), { x: 0.2, y: 0.4 }); // 한쪽만 보임
+  lm[16 * 3] = 0.4; lm[16 * 3 + 1] = 0.6; lm[16 * 3 + 2] = 0.9;
+  const p = jointPoint(lm, 'wrist')!;
+  assert.ok(Math.abs(p.x - 0.3) < 1e-9 && Math.abs(p.y - 0.5) < 1e-9);
+  assert.equal(jointPoint(lm, 'off'), null);
+  const t = new PathTrail(3);
+  t.push(null); t.push({ x: 0.5, y: 0.1 }); t.push({ x: 0.5, y: 0.1 }); // 같은 자리는 한 번만
+  assert.equal(t.points.length, 1);
+  t.push({ x: 0.5, y: 0.5 }); t.push({ x: 0.5, y: 0.9 }); t.push({ x: 0.5, y: 0.3 });
+  assert.equal(t.points.length, 3); // 오래된 것부터 사라짐
+  assert.equal(t.verticalRangePct, 60);
+  t.reset();
+  assert.equal(t.points.length, 0);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);
