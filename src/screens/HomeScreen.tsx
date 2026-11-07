@@ -8,6 +8,7 @@ import {
 import { fmtDuration, fmtElapsed } from '../domain/format.ts';
 import { summarize, weekdayOf } from '../domain/stats.ts';
 import { Btn, Card, H, NumInput, Row, T } from '../ui/components.tsx';
+import { RoutinePreview } from '../ui/RoutinePreview.tsx';
 import { C, S } from '../ui/theme.ts';
 import { useElapsed } from '../ui/useElapsed.ts';
 
@@ -24,6 +25,7 @@ export function HomeScreen() {
   const [week, setWeek] = useState<WeekStats | null>(null);
   const [growth, setGrowth] = useState<Growth[]>([]);
   const [cardioMin, setCardioMin] = useState<number | null>(30);
+  const [preview, setPreview] = useState(false);
   const elapsed = useElapsed(active?.started_at, !!active);
 
   useEffect(() => {
@@ -46,6 +48,7 @@ export function HomeScreen() {
 
   const startRoutine = async () => {
     if (!tpl) return;
+    setPreview(false);
     nav.openSession(await startSessionFromTemplate(db, tpl.id, today));
     bump();
   };
@@ -57,6 +60,7 @@ export function HomeScreen() {
   const cycleNote = slot?.cycleDay ? `${slot.routineName} · ${slot.cycleDay}/${slot.cycleLength}일차` : slot ? slot.routineName : null;
 
   return (
+    <>
     <ScrollView contentContainerStyle={{ padding: S.lg, paddingBottom: 40 }}>
       <H style={{ fontSize: 24, marginBottom: 2 }}>OVERDRIVE</H>
       <T muted style={{ marginBottom: S.lg }}>{today} ({DAY[weekdayOf(today)]})</T>
@@ -89,7 +93,7 @@ export function HomeScreen() {
               <T muted style={{ marginTop: 4, marginBottom: S.md }}>
                 {tpl.count}종목{tpl.names.length ? ` · ${tpl.names.join(', ')}${tpl.count > tpl.names.length ? ' …' : ''}` : ''}
               </T>
-              <Btn label="운동 시작" onPress={startRoutine} style={{ marginBottom: S.sm }} />
+              <Btn label="운동 시작" onPress={() => setPreview(true)} style={{ marginBottom: S.sm }} />
               <Btn label="자유 운동" kind="ghost" onPress={startFree} />
             </>
           ) : slot?.kind === 'cardio' ? (
@@ -161,6 +165,8 @@ export function HomeScreen() {
         )}
       </Card>
     </ScrollView>
+    <RoutinePreview templateId={preview && tpl ? tpl.id : null} title={slot?.label ?? tpl?.name ?? '루틴'} onClose={() => setPreview(false)} onStart={startRoutine} />
+    </>
   );
 }
 

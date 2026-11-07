@@ -437,8 +437,8 @@ export async function setExerciseRest(db: Db, sec: number): Promise<void> {
 
 /** 운동(세션)의 종목별로, 루틴에 정해 둔 세트 간 휴식(초). 정해 둔 값이 없으면 null */
 export async function getSessionRests(db: Db, sessionId: string): Promise<Record<string, number | null>> {
-  const rows = await db.all<{ id: string; rest: number | null }>(
-    `SELECT se.id AS id, t.rest_sec AS rest
+  const rows = await db.all<{ id: string; rest: number | null; ex: string }>(
+    `SELECT se.id AS id, se.exercise_id AS ex, t.rest_sec AS rest
        FROM workout_session_exercises se
        JOIN workout_sessions s ON s.id = se.session_id
        LEFT JOIN workout_template_exercises t ON t.template_id = s.template_id AND t.exercise_id = se.exercise_id
@@ -446,7 +446,44 @@ export async function getSessionRests(db: Db, sessionId: string): Promise<Record
       ORDER BY t.position`, [sessionId]);
   const out: Record<string, number | null> = {};
   for (const r of rows) if (!(r.id in out) || (out[r.id] == null && r.rest != null)) out[r.id] = r.rest;
+  // 운동 중 '이 종목만' 저장한 휴식이 있으면 루틴에 정한 값보다 우선한다
+  for (const r of rows) {
+    const o = await getSetting(db, `ex_rest_${r.ex}`);
+    if (o != null && Number.isFinite(Number(o))) out[r.id] = Number(o);
+  }
   return out;
+}
+
+/** 이 종목만 세트 간 휴식(초) 저장 */
+export async function setExerciseRestFor(db: Db, exerciseId: string, sec: number): Promise<void> {
+  await setSetting(db, `ex_rest_${exerciseId}`, String(Math.max(0, Math.min(900, Math.round(sec)))));
+}
+/** 모든 종목의 기본 세트 간 휴식(초) 저장. 종목별로 따로 저장한 값은 지운다 */
+export async function setRestDefault(db: Db, sec: number): Promise<void> {
+  await setSetting(db, 'rest_default_sec', String(Math.max(0, Math.min(600, Math.round(sec)))));
+  await db.run("DELETE FROM app_settings WHERE key LIKE 'ex_rest_%'");
+}
+
+/** 이 종목을 마지막으로 완료한 운동(현재 운동 제외)의 완료 세트들: 불러오기·지난번 대비 볼륨에 사용 */
+export async function getLastSets(db: Db, exerciseId: string, excludeSessionId: string): Promise<{ weight: number | null; reps: number | null }[]> {
+  const prev = await db.first<{ sid: string }>(
+    `SELECT s.id AS sid FROM workout_sessions s
+       JOIN workout_session_exercises se ON se.session_id = s.id
+       JOIN workout_sets st ON st.session_exercise_id = se.id
+      WHERE se.exercise_id = ? AND s.status = 'done' AND s.id <> ? AND st.done = 1 AND st.set_type = 'working'
+      ORDER BY s.date DESC, s.started_at DESC LIMIT 1`, [exerciseId, excludeSessionId]);
+  if (!prev) return [];
+  return db.all(
+    `SELECT st.weight AS weight, st.reps AS reps FROM workout_sets st
+       JOIN workout_session_exercises se ON se.id = st.session_exercise_id
+      WHERE se.session_id = ? AND se.exercise_id = ? AND st.done = 1 AND st.set_type = 'working'
+      ORDER BY st.set_no`, [prev.sid, exerciseId]);
+}
+
+/** 운동을 완료한 날짜 목록(중복 제거, 오름차순): 주 연속 기록·월 목표 계산용 */
+export async function listDoneDates(db: Db): Promise<string[]> {
+  const rows = await db.all<{ date: string }>("SELECT DISTINCT date FROM workout_sessions WHERE status = 'done' ORDER BY date");
+  return rows.map((r) => r.date);
 }
 
 export async function getWeightStep(db: Db): Promise<number> {

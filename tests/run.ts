@@ -14,7 +14,8 @@ import { fmtDuration, fmtElapsed, restFor, suggestFor } from '../src/domain/form
 import { clampDrag, moveItem, targetIndex } from '../src/domain/reorder.ts';
 import { DEFAULT_GRAPH_COLORS, GRAPH_KEYS, sanitizeGraphColors, sanitizeMode } from '../src/domain/themeModel.ts';
 import { SetFlow } from '../src/domain/setFlow.ts';
-import { CATALOG, matchProfile } from '../src/domain/exerciseCatalog.ts';
+import { CATALOG, matchProfile, partOf } from '../src/domain/exerciseCatalog.ts';
+import { barbellTotal, bestE1rm, estimateMinutes, monthDays, monthWeeks, partTotals, recommendNext, streakWeeks, volumeOf } from '../src/domain/workoutStats.ts';
 import { blocksOf, currentOf, restAfter, type GEx } from '../src/domain/guided.ts';
 import { AutoRepCounter, countWord, JOINTS, jointAngle } from '../src/domain/liveCount.ts';
 import type { SessionRecord, SetRecord } from '../src/domain/types.ts';
@@ -541,7 +542,13 @@ test('기본 종목: 20개 이상, 부위별, 이름으로 동작 매칭', () =>
   assert.equal(matchProfile('벤치프레스')?.focus, 'arm');
   assert.equal(matchProfile('스쿼트')?.focus, 'leg');
   assert.equal(matchProfile('루마니안 데드리프트')?.focus, 'hinge');
-  assert.equal(matchProfile('렛풀다운'), null);
+  assert.equal(matchProfile('정체불명운동'), null);
+  assert.equal(matchProfile('렛풀다운')?.equip, '케이블');
+  assert.equal(matchProfile('케이블 컬')?.name, '케이블 컬');
+  assert.equal(matchProfile('핵스쿼트')?.name, '핵 스쿼트');
+  assert.equal(partOf('행잉 레그 레이즈'), '복근');
+  assert.equal(partOf('내 맘대로 운동', '등'), '등');
+  assert.equal(partOf('내 맘대로 운동'), '기타');
 });
 const gx = (id: string, ss: string | null, done: number, total: number): GEx => ({
   id, name: id, ss, sets: Array.from({ length: total }, (_, i) => ({ id: `${id}${i}`, done: i < done ? 1 : 0, set_type: 'working' })),
@@ -586,6 +593,39 @@ test('횟수 손으로 고치기: +1/−1, 0 아래로는 안 내려감', () => 
   c.adjust(1); assert.equal(c.count, n + 1);
   c.adjust(-3); assert.equal(c.count, Math.max(0, n - 2));
   c.adjust(-100); assert.equal(c.count, 0);
+});
+test('운동 통계: 볼륨·e1RM·추천·원판·예상 시간', () => {
+  const sets = [
+    { weight: 50, reps: 10, done: 1, set_type: 'working' }, { weight: 60, reps: 5, done: 1, set_type: 'working' },
+    { weight: 20, reps: 10, done: 1, set_type: 'warmup' }, { weight: 80, reps: 5, done: 0, set_type: 'working' },
+  ];
+  assert.equal(volumeOf(sets), 800);
+  assert.equal(bestE1rm(sets), 70);
+});
+test('운동 통계 2', () => {
+  assert.equal(bestE1rm([{ weight: 60, reps: 5, done: 1, set_type: 'working' }, { weight: 50, reps: 10, done: 1, set_type: 'working' }]), 70);
+  assert.deepEqual(recommendNext({ weight: 50, reps: 10 }, 2.5), { weight: 50, reps: 11 });
+  assert.deepEqual(recommendNext({ weight: 50, reps: 12 }, 2.5), { weight: 52.5, reps: 8 });
+  assert.equal(recommendNext(null, 2.5), null);
+  assert.equal(barbellTotal(20, [20, 10, 2.5]), 85);
+  assert.equal(estimateMinutes([{ sets: 3, restSec: 80 }, { sets: 4, restSec: 140 }]), 18);
+});
+test('주 연속 기록·월 주차 체크·부위별 합계', () => {
+  const today = '2026-11-07'; // 토요일, 이번 주 월요일은 11-02
+  assert.equal(streakWeeks(['2026-11-03', '2026-10-28', '2026-10-21'], today), 3);
+  assert.equal(streakWeeks(['2026-10-28', '2026-10-21'], today), 2); // 이번 주 아직 없음 → 지난주부터
+  assert.equal(streakWeeks(['2026-10-14'], today), 0);
+  const w = monthWeeks(['2026-11-03', '2026-11-05'], today);
+  assert.equal(w.length, 6); assert.equal(w[0].count, 0); assert.equal(w[1].count, 2); assert.ok(w[1].current);
+  assert.equal(monthDays(['2026-11-03', '2026-11-03', '2026-10-30'], today), 1);
+  const flat = [
+    { date: '2026-11-03', done: true, setType: 'working', weight: 50, reps: 10, n: '벤치프레스' },
+    { date: '2026-11-03', done: true, setType: 'working', weight: 50, reps: 10, n: '벤치프레스' },
+    { date: '2026-11-03', done: true, setType: 'warmup', weight: 20, reps: 10, n: '벤치프레스' },
+    { date: '2026-11-04', done: true, setType: 'working', weight: 100, reps: 5, n: '스쿼트' },
+  ];
+  const t = partTotals(flat, '2026-11-02', '2026-11-08', (s) => partOf(s.n));
+  assert.deepEqual(t.map((x) => [x.part, x.sets, x.volume]), [['가슴', 2, 1000], ['하체', 1, 500]]);
 });
 test('자동: 컬처럼 팔꿈치만 움직여도 5회 (운동 종류를 알려 주지 않음)', () => {
   const c = new AutoRepCounter();

@@ -2,11 +2,14 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Alert, Pressable, ScrollView, Switch, Text, Vibration, View } from 'react-native';
 import { useApp } from '../app/context.tsx';
 import {
-  addCardio, addSessionExercise, addSet, deleteSet, deleteSession, finishSession, getExerciseRest, getRestDefault, getSessionRests, getWeightStep, lastPerformance,
+  addCardio, addSessionExercise, addSet, deleteSet, deleteSession, finishSession, getExerciseRest, getLastSets, getRestDefault, getSessionRests, getSetting, listDoneDates, setExerciseRestFor, setRestDefault, getWeightStep, lastPerformance,
   loadSession, removeSessionExercise, reopenSession, saveSessionAsDay, setExerciseNote, setExerciseRest,
   setSessionExerciseMode, setSessionNote, updateSet, type SessionExRow, type SessionFull, type SetRow,
 } from '../db/repo.ts';
-import { matchProfile } from '../domain/exerciseCatalog.ts';
+import { matchProfile, partOf, WEIGHT_LABEL, type Equip } from '../domain/exerciseCatalog.ts';
+import { bestE1rm, doneWorkingCount, e1rm, recommendNext, streakWeeks, volumeOf } from '../domain/workoutStats.ts';
+import { SetSheet } from '../ui/SetSheet.tsx';
+import { SummaryModal, type SummaryData } from '../ui/SummaryModal.tsx';
 import { currentOf, restAfter, type GEx } from '../domain/guided.ts';
 import type { Focus as LiveFocus } from '../domain/liveCount.ts';
 import { speakText } from '../services/speak.ts';
@@ -19,7 +22,7 @@ import { useElapsed } from '../ui/useElapsed.ts';
 
 type Last = { weight: number | null; reps: number | null };
 type Focus = { setId: string; field: 'weight' | 'reps' } | null;
-type Rest = { endAt: number; total: number; done: boolean; kind: 'set' | 'exercise'; next?: string; nextTip?: string; nextExId?: string } | null;
+type Rest = { endAt: number; total: number; done: boolean; kind: 'set' | 'exercise'; exId?: string; next?: string; nextTip?: string; nextExId?: string } | null;
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -35,7 +38,10 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
   const [postCardio, setPostCardio] = useState(false);
   const [postCardioMin, setPostCardioMin] = useState<number | null>(null);
   const [saveTplName, setSaveTplName] = useState<string | null>(null);
-  const [kindOpen, setKindOpen] = useState<string | null>(null); // 세트 종류(본/준비/1RM) 선택을 펼친 세트
+  const [sheet, setSheet] = useState<{ exId: string; setId: string } | null>(null); // 입력 시트가 열린 세트
+  const [lastSets, setLastSets] = useState<Record<string, { weight: number | null; reps: number | null }[]>>({}); // 세션 종목 id → 지난 운동의 완료 세트
+  const [summary, setSummary] = useState<SummaryData | null>(null);
+  const [barKg, setBarKg] = useState(20);
   const [rests, setRests] = useState<Record<string, number | null>>({}); // 세션 종목 id → 루틴에 정해 둔 휴식(초)
   const [restDefault, setRestDefault] = useState(90);
   const [rest, setRest] = useState<Rest>(null); // 세트 사이 휴식 카운트다운
@@ -56,6 +62,11 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
         l[e.id] = p ? { weight: p.weight, reps: p.reps } : null;
       }
       setLasts(l);
+      const ls: Record<string, { weight: number | null; reps: number | null }[]> = {};
+      for (const e of full.exercises) ls[e.id] = await getLastSets(db, e.exercise_id, full.id);
+      setLastSets(ls);
+      const bk = Number(await getSetting(db, 'bar_kg'));
+      setBarKg(Number.isFinite(bk) && bk > 0 ? bk : 20);
       setStep(await getWeightStep(db));
       setRests(await getSessionRests(db, sessionId));
       setRestDefault(await getRestDefault(db));
@@ -182,10 +193,29 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
       setRest(null);
       bump();
       await reload();
+      // 완료 요약 카드 (완료한 세트가 있을 때만)
+      const full = await loadSession(db, s.id);
+      if (full && doneSets > 0) {
+        const dates = await listDoneDates(db);
+        setSummary({
+          title: full.title, date: full.date, durationSec: full.duration_sec,
+          volume: full.exercises.reduce((n, e) => n + volumeOf(e.sets), 0),
+          sets: full.exercises.reduce((n, e) => n + doneWorkingCount(e.sets), 0),
+          streak: streakWeeks(dates, today),
+          exercises: full.exercises.filter((e) => doneWorkingCount(e.sets) > 0).map((e) => ({
+            name: e.exercise_name, sets: doneWorkingCount(e.sets), e1rm: bestE1rm(e.sets), part: partOf(e.exercise_name),
+          })),
+        });
+      }
     };
+    const undone = allSets.filter((x) => !x.done).length;
     if (doneSets === 0) {
       Alert.alert('완료한 세트가 없습니다', '그래도 운동을 종료할까요? 완료 체크한 세트만 성장 그래프에 반영됩니다.', [
         { text: '계속 기록' }, { text: '종료', onPress: go },
+      ]);
+    } else if (undone > 0) {
+      Alert.alert('남은 세트가 있어요', '이대로 운동을 완료할까요? 체크한 세트만 기록됩니다.', [
+        { text: '취소', style: 'cancel' }, { text: '완료', onPress: go },
       ]);
     } else await go();
   };
@@ -197,6 +227,13 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
         onBack={nav.close}
         right={editable ? <T bold style={{ fontSize: 16 }}>{fmtElapsed(elapsed)}</T> : <T muted>{s.date}</T>}
       />
+      {editable && (
+        <Row style={{ justifyContent: 'space-around', paddingVertical: S.md, backgroundColor: C.card, borderBottomWidth: 1, borderBottomColor: C.line }}>
+          <SumStat label="볼륨" value={`${Math.round(s.exercises.reduce((n, e) => n + volumeOf(e.sets), 0)).toLocaleString()}kg`} />
+          <SumStat label="완료 세트" value={`${s.exercises.reduce((n, e) => n + doneWorkingCount(e.sets), 0)}`} />
+          <SumStat label="종목" value={`${s.exercises.filter((e) => doneWorkingCount(e.sets) > 0).length}/${s.exercises.length}`} />
+        </Row>
+      )}
       <ScrollView contentContainerStyle={{ padding: S.lg, paddingBottom: 240 }} keyboardShouldPersistTaps="handled">
         {editable && s.exercises.length > 0 && (
           <Row style={{ marginBottom: S.sm }}>
@@ -224,16 +261,34 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
           const showOpts = !!opts[ex.id];
           const doneN = ex.sets.filter((x) => x.done).length;
           const last = lasts[ex.id] ?? null;
+          const equip: Equip | null = ex.weight_mode === 'bodyweight' ? '맨몸' : (matchProfile(ex.exercise_name)?.equip ?? null);
+          const prevSets = lastSets[ex.id] ?? [];
+          const prevVol = prevSets.reduce((n, x) => n + (x.weight && x.reps ? x.weight * x.reps : 0), 0);
+          const vol = volumeOf(ex.sets);
+          const best = bestE1rm(ex.sets) ?? (last ? e1rm(last.weight, last.reps) : null);
+          const idxAll = s.exercises.findIndex((e) => e.id === ex.id);
+          const prevEx = s.exercises[idxAll - 1];
+          const nextEx = s.exercises[idxAll + 1];
+          const inSs = !!ex.ss && (prevEx?.ss === ex.ss || nextEx?.ss === ex.ss);
+          const ssFirst = inSs && prevEx?.ss !== ex.ss;
           return (
-            <Card key={ex.id} style={{ padding: 0 }}>
+            <View key={ex.id}>
+              {ssFirst && <View style={{ alignSelf: 'flex-start', paddingHorizontal: 10, paddingVertical: 3, borderRadius: 999, backgroundColor: C.accent, marginBottom: 4 }}><Text style={{ color: C.onAccent, fontSize: 11, fontWeight: '800' }}>슈퍼 세트</Text></View>}
+            <Card style={{ padding: 0, ...(inSs ? { borderLeftWidth: 4, borderLeftColor: C.accent } : {}) }}>
               <Pressable onPress={() => setCollapsed((c) => ({ ...c, [ex.id]: open }))} style={{ padding: S.lg }}>
                 <Row>
                   <View style={{ flex: 1 }}>
                     <T bold style={{ fontSize: 16 }}>{ex.exercise_name}{cur && cur.block.length > 1 && cur.exId === ex.id ? '  ▶ 지금 차례' : ''}</T>
                     <T muted style={{ fontSize: 12 }}>
-                      {doneN}/{ex.sets.length}{ex.weight_mode === 'assisted' ? ' · 보조 중량' : ex.weight_mode === 'bodyweight' ? ' · 체중' : ''}
-                      {last?.weight != null ? ` · 지난 기록 ${last.weight}kg × ${last.reps ?? '-'}` : ''}
+                      {doneN}/{ex.sets.length}{equip ? ` · ${equip}` : ''}{ex.weight_mode === 'assisted' ? ' · 보조 중량' : ex.weight_mode === 'bodyweight' ? ' · 체중' : ''}
+                      {` · 휴식 ${fmtElapsed(restFor(rests[ex.id], restDefault))}`}
+                      {best != null ? ` · e1RM ${best}kg` : ''}
                     </T>
+                    {(vol > 0 || prevVol > 0) && (
+                      <T muted style={{ fontSize: 12 }}>
+                        볼륨 {Math.round(vol).toLocaleString()}kg{prevVol > 0 ? ` (${vol - prevVol >= 0 ? '+' : '−'}${Math.round(Math.abs(vol - prevVol)).toLocaleString()} 지난번 대비)` : ''}
+                      </T>
+                    )}
                   </View>
                   <Text style={{ color: C.muted, fontSize: 18, marginLeft: 8 }}>{open ? '▾' : '▸'}</Text>
                 </Row>
@@ -249,8 +304,18 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
                     </Row>
                   )}
                   {editable && (
-                    <Btn label="📷 실시간 횟수 세기" kind="ghost" small style={{ marginBottom: S.sm }} onPress={() => openLive(ex)} />
+                    <Row style={{ marginBottom: S.sm }}>
+                      <Btn label="📷 실시간 횟수 세기" kind="ghost" small style={{ flex: 1 }} onPress={() => openLive(ex)} />
+                      {prevSets.length > 0 && (
+                        <Btn label="불러오기" kind="ghost" small onPress={async () => {
+                          const free = ex.sets.filter((x) => !x.done && x.set_type !== 'warmup');
+                          for (let i = 0; i < free.length && i < prevSets.length; i++) await updateSet(db, free[i].id, { weight: prevSets[i].weight, reps: prevSets[i].reps });
+                          bump(); reload();
+                        }} />
+                      )}
+                    </Row>
                   )}
+                  {equip && ex.sets.length > 0 && <T muted style={{ fontSize: 10, marginLeft: 40, marginBottom: 2 }}>{WEIGHT_LABEL[equip]}</T>}
                   {ex.sets.map((row, idx) => {
                     const sugW = suggestFor(ex.sets, idx, (x) => x.weight, last?.weight ?? null);
                     const sugR = suggestFor(ex.sets, idx, (x) => x.reps, last?.reps ?? null);
@@ -260,7 +325,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
                         <Row>
                           <Pressable
                             disabled={!editable}
-                            onPress={() => setKindOpen(kindOpen === row.id ? null : row.id)}
+                            onPress={() => setSheet({ exId: ex.id, setId: row.id })}
                             onLongPress={() => Alert.alert('세트 삭제', `${row.set_no}세트를 삭제할까요?`, [
                               { text: '취소' }, { text: '삭제', style: 'destructive', onPress: async () => { await deleteSet(db, row.id); bump(); reload(); } },
                             ])}
@@ -301,7 +366,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
                               if (sec > 0) {
                                 const t = Date.now(); setNow(t);
                                 const nx = nextExId ? nameOf(nextExId) : undefined;
-                                setRest({ endAt: t + sec * 1000, total: sec, done: false, kind, next: nx, nextTip: nx ? matchProfile(nx)?.tip : undefined, nextExId });
+                                setRest({ endAt: t + sec * 1000, total: sec, done: false, kind, exId: ex.id, next: nx, nextTip: nx ? matchProfile(nx)?.tip : undefined, nextExId });
                                 if (kind === 'exercise' && nx) speakText(`종목 끝. ${sec}초 쉬세요. 다음은 ${nx}`);
                               }
                               // ✓: 칸에 들어 있는(또는 흐리게 보이던) 숫자를 그대로 이 세트의 기록으로 확정
@@ -319,19 +384,6 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
                             <Text style={{ color: row.done ? C.onAccent : C.muted, fontWeight: '800', fontSize: 18 }}>✓</Text>
                           </Pressable>
                         </Row>
-                        {editable && kindOpen === row.id && (
-                          <Row style={{ marginTop: 6, marginLeft: 40, flexWrap: 'wrap' }}>
-                            <Chip label="본 세트" active={row.set_type === 'working' && !row.is_rm} onPress={() => { patchSet(ex, row, { kind: 'working' }); setKindOpen(null); }} />
-                            <Chip label="준비 세트" active={row.set_type === 'warmup'} onPress={() => { patchSet(ex, row, { kind: 'warmup' }); setKindOpen(null); }} />
-                            <Chip label="1RM 측정" active={!!row.is_rm} onPress={() => { patchSet(ex, row, { kind: 'rm' }); setKindOpen(null); }} />
-                            <Btn
-                              label="삭제" kind="danger" small
-                              onPress={() => Alert.alert('세트 삭제', `${row.set_no}세트를 삭제할까요?`, [
-                                { text: '취소' }, { text: '삭제', style: 'destructive', onPress: async () => { setKindOpen(null); await deleteSet(db, row.id); bump(); reload(); } },
-                              ])}
-                            />
-                          </Row>
-                        )}
                         {editable && focused && (
                           <Row style={{ marginTop: 6, marginLeft: 40 }}>
                             {(focused === 'weight' ? [-step * 2, -step, step, step * 2] : [-5, -1, 1, 5]).map((d) => (
@@ -385,6 +437,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
                 </View>
               )}
             </Card>
+            </View>
           );
         })}
 
@@ -468,6 +521,16 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
               </View>
               {!rest.done && <Btn label="−30" kind="ghost" small onPress={() => adjustRest(-30)} />}
               {!rest.done && <Btn label="+30" kind="ghost" small onPress={() => adjustRest(30)} />}
+              {!rest.done && rest.kind === 'set' && (
+                <Btn label="저장" kind="ghost" small onPress={() => {
+                  const cur = s.exercises.find((e) => e.id === rest.exId);
+                  Alert.alert('휴식 시간 저장', `${fmtElapsed(rest.total)}을 어디에 쓸까요?`, [
+                    { text: '취소', style: 'cancel' },
+                    ...(cur ? [{ text: '이 종목만', onPress: async () => { await setExerciseRestFor(db, cur.exercise_id, rest.total); reload(); } }] : []),
+                    { text: '모든 종목에', onPress: async () => { await setRestDefault(db, rest.total); reload(); } },
+                  ]);
+                }} />
+              )}
               {rest.kind === 'exercise' && rest.nextExId && (
                 <Btn label="📷" kind="ghost" small onPress={() => { const ex = s.exercises.find((e) => e.id === rest.nextExId); if (ex) openLive(ex); }} />
               )}
@@ -490,6 +553,37 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
         </View>
       )}
 
+      {(() => {
+        const sx = sheet ? s.exercises.find((e) => e.id === sheet.exId) : null;
+        const sr = sx && sheet ? sx.sets.find((x) => x.id === sheet.setId) : null;
+        if (!sx || !sr) return null;
+        const lastSet = lasts[sx.id] ?? null;
+        const eq: Equip | null = sx.weight_mode === 'bodyweight' ? '맨몸' : (matchProfile(sx.exercise_name)?.equip ?? null);
+        return (
+          <SetSheet
+            visible title={sx.exercise_name}
+            set={{ weight: sr.weight, reps: sr.reps, setNo: sr.set_no, kind: sr.is_rm ? 'rm' : sr.set_type === 'warmup' ? 'warmup' : 'working' }}
+            weightLabel={eq ? WEIGHT_LABEL[eq] : '무게'} bodyweight={sx.weight_mode === 'bodyweight'} barbell={eq === '바벨'}
+            step={step} barKg={barKg} last={lastSet} recommend={recommendNext(lastSet, step)}
+            onClose={() => setSheet(null)}
+            onKind={(k) => patchSet(sx, sr, { kind: k })}
+            onComplete={(w, r) => {
+              setSheet(null);
+              patchSet(sx, sr, { weight: w, reps: r, done: true });
+              reload();
+            }}
+            onApplyRest={async (w, r) => {
+              for (const x of sx.sets) if (!x.done && x.id !== sr.id && x.set_type !== 'warmup') await updateSet(db, x.id, { weight: w, reps: r });
+              await updateSet(db, sr.id, { weight: w, reps: r });
+              setSheet(null); bump(); reload();
+            }}
+            onDelete={() => Alert.alert('세트 삭제', `${sr.set_no}세트를 삭제할까요?`, [
+              { text: '취소' }, { text: '삭제', style: 'destructive', onPress: async () => { setSheet(null); await deleteSet(db, sr.id); bump(); reload(); } },
+            ])}
+          />
+        );
+      })()}
+      <SummaryModal data={summary} onClose={() => setSummary(null)} />
       <LiveCountModal
         visible={!!live}
                 defaults={live ? { targetReps: live.target, totalSets: live.sets, restSec: live.restSec, focus: live.focus, tip: live.tip } : undefined}
@@ -501,6 +595,15 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
                 onClose={() => setPicker(false)}
         onPick={async (e) => { setPicker(false); await addSessionExercise(db, s.id, e.id); bump(); reload(); }}
       />
+    </View>
+  );
+}
+
+function SumStat({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={{ alignItems: 'center' }}>
+      <T bold style={{ fontSize: 18 }}>{value}</T>
+      <T muted style={{ fontSize: 11 }}>{label}</T>
     </View>
   );
 }

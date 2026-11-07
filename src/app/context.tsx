@@ -2,7 +2,7 @@ import React, { createContext, useContext } from 'react';
 import type { Db } from '../db/adapter.ts';
 import type { GraphKey, ThemeMode } from '../domain/themeModel.ts';
 
-export type Tab = 'home' | 'routine' | 'calendar' | 'growth' | 'settings';
+export type Tab = 'home' | 'routine' | 'calendar' | 'growth' | 'profile';
 
 export interface Nav {
   openSession(id: string): void;
@@ -13,6 +13,7 @@ export interface Nav {
   openDay(routineId: string, dayId: string | null): void;
   openExercises(): void;
   openSetup(): void;
+  openSettings(): void;
   goTab(t: Tab): void;
   close(): void;
 }

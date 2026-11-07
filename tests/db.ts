@@ -818,5 +818,28 @@ await test('슈퍼세트 묶음이 루틴 저장·세션 시작·백업에 이�
   assert.equal(await repo.getExerciseRest(db), 210);
 });
 
+await test('지난 기록 불러오기·이 종목만 휴식·완료한 날짜 목록', async () => {
+  const db = await emptyDb();
+  const ex = await repo.getOrCreateExercise(db, '덤벨 컬');
+  const s1 = await repo.startFreeSession(db, '2026-11-01');
+  const se1 = await repo.addSessionExercise(db, s1, ex.id, 2);
+  const a = (await repo.loadSession(db, s1))!.exercises[0].sets;
+  await repo.updateSet(db, a[0].id, { weight: 12, reps: 10, done: true });
+  await repo.updateSet(db, a[1].id, { weight: 12, reps: 9, done: true });
+  await repo.finishSession(db, s1);
+  const s2 = await repo.startFreeSession(db, '2026-11-03');
+  const se2 = await repo.addSessionExercise(db, s2, ex.id, 2);
+  assert.equal(JSON.stringify(await repo.getLastSets(db, ex.id, s2)), JSON.stringify([{ weight: 12, reps: 10 }, { weight: 12, reps: 9 }]));
+  assert.deepEqual(await repo.getLastSets(db, ex.id, s1), []);
+  assert.deepEqual(await repo.listDoneDates(db), ['2026-11-01']);
+  assert.equal((await repo.getSessionRests(db, s2))[se2], null);
+  await repo.setExerciseRestFor(db, ex.id, 75);
+  assert.equal((await repo.getSessionRests(db, s2))[se2], 75);
+  await repo.setRestDefault(db, 120);
+  assert.equal((await repo.getSessionRests(db, s2))[se2], null); // 모든 종목에 저장하면 종목별 값은 지워짐
+  assert.equal(await repo.getRestDefault(db), 120);
+  void se1;
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

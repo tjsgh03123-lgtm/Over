@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Alert, Pressable, ScrollView, View } from 'react-native';
 import { useApp } from '../app/context.tsx';
 import { exportBackup, exportBodyCsv, exportWorkoutCsv, restoreBackup } from '../db/backup.ts';
-import { getRestDefault, getWeightStep, setSetting } from '../db/repo.ts';
+import { getExerciseRest, getRestDefault, getSetting, getWeightStep, setSetting } from '../db/repo.ts';
 import { pickTextFile, shareTextFile, stamp } from '../services/files.ts';
 import { GRAPH_KEYS, GRAPH_LABEL, GRAPH_PRESETS } from '../domain/themeModel.ts';
 import { Btn, Card, H, Row, Segmented, T } from '../ui/components.tsx';
@@ -10,6 +10,9 @@ import { C, GC, S } from '../ui/theme.ts';
 
 const STEPS = [1, 2.5, 5];
 const RESTS = [0, 60, 90, 120, 180];
+const EX_RESTS = [90, 120, 180, 240, 300];
+const GOALS = [8, 12, 16, 20];
+const BARS = [15, 20];
 const restLabel = (v: number) => (v === 0 ? '끄기' : v % 60 === 0 ? `${v / 60}분` : `${v}초`);
 
 export function SettingsScreen() {
@@ -17,10 +20,16 @@ export function SettingsScreen() {
   const [step, setStep] = useState(2.5);
   const [rest, setRest] = useState(90);
   const [busy, setBusy] = useState(false);
+  const [exRest, setExRest] = useState(180);
+  const [goal, setGoal] = useState(12);
+  const [bar, setBar] = useState(20);
 
   useEffect(() => {
     getWeightStep(db).then(setStep);
     getRestDefault(db).then(setRest);
+    getExerciseRest(db).then(setExRest);
+    getSetting(db, 'month_goal').then((v) => setGoal(Number(v) > 0 ? Number(v) : 12));
+    getSetting(db, 'bar_kg').then((v) => setBar(Number(v) > 0 ? Number(v) : 20));
   }, [db, version]);
 
   const guard = async (fn: () => Promise<void>) => {
@@ -30,8 +39,6 @@ export function SettingsScreen() {
 
   return (
     <ScrollView contentContainerStyle={{ padding: S.lg, paddingBottom: 60 }}>
-      <H style={{ fontSize: 22, marginBottom: S.lg }}>설정</H>
-
       <Card>
         <H style={{ fontSize: 16, marginBottom: 4 }}>세트 입력</H>
         <T muted style={{ fontSize: 12, marginBottom: S.sm }}>중량 칸 아래 ± 버튼이 한 번에 바꾸는 kg</T>
@@ -47,6 +54,30 @@ export function SettingsScreen() {
           options={RESTS.map((v) => ({ key: String(v), label: restLabel(v) }))}
           value={String(rest)}
           onChange={(k) => { setRest(Number(k)); setSetting(db, 'rest_default_sec', k); }}
+        />
+        <T muted style={{ fontSize: 12, marginTop: S.md, marginBottom: S.sm }}>
+          종목 간 휴식 — 루틴을 한 종목씩 진행할 때 종목이 끝나면 쉬는 시간 (운동 중 ±30초로도 바꿀 수 있어요)
+        </T>
+        <Segmented
+          options={EX_RESTS.map((v) => ({ key: String(v), label: restLabel(v) }))}
+          value={String(exRest)}
+          onChange={(k) => { setExRest(Number(k)); setSetting(db, 'exercise_rest_sec', k); }}
+        />
+        <T muted style={{ fontSize: 12, marginTop: S.md, marginBottom: S.sm }}>바벨 기본 무게 (바+원판 계산에 사용)</T>
+        <Segmented
+          options={BARS.map((v) => ({ key: String(v), label: `${v}kg` }))}
+          value={String(bar)}
+          onChange={(k) => { setBar(Number(k)); setSetting(db, 'bar_kg', k); }}
+        />
+      </Card>
+
+      <Card>
+        <H style={{ fontSize: 16, marginBottom: 4 }}>목표</H>
+        <T muted style={{ fontSize: 12, marginBottom: S.sm }}>한 달에 운동할 날 수 (프로필에 표시)</T>
+        <Segmented
+          options={GOALS.map((v) => ({ key: String(v), label: `${v}일` }))}
+          value={String(goal)}
+          onChange={(k) => { setGoal(Number(k)); setSetting(db, 'month_goal', k); }}
         />
       </Card>
 

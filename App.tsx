@@ -3,7 +3,7 @@ import { ActivityIndicator, AppState, BackHandler, Pressable, Text, View } from 
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import * as SystemUI from 'expo-system-ui';
-import { Ctx, type AppCtx, type Nav, type Tab } from './src/app/context.tsx';
+import { Ctx, useApp, type AppCtx, type Nav, type Tab } from './src/app/context.tsx';
 import { localDateStr, type Db } from './src/db/adapter.ts';
 import { openAppDb } from './src/db/expoAdapter.ts';
 import { BodyEntryScreen } from './src/screens/BodyEntryScreen.tsx';
@@ -18,6 +18,8 @@ import { ImportScreen } from './src/screens/ImportScreen.tsx';
 import { SessionScreen } from './src/screens/SessionScreen.tsx';
 import { SetupScreen } from './src/screens/SetupScreen.tsx';
 import { SettingsScreen } from './src/screens/SettingsScreen.tsx';
+import { ProfileScreen } from './src/screens/ProfileScreen.tsx';
+import { Header } from './src/ui/components.tsx';
 import { findMissedRoutine, getActiveRoutine, getSetting, resolveMissed, setSetting, type MissedChoice, type MissedRoutine } from './src/db/repo.ts';
 import { MissedRoutineModal } from './src/ui/MissedRoutineModal.tsx';
 import { sanitizeGraphColors, sanitizeMode, type GraphKey, type ThemeMode } from './src/domain/themeModel.ts';
@@ -30,14 +32,15 @@ type Overlay =
   | { name: 'routine'; id: string }
   | { name: 'day'; routineId: string; dayId: string | null }
   | { name: 'exercises' }
-  | { name: 'setup' };
+  | { name: 'setup' }
+  | { name: 'settings' };
 
 const TABS: { key: Tab; label: string }[] = [
-  { key: 'home', label: '홈' },
+  { key: 'home', label: '운동' },
   { key: 'routine', label: '루틴' },
   { key: 'calendar', label: '캘린더' },
-  { key: 'growth', label: '성장 분석' },
-  { key: 'settings', label: '설정' },
+  { key: 'growth', label: '분석' },
+  { key: 'profile', label: '프로필' },
 ];
 
 export default function App() {
@@ -111,6 +114,7 @@ export default function App() {
     openDay: (routineId, dayId) => push({ name: 'day', routineId, dayId }),
     openExercises: () => push({ name: 'exercises' }),
     openSetup: () => push({ name: 'setup' }),
+    openSettings: () => push({ name: 'settings' }),
     goTab: (t) => { setStack([]); setTab(t); },
     close,
   }), [push, close]);
@@ -172,7 +176,7 @@ export default function App() {
                 {tab === 'routine' && <RoutineScreen />}
                 {tab === 'calendar' && <CalendarScreen />}
                 {tab === 'growth' && <GrowthScreen />}
-                {tab === 'settings' && <SettingsScreen />}
+                {tab === 'profile' && <ProfileScreen />}
               </View>
               <View style={{ flexDirection: 'row', backgroundColor: C.card, borderTopWidth: 1, borderTopColor: C.line }}>
                 {TABS.map((t) => (
@@ -200,5 +204,16 @@ function Overlay({ o }: { o: Overlay }) {
     case 'day': return <DayEditorScreen routineId={o.routineId} dayId={o.dayId} />;
     case 'exercises': return <ExercisesScreen />;
     case 'setup': return <SetupScreen />;
+    case 'settings': return <SettingsOverlay />;
   }
+}
+
+function SettingsOverlay() {
+  const { nav } = useApp();
+  return (
+    <View style={{ flex: 1, backgroundColor: C.bg }}>
+      <Header title="설정" onBack={nav.close} />
+      <SettingsScreen />
+    </View>
+  );
 }

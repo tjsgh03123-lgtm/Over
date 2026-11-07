@@ -1,12 +1,19 @@
 import type { Focus } from './liveCount.ts';
 
-export type Part = '가슴' | '등' | '어깨' | '하체' | '팔';
-export const PARTS: Part[] = ['가슴', '등', '어깨', '하체', '팔'];
+export type Part = '가슴' | '등' | '어깨' | '하체' | '팔' | '복근';
+export const PARTS: Part[] = ['가슴', '등', '어깨', '하체', '팔', '복근'];
+export type Equip = '바벨' | '덤벨' | '머신' | '케이블' | '맨몸';
+export const EQUIPS: Equip[] = ['바벨', '덤벨', '머신', '케이블', '맨몸'];
+
+/** 장비에 따라 무게 칸이 뜻하는 것이 다르다 */
+export const WEIGHT_LABEL: Record<Equip, string> = {
+  바벨: '바+원판 무게', 덤벨: '한 손 무게', 머신: '머신 무게', 케이블: '케이블 무게', 맨몸: '추가 무게(+kg)',
+};
 
 export interface CatalogItem {
   name: string;
   part: Part;
-  equip: '바벨' | '덤벨';
+  equip: Equip;
   /** 실시간 횟수 세기에서 볼 동작 */
   focus: Focus;
   /** 이름 매칭용 (공백 제거·소문자 기준) */
@@ -53,6 +60,46 @@ export const CATALOG: CatalogItem[] = [
   { name: '오버헤드 덤벨 익스텐션', part: '팔', equip: '덤벨', focus: 'arm', aliases: ['오버헤드익스텐션', '덤벨익스텐션', '프렌치프레스', '트라이셉스익스텐션'], tip: SIDE },
 ];
 
+const MACHINE = '머신 옆에서 상체와 팔이 보이게 두세요.';
+/** 머신·케이블·맨몸 종목: 부위·장비 구분과 동작 인식용 (바벨·덤벨 기본 종목은 위 CATALOG) */
+export const EXTRA_CATALOG: CatalogItem[] = [
+  { name: '펙 덱 플라이', part: '가슴', equip: '머신', focus: 'raise', aliases: ['펙덱', '펙덱플라이', '머신플라이'], tip: FRONT },
+  { name: '체스트 프레스 머신', part: '가슴', equip: '머신', focus: 'arm', aliases: ['체스트프레스', '체스트프레스머신'], tip: MACHINE },
+  { name: '케이블 크로스오버', part: '가슴', equip: '케이블', focus: 'raise', aliases: ['크로스오버', '케이블크로스오버'], tip: FRONT },
+  { name: '딥스', part: '가슴', equip: '맨몸', focus: 'body', aliases: ['딥스', '딥'], tip: SIDE },
+  { name: '푸시업', part: '가슴', equip: '맨몸', focus: 'body', aliases: ['푸시업', '팔굽혀펴기'], tip: SIDE },
+  { name: '랫 풀다운', part: '등', equip: '케이블', focus: 'arm', aliases: ['렛풀다운', '랫풀다운', '와이드풀다운', '풀다운'], tip: SIDE },
+  { name: '시티드 케이블 로우', part: '등', equip: '케이블', focus: 'arm', aliases: ['시티드로우', '케이블로우', '시티드케이블로우'], tip: SIDE },
+  { name: '풀업', part: '등', equip: '맨몸', focus: 'body', aliases: ['풀업', '턱걸이', '친업', '어시스트풀업'], tip: FRONT },
+  { name: 'T바 로우', part: '등', equip: '머신', focus: 'arm', aliases: ['t바로우', '티바로우'], tip: SIDE },
+  { name: '백 익스텐션', part: '등', equip: '머신', focus: 'hinge', aliases: ['백익스텐션', '하이퍼익스텐션'], tip: SIDE },
+  { name: '숄더 프레스 머신', part: '어깨', equip: '머신', focus: 'arm', aliases: ['숄더프레스머신', '머신숄더프레스'], tip: FRONT },
+  { name: '케이블 레터럴 레이즈', part: '어깨', equip: '케이블', focus: 'raise', aliases: ['케이블레터럴', '케이블사레레'], tip: FRONT },
+  { name: '페이스 풀', part: '어깨', equip: '케이블', focus: 'arm', aliases: ['페이스풀'], tip: FRONT },
+  { name: '리어 델트 머신', part: '어깨', equip: '머신', focus: 'raise', aliases: ['리어델트머신', '리버스펙덱'], tip: SIDE },
+  { name: '레그 프레스', part: '하체', equip: '머신', focus: 'leg', aliases: ['레그프레스'], tip: SIDE },
+  { name: '레그 익스텐션', part: '하체', equip: '머신', focus: 'leg', aliases: ['레그익스텐션'], tip: SIDE },
+  { name: '레그 컬', part: '하체', equip: '머신', focus: 'leg', aliases: ['레그컬', '라잉레그컬', '시티드레그컬'], tip: SIDE },
+  { name: '핵 스쿼트', part: '하체', equip: '머신', focus: 'leg', aliases: ['핵스쿼트'], tip: SIDE },
+  { name: '스미스 머신 스쿼트', part: '하체', equip: '머신', focus: 'leg', aliases: ['스미스스쿼트', '스미스머신스쿼트'], tip: SIDE },
+  { name: '힙 어브덕션', part: '하체', equip: '머신', focus: 'leg', aliases: ['힙어브덕션', '이너타이', '아웃타이'], tip: SIDE },
+  { name: '케이블 푸시다운', part: '팔', equip: '케이블', focus: 'arm', aliases: ['푸시다운', '케이블푸시다운', '트라이셉스푸시다운'], tip: SIDE },
+  { name: '케이블 컬', part: '팔', equip: '케이블', focus: 'arm', aliases: ['케이블컬', '케이블바이셉'], tip: SIDE },
+  { name: '프리처 컬 머신', part: '팔', equip: '머신', focus: 'arm', aliases: ['프리처컬', '프리처컬머신'], tip: SIDE },
+  { name: '트라이셉스 딥', part: '팔', equip: '맨몸', focus: 'body', aliases: ['트라이셉스딥', '벤치딥'], tip: SIDE },
+  { name: '행잉 레그 레이즈', part: '복근', equip: '맨몸', focus: 'hinge', aliases: ['행잉레그레이즈', '레그레이즈'], tip: SIDE },
+  { name: '크런치', part: '복근', equip: '맨몸', focus: 'hinge', aliases: ['크런치', '싯업'], tip: SIDE },
+  { name: '케이블 크런치', part: '복근', equip: '케이블', focus: 'hinge', aliases: ['케이블크런치'], tip: SIDE },
+];
+export const ALL_ITEMS: CatalogItem[] = [...CATALOG, ...EXTRA_CATALOG];
+
+/** 부위 이름: 기본 종목이면 그 부위, 아니면 종목에 지정된 분류, 없으면 '기타' */
+export function partOf(name: string, category?: string | null): string {
+  const hit = matchProfile(name);
+  if (hit) return hit.part;
+  return category && (PARTS as string[]).includes(category) ? category : '기타';
+}
+
 const n = (s: string) => s.replace(/\s+/g, '').toLowerCase();
 
 /** 종목 이름에 가장 잘 맞는 기본 종목을 찾는다 (정확히 같거나, 가장 긴 별칭이 이름에 들어 있는 것) */
@@ -60,7 +107,7 @@ export function matchProfile(name: string): CatalogItem | null {
   const q = n(name);
   if (!q) return null;
   let best: { item: CatalogItem; len: number } | null = null;
-  for (const item of CATALOG) {
+  for (const item of ALL_ITEMS) {
     for (const a of [n(item.name), ...item.aliases.map(n)]) {
       if (q === a) return item;
       if (q.includes(a) && (!best || a.length > best.len)) best = { item, len: a.length };

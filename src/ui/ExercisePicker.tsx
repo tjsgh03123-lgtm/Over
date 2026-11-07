@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { FlatList, Modal, Pressable, Text, View } from 'react-native';
+import { FlatList, Modal, Pressable, ScrollView, Text, View } from 'react-native';
 import { useApp } from '../app/context.tsx';
 import { getOrCreateExercise, listExercises, type ExerciseRow } from '../db/repo.ts';
 import type { WeightMode } from '../domain/types.ts';
-import { CATALOG, PARTS, type Part } from '../domain/exerciseCatalog.ts';
+import { ALL_ITEMS, EQUIPS, PARTS, type Equip, type Part } from '../domain/exerciseCatalog.ts';
 import { Btn, Chip, Row, TextField } from './components.tsx';
 import { C, S } from './theme.ts';
 
@@ -13,6 +13,7 @@ export function ExercisePicker({ visible, onClose, onPick, newMode }: { visible:
   const [q, setQ] = useState('');
   const [list, setList] = useState<ExerciseRow[]>([]);
   const [part, setPart] = useState<Part | null>(null);
+  const [equip, setEquip] = useState<Equip | null>(null);
 
   useEffect(() => {
     if (visible) listExercises(db).then(setList);
@@ -41,22 +42,25 @@ export function ExercisePicker({ visible, onClose, onPick, newMode }: { visible:
               }}
             />
           ) : null}
-          <Text style={{ color: C.muted, fontSize: 12, marginBottom: 4 }}>트래킹 기본 종목 (바벨·덤벨) — 부위를 누르세요</Text>
+          <Text style={{ color: C.muted, fontSize: 12, marginBottom: 4 }}>기본 종목 — 부위와 장비를 눌러 고르세요</Text>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: S.sm }}>
             {PARTS.map((p) => <Chip key={p} label={p} active={part === p} onPress={() => setPart(part === p ? null : p)} />)}
           </View>
-          {part ? (
-            <View style={{ marginBottom: S.sm }}>
-              {CATALOG.filter((c) => c.part === part).map((c) => (
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: S.sm }}>
+            {EQUIPS.map((q) => <Chip key={q} label={q} active={equip === q} onPress={() => setEquip(equip === q ? null : q)} />)}
+          </View>
+          {part || equip ? (
+            <ScrollView style={{ maxHeight: 260, marginBottom: S.sm }} nestedScrollEnabled keyboardShouldPersistTaps="handled">
+              {ALL_ITEMS.filter((c) => (!part || c.part === part) && (!equip || c.equip === equip)).map((c) => (
                 <Pressable key={c.name} onPress={async () => {
-                  const e = await getOrCreateExercise(db, c.name, { category: c.part, ...(newMode ? { mode: newMode } : {}) });
-                  setQ(''); setPart(null); onPick(e);
+                  const e = await getOrCreateExercise(db, c.name, { category: c.part, ...(c.equip === '맨몸' ? { mode: 'bodyweight' as const } : newMode ? { mode: newMode } : {}) });
+                  setQ(''); setPart(null); setEquip(null); onPick(e);
                 }} style={{ paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: C.line }}>
                   <Text style={{ color: C.text, fontSize: 15 }}>{c.name}</Text>
                   <Text style={{ color: C.muted, fontSize: 12 }}>{c.part} · {c.equip}</Text>
                 </Pressable>
               ))}
-            </View>
+            </ScrollView>
           ) : null}
           <FlatList
             data={shown}
