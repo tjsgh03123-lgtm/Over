@@ -54,6 +54,7 @@ export default function App() {
   const [missed, setMissed] = useState<MissedRoutine | null>(null);
   const [cycleMode, setCycleMode] = useState(false);
   const [foreground, setForeground] = useState(0);
+  const [bootTry, setBootTry] = useState(0); // 데이터베이스 열기 다시 시도 횟수
 
   useEffect(() => {
     (async () => {
@@ -66,7 +67,7 @@ export default function App() {
       setDb(d);
       if ((await getSetting(d, 'setup_pending')) === '1') setStack([{ name: 'setup' }]);
     })().catch((e) => setError(String(e?.message ?? e)));
-  }, []);
+  }, [bootTry]);
 
   // 앱이 다시 활성화될 때 날짜 갱신 (자정을 넘긴 경우 오늘의 운동 갱신)
   useEffect(() => {
@@ -123,7 +124,11 @@ export default function App() {
     return (
       <View style={{ flex: 1, backgroundColor: C.bg, alignItems: 'center', justifyContent: 'center', padding: 24 }}>
         <Text style={{ color: C.danger, fontWeight: '800', marginBottom: 8 }}>데이터베이스를 열 수 없습니다</Text>
-        <Text style={{ color: C.muted, textAlign: 'center' }}>{error}</Text>
+        <Text style={{ color: C.muted, textAlign: 'center', marginBottom: 16 }}>{error}</Text>
+        <Pressable onPress={() => { setError(null); setBootTry((n) => n + 1); }} style={{ paddingVertical: 12, paddingHorizontal: 28, borderRadius: 12, backgroundColor: C.accent }}>
+          <Text style={{ color: C.onAccent, fontWeight: '800' }}>다시 시도</Text>
+        </Pressable>
+        <Text style={{ color: C.muted, textAlign: 'center', fontSize: 12, marginTop: 12 }}>기록은 지워지지 않았어요. 계속 안 되면 앱을 완전히 종료했다가 다시 열어 주세요.</Text>
       </View>
     );
   }

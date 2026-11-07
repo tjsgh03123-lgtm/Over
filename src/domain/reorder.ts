@@ -57,3 +57,22 @@ export function moveBlock<T extends { ss?: string | null }>(arr: readonly T[], i
   [blocks[at], blocks[to]] = [blocks[to], blocks[at]];
   return blocks.flat();
 }
+
+/**
+ * 끌어서 옮기기(슈퍼세트 유지): from 위치 종목이 속한 덩어리를 to 위치 종목이 속한 덩어리 자리로 옮긴다.
+ * 같은 덩어리 안이면 그대로. 범위를 벗어난 to는 가장자리로 본다.
+ */
+export function moveBlockTo<T extends { ss?: string | null }>(arr: readonly T[], from: number, to: number): T[] {
+  if (from < 0 || from >= arr.length) return [...arr];
+  const blocks: T[][] = [];
+  const blockOf: number[] = [];
+  arr.forEach((x) => {
+    const prev = blocks[blocks.length - 1];
+    if (prev && x.ss && prev[prev.length - 1].ss === x.ss) prev.push(x); else blocks.push([x]);
+    blockOf.push(blocks.length - 1);
+  });
+  const a = blockOf[from];
+  const b = blockOf[Math.max(0, Math.min(arr.length - 1, to))];
+  if (a === b) return [...arr];
+  return moveItem(blocks, a, b).flat();
+}

@@ -249,6 +249,11 @@ export const setRepeatDays = (db: Db, today: string, id: string, n: number) =>
 /** 칸에 날 놓기 / 비우기(null) */
 export const setSlot = (db: Db, today: string, id: string, index: number, dayId: string | null) =>
   mutateRoutine(db, today, id, (r) => ({ ...r, slots: setSlotAt(r, index, dayId) }));
+/** 칸 배치를 통째로 저장 (끌어서 옮긴 결과). 칸 수는 그대로 유지하고, 없는 날은 빈 칸으로 정리한다. */
+export const setRoutineSlots = (db: Db, today: string, id: string, slots: (string | null)[]) =>
+  mutateRoutine(db, today, id, (r) => ({
+    ...r, slots: fitSlots(r.mode, r.slots.map((_, i) => { const v = slots[i] ?? null; return v && r.days.some((d) => d.id === v) ? v : null; })),
+  }));
 /** 두 칸의 내용 맞바꾸기 */
 export const swapRoutineSlots = (db: Db, today: string, id: string, a: number, b: number) =>
   mutateRoutine(db, today, id, (r) => ({ ...r, slots: swapSlots(r, a, b) }));

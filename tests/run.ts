@@ -25,7 +25,7 @@ import { barbellTotal, bestE1rm, estimateMinutes, monthDays, monthWeeks, partTot
 import { blocksOf, currentOf, restAfter, type GEx } from '../src/domain/guided.ts';
 import { AutoRepCounter, countWord, JOINTS, jointAngle } from '../src/domain/liveCount.ts';
 import type { SessionRecord, SetRecord } from '../src/domain/types.ts';
-import { moveBlock } from '../src/domain/reorder.ts';
+import { moveBlock, moveBlockTo } from '../src/domain/reorder.ts';
 import { warmupPlan } from '../src/domain/warmup.ts';
 import { jointPoint, PathTrail } from '../src/domain/pathTrail.ts';
 
@@ -975,6 +975,16 @@ test('움직임 경로: 보이는 관절의 위치(양쪽이면 평균), 안 보
   assert.equal(t.verticalRangePct, 60);
   t.reset();
   assert.equal(t.points.length, 0);
+});
+
+test('끌어서 순서 바꾸기(슈퍼세트 유지): 묶음은 통째로 움직이고, 같은 묶음 안으로 끌면 그대로', () => {
+  const rows = [{ n: 'A', ss: null }, { n: 'B', ss: 'x' }, { n: 'C', ss: 'x' }, { n: 'D', ss: null }, { n: 'E', ss: null }];
+  assert.deepEqual(moveBlockTo(rows, 0, 2).map((r) => r.n), ['B', 'C', 'A', 'D', 'E']); // A를 묶음 자리로 → 묶음 뒤
+  assert.deepEqual(moveBlockTo(rows, 4, 0).map((r) => r.n), ['E', 'A', 'B', 'C', 'D']);
+  assert.deepEqual(moveBlockTo(rows, 2, 0).map((r) => r.n), ['B', 'C', 'A', 'D', 'E']); // 묶음을 맨 위로
+  assert.deepEqual(moveBlockTo(rows, 1, 2).map((r) => r.n), ['A', 'B', 'C', 'D', 'E']); // 같은 묶음 안
+  assert.deepEqual(moveBlockTo(rows, 3, 99).map((r) => r.n), ['A', 'B', 'C', 'E', 'D']); // 범위 밖은 가장자리
+  assert.deepEqual(moveBlockTo(rows, -1, 0).map((r) => r.n), ['A', 'B', 'C', 'D', 'E']);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

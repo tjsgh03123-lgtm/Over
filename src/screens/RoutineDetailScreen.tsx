@@ -1,10 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Alert, Modal, Pressable, ScrollView, Text, View } from 'react-native';
 import { useApp } from '../app/context.tsx';
 import {
   autoFillRoutine, deleteDay, deleteRoutine, getRoutines, renameRoutine, setActiveRoutine, setRepeatDays, setRoutineMode,
-  setRoutineStart, setSlot, swapRoutineSlots,
+  setRoutineSlots, setRoutineStart, setSlot,
 } from '../db/repo.ts';
 import { startForDayNumber } from '../domain/cycle.ts';
 import { weekdayOf } from '../domain/stats.ts';
@@ -12,7 +12,9 @@ import {
   convertMode, cycleDayNumber, MAX_REPEAT, slotName, slotOrder, unplacedDays, WD_LABEL,
   type Routine, type RoutineMode,
 } from '../domain/routine.ts';
+import { moveItem } from '../domain/reorder.ts';
 import { Btn, Card, Header, Row, T, TextField } from '../ui/components.tsx';
+import { ReorderList } from '../ui/ReorderList.tsx';
 import { C, S } from '../ui/theme.ts';
 
 type StepKey = 'type' | 'repeat' | 'days' | 'layout' | 'done';
@@ -41,6 +43,9 @@ export function RoutineDetailScreen({ routineId }: { routineId: string }) {
   const [name, setName] = useState('');
   const [step, setStepState] = useState<StepKey | null>(lastStep.get(routineId) ?? null);
   const [sheet, setSheet] = useState<number | null>(null); // 칸 고르기 시트가 열린 칸 번호
+  const [dragging, setDragging] = useState(false);
+  const scrollRef = useRef<ScrollView>(null);
+  const scrollY = useRef(0);
 
   useEffect(() => {
     getRoutines(db, today).then((st) => {
@@ -96,10 +101,13 @@ export function RoutineDetailScreen({ routineId }: { routineId: string }) {
     } else apply();
   };
 
-  const moveSlot = async (pos: number, dir: -1 | 1) => {
-    const a = order[pos]; const b = order[pos + dir];
-    if (b == null) return;
-    await swapRoutineSlots(db, today, r.id, a, b);
+  /** 손잡이로 끌어서 칸의 내용을 옮긴다. 칸 이름(Day 1, 월 …)은 제자리에 두고 날만 움직인다. */
+  const reorderSlots = async (from: number, to: number) => {
+    const shown = order.map((i) => r.slots[i]);
+    const moved = moveItem(shown, from, to);
+    const slots = [...r.slots];
+    order.forEach((slotIdx, pos) => { slots[slotIdx] = moved[pos]; });
+    await setRoutineSlots(db, today, r.id, slots);
     bump();
   };
 
@@ -195,7 +203,7 @@ export function RoutineDetailScreen({ routineId }: { routineId: string }) {
         <>
           <T muted style={{ fontSize: 12, marginBottom: S.sm }}>
             {r.mode === 'cycle'
-              ? `Day 1~${len}가 한 바퀴예요. 칸을 눌러 날을 고르고, ▲▼로 순서를 옮기세요. 같은 날을 여러 칸에 놓아도 돼요.`
+              ? `Day 1~${len}가 한 바퀴예요. 칸을 눌러 날을 고르고, 오른쪽 ≡ 손잡이를 길게 누른 채 끌어서 옮기세요. 같은 날을 여러 칸에 놓아도 돼요.`
               : '요일마다 날을 고르세요. 같은 날을 여러 요일에 놓아도 되고, 비워 두면 쉬는 날이에요.'}
           </T>
           {unplaced.length > 0 && (
@@ -204,30 +212,35 @@ export function RoutineDetailScreen({ routineId }: { routineId: string }) {
               <Btn label="빈 칸에 차례로 채우기" kind="ghost" small style={{ marginTop: S.sm }} onPress={async () => { await autoFillRoutine(db, today, r.id); bump(); }} />
             </Card>
           )}
-          {order.map((slotIdx, pos) => {
-            const id = r.slots[slotIdx];
-            const nm = dayName(id);
-            const isToday = active && (r.mode === 'cycle' ? slotIdx + 1 === todayNo : slotIdx === weekdayOf(today));
-            return (
-              <Card key={slotIdx} style={isToday ? { borderColor: C.accent } : undefined}>
-                <Row>
-                  <Pressable
-                    onPress={async () => { if (id) { await setSlot(db, today, r.id, slotIdx, null); bump(); } else setSheet(slotIdx); }}
-                    style={{ width: 28, height: 28, borderRadius: 6, borderWidth: 2, borderColor: C.accent, alignItems: 'center', justifyContent: 'center', backgroundColor: id ? C.accent : 'transparent', marginRight: S.md }}
-                  >
-                    {id ? <Text style={{ color: C.onAccent, fontWeight: '800' }}>✓</Text> : null}
-                  </Pressable>
-                  <Pressable style={{ flex: 1 }} onPress={() => setSheet(slotIdx)}>
-                    <T muted style={{ fontSize: 12 }}>{r.mode === 'cycle' ? `Day ${slotIdx + 1}` : `${WD_LABEL[slotIdx]}요일`}{isToday ? ' · 오늘' : ''}</T>
-                    <T bold style={{ opacity: nm ? 1 : 0.5 }}>{nm ?? '휴식'}</T>
-                  </Pressable>
-                  {id && <Btn label="편집" kind="ghost" small onPress={() => nav.openDay(r.id, id)} />}
-                  <Btn label="▲" kind="ghost" small disabled={pos === 0} onPress={() => moveSlot(pos, -1)} />
-                  <Btn label="▼" kind="ghost" small disabled={pos === order.length - 1} onPress={() => moveSlot(pos, 1)} />
-                </Row>
-              </Card>
-            );
-          })}
+          <ReorderList<{ slotIdx: number; id: string | null }>
+            items={order.map((slotIdx) => ({ slotIdx, id: r.slots[slotIdx] }))}
+            keyOf={(x) => String(x.slotIdx)}
+            scroll={{ ref: scrollRef, offset: scrollY }}
+            onDragChange={setDragging}
+            onReorder={reorderSlots}
+            renderItem={({ slotIdx, id }, _pos, handle) => {
+              const nm = dayName(id);
+              const isToday = active && (r.mode === 'cycle' ? slotIdx + 1 === todayNo : slotIdx === weekdayOf(today));
+              return (
+                <Card style={isToday ? { borderColor: C.accent } : undefined}>
+                  <Row>
+                    <Pressable
+                      onPress={async () => { if (id) { await setSlot(db, today, r.id, slotIdx, null); bump(); } else setSheet(slotIdx); }}
+                      style={{ width: 28, height: 28, borderRadius: 6, borderWidth: 2, borderColor: C.accent, alignItems: 'center', justifyContent: 'center', backgroundColor: id ? C.accent : 'transparent', marginRight: S.md }}
+                    >
+                      {id ? <Text style={{ color: C.onAccent, fontWeight: '800' }}>✓</Text> : null}
+                    </Pressable>
+                    <Pressable style={{ flex: 1 }} onPress={() => setSheet(slotIdx)}>
+                      <T muted style={{ fontSize: 12 }}>{r.mode === 'cycle' ? `Day ${slotIdx + 1}` : `${WD_LABEL[slotIdx]}요일`}{isToday ? ' · 오늘' : ''}</T>
+                      <T bold style={{ opacity: nm ? 1 : 0.5 }}>{nm ?? '휴식'}</T>
+                    </Pressable>
+                    {id && <Btn label="편집" kind="ghost" small onPress={() => nav.openDay(r.id, id)} />}
+                    {handle}
+                  </Row>
+                </Card>
+              );
+            }}
+          />
         </>
       );
     }
@@ -280,7 +293,11 @@ export function RoutineDetailScreen({ routineId }: { routineId: string }) {
         <T bold style={{ fontSize: 20 }}>{STEP_TITLE[cur]}</T>
         <T muted style={{ fontSize: 12, marginBottom: S.sm }}>{STEP_HINT[cur]}</T>
       </View>
-      <ScrollView contentContainerStyle={{ padding: S.lg, paddingBottom: 110 }} keyboardShouldPersistTaps="handled">
+      <ScrollView
+        ref={scrollRef} scrollEnabled={!dragging} scrollEventThrottle={16}
+        onScroll={(e) => { scrollY.current = e.nativeEvent.contentOffset.y; }}
+        contentContainerStyle={{ padding: S.lg, paddingBottom: 110 }} keyboardShouldPersistTaps="handled"
+      >
         {body()}
       </ScrollView>
       <View style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: S.lg, backgroundColor: C.bg, borderTopWidth: 1, borderTopColor: C.line }}>

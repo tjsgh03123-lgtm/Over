@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Modal, Pressable, ScrollView, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useApp } from '../app/context.tsx';
@@ -8,9 +8,10 @@ import {
 } from '../db/repo.ts';
 import { adjustForCondition, COND_LABEL, CONDS, RUN_LABEL, sanitizeRunMode, type Cond, type RunMode } from '../domain/condition.ts';
 import { partOf } from '../domain/exerciseCatalog.ts';
-import { moveBlock } from '../domain/reorder.ts';
+import { moveBlockTo } from '../domain/reorder.ts';
 import { estimateMinutes } from '../domain/workoutStats.ts';
 import { Btn, Chip, H, Row, T } from './components.tsx';
+import { ReorderList } from './ReorderList.tsx';
 import { C, S } from './theme.ts';
 
 export interface StartOpts { templateId: string; order: string[]; cond: Cond }
@@ -31,12 +32,14 @@ export function RoutinePreview({ templateId, title, onClose, onStart }: { templa
   const [step, setStep] = useState(2.5);
   const [cond, setCond] = useState<Cond>(100);
   const [runMode, setRunModeState] = useState<RunMode>('manual');
-  const [reorder, setReorder] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const scrollRef = useRef<ScrollView>(null);
+  const scrollY = useRef(0);
 
   // 열 때마다 처음 상태로: 오늘의 루틴, 컨디션 100%, 순서 그대로
   useEffect(() => {
     if (!templateId) return;
-    setTplId(templateId); setCond(100); setReorder(false); setPickOpen(false);
+    setTplId(templateId); setCond(100); setPickOpen(false);
     (async () => {
       setTpls(await listTemplates(db));
       setRestDef(await getRestDefault(db));
@@ -61,8 +64,8 @@ export function RoutinePreview({ templateId, title, onClose, onStart }: { templa
   const heading = tplId === templateId ? title : curTpl?.name ?? title;
 
   const setRun = (m: RunMode) => { setRunModeState(m); setSetting(db, 'run_mode', m); };
-  // 슈퍼세트로 묶인 종목은 함께 움직여서 묶음이 깨지지 않는다
-  const move = (i: number, d: -1 | 1) => setRows((rs) => moveBlock(rs, i, d));
+  // 손잡이로 끌어서 순서 변경: 슈퍼세트로 묶인 종목은 함께 움직여서 묶음이 깨지지 않는다
+  const reorderRows = (from: number, to: number) => setRows((rs) => moveBlockTo(rs, from, to));
 
   return (
     <Modal visible transparent animationType="slide" onRequestClose={onClose}>
@@ -75,14 +78,17 @@ export function RoutinePreview({ templateId, title, onClose, onStart }: { templa
         {pickOpen && (
           <ScrollView style={{ maxHeight: 180, marginTop: S.sm, borderWidth: 1, borderColor: C.line, borderRadius: 10 }} nestedScrollEnabled>
             {tpls.map((t) => (
-              <Pressable key={t.id} onPress={() => { setTplId(t.id); setPickOpen(false); setReorder(false); }} style={{ paddingVertical: 10, paddingHorizontal: S.md, borderBottomWidth: 1, borderBottomColor: C.line, flexDirection: 'row', alignItems: 'center' }}>
+              <Pressable key={t.id} onPress={() => { setTplId(t.id); setPickOpen(false); }} style={{ paddingVertical: 10, paddingHorizontal: S.md, borderBottomWidth: 1, borderBottomColor: C.line, flexDirection: 'row', alignItems: 'center' }}>
                 <Text style={{ color: C.text, flex: 1, fontWeight: t.id === tplId ? '800' : '400' }}>{t.name}</Text>
                 {t.id === tplId ? <Text style={{ color: C.text }}>✓</Text> : null}
               </Pressable>
             ))}
           </ScrollView>
         )}
-        <ScrollView style={{ flexShrink: 1 }} showsVerticalScrollIndicator={false} nestedScrollEnabled>
+        <ScrollView
+          ref={scrollRef} style={{ flexShrink: 1 }} showsVerticalScrollIndicator={false} nestedScrollEnabled
+          scrollEnabled={!dragging} scrollEventThrottle={16} onScroll={(e) => { scrollY.current = e.nativeEvent.contentOffset.y; }}
+        >
         <T muted style={{ textAlign: 'center', marginTop: S.sm, marginBottom: S.md }}>{rows.length}종목 · 약 {h > 0 ? `${h}시간 ` : ''}{minutes % 60}분</T>
 
         <T muted style={{ fontSize: 12, marginBottom: 4 }}>오늘 컨디션</T>
@@ -103,27 +109,29 @@ export function RoutinePreview({ templateId, title, onClose, onStart }: { templa
           <View style={{ flex: 1, flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
             {[...parts.entries()].sort((a, b) => b[1] - a[1]).map(([p, n]) => <Chip key={p} label={`${p} ${n}세트`} />)}
           </View>
-          <Btn label={reorder ? '순서 변경 끝' : '순서 변경'} kind="ghost" small onPress={() => setReorder((v) => !v)} />
         </Row>
 
+        <T muted style={{ fontSize: 11, marginBottom: 4 }}>오른쪽 ≡ 손잡이를 길게 누른 채 위아래로 끌면 순서가 바뀌어요 (이번 운동에만 적용)</T>
         <View style={{ marginBottom: S.md }}>
-          {shown.map(({ r, adj }, i) => (
-            <Row key={r.id} style={{ paddingVertical: 10, borderTopWidth: 1, borderTopColor: C.line }}>
-              <View style={{ flex: 1 }}>
-                <T bold>{r.name}{r.ss && rows[i - 1]?.ss === r.ss ? '  ⛓ 슈퍼세트' : ''}</T>
-                <T muted style={{ fontSize: 12 }}>
-                  {adj.sets}세트{r.target_reps ? ` × ${r.target_reps}회` : ''}{adj.weight ? ` · ${adj.weight}kg` : ''} · {partOf(r.name, r.category)}
-                  {cond !== 100 && (adj.sets !== r.target_sets || adj.weight !== r.target_weight) ? `  (원래 ${r.target_sets}세트${r.target_weight ? ` ${r.target_weight}kg` : ''})` : ''}
-                </T>
-              </View>
-              {reorder && (
-                <>
-                  <Btn label="▲" kind="ghost" small disabled={i === 0} onPress={() => move(i, -1)} />
-                  <Btn label="▼" kind="ghost" small disabled={i === rows.length - 1} onPress={() => move(i, 1)} />
-                </>
-              )}
-            </Row>
-          ))}
+          <ReorderList<{ r: TemplateExerciseRow; adj: { sets: number; weight: number | null } }>
+            items={shown}
+            keyOf={(x) => x.r.id}
+            scroll={{ ref: scrollRef, offset: scrollY }}
+            onDragChange={setDragging}
+            onReorder={reorderRows}
+            renderItem={({ r, adj }, i, handle) => (
+              <Row style={{ paddingVertical: 10, borderTopWidth: 1, borderTopColor: C.line }}>
+                <View style={{ flex: 1 }}>
+                  <T bold>{r.name}{r.ss && rows[i - 1]?.ss === r.ss ? '  ⛓ 슈퍼세트' : ''}</T>
+                  <T muted style={{ fontSize: 12 }}>
+                    {adj.sets}세트{r.target_reps ? ` × ${r.target_reps}회` : ''}{adj.weight ? ` · ${adj.weight}kg` : ''} · {partOf(r.name, r.category)}
+                    {cond !== 100 && (adj.sets !== r.target_sets || adj.weight !== r.target_weight) ? `  (원래 ${r.target_sets}세트${r.target_weight ? ` ${r.target_weight}kg` : ''})` : ''}
+                  </T>
+                </View>
+                {handle}
+              </Row>
+            )}
+          />
         </View>
         </ScrollView>
         <Row>

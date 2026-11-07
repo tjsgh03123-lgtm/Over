@@ -1022,6 +1022,16 @@ await test('연습 세트 추가: 정해진 무게·횟수의 준비 세트가 �
   assert.deepEqual(warm.map((x) => [x.weight, x.reps, x.done]), [[40, 8, 0], [60, 5, 0]]);
   assert.equal(sets.filter((x) => x.set_type === 'working').length, 3);
 });
+await test('칸 배치 통째로 저장(끌어서 옮긴 결과): 칸 수는 그대로, 없는 날은 빈 칸', async () => {
+  const db = await emptyDb();
+  const id = await repo.createRoutine(db, '2026-11-01', { name: '3일', mode: 'cycle', repeat: 3 });
+  const a = await weightDay(db, id, 'A', '벤치프레스');
+  const b = await weightDay(db, id, 'B', '렛풀다운');
+  await repo.setRoutineSlots(db, '2026-11-01', id, [b, null, a]);
+  assert.deepEqual((await repo.getRoutines(db, '2026-11-01')).routines[0].slots, [b, null, a]);
+  await repo.setRoutineSlots(db, '2026-11-01', id, ['없는날', a, b, a, b]); // 칸 수(3)를 넘는 값은 버리고 없는 날은 비움
+  assert.deepEqual((await repo.getRoutines(db, '2026-11-01')).routines[0].slots, [null, a, b]);
+});
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);
