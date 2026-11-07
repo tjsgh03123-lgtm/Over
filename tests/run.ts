@@ -14,6 +14,8 @@ import { fmtDuration, fmtElapsed, restFor, suggestFor } from '../src/domain/form
 import { clampDrag, moveItem, targetIndex } from '../src/domain/reorder.ts';
 import { DEFAULT_GRAPH_COLORS, GRAPH_KEYS, sanitizeGraphColors, sanitizeMode } from '../src/domain/themeModel.ts';
 import { SetFlow } from '../src/domain/setFlow.ts';
+import { adjustForCondition, sanitizeRunMode } from '../src/domain/condition.ts';
+import { buildPickGroups, equipOf } from '../src/domain/exerciseList.ts';
 import { CATALOG, matchProfile, partOf } from '../src/domain/exerciseCatalog.ts';
 import { barbellTotal, bestE1rm, estimateMinutes, monthDays, monthWeeks, partTotals, recommendNext, streakWeeks, volumeOf } from '../src/domain/workoutStats.ts';
 import { blocksOf, currentOf, restAfter, type GEx } from '../src/domain/guided.ts';
@@ -761,6 +763,86 @@ test('세트 자동 진행: 중간에 끝내면 센 만큼만 돌려준다', () 
   assert.deepEqual(f.finish(6), [10, 6]);
   const g = new SetFlow({ targetReps: 5, totalSets: 2, restSec: 10 });
   assert.deepEqual(g.finish(0), []);
+});
+
+test('세트 자동 진행: 준비 시간이 있으면 첫 세트 전과 쉬고 난 뒤에 준비(3·2·1) 후 시작', () => {
+  const f = new SetFlow({ targetReps: 5, totalSets: 2, restSec: 10, prepSec: 10 });
+  assert.deepEqual(f.beginPrep(0), { kind: 'prep', setNo: 1 });
+  assert.equal(f.phase, 'preparing');
+  assert.equal(f.onCount(5, 100), null); // 준비 중에는 세지 않음
+  assert.equal(f.secLeft(0), 10);
+  assert.equal(f.tick(5000), null);
+  assert.deepEqual(f.tick(7500), { kind: 'prepTick', secLeft: 3 });
+  assert.equal(f.tick(7600), null);
+  assert.deepEqual(f.tick(10000), { kind: 'start', setNo: 1 });
+  assert.equal(f.phase, 'counting');
+  assert.deepEqual(f.onCount(5, 20000), { kind: 'setDone', setNo: 1, count: 5, last: false });
+  assert.equal(f.tick(27500), null); // 준비가 있으면 쉬는 시간 끝의 카운트는 따로 알리지 않음
+  assert.deepEqual(f.tick(30000), { kind: 'prep', setNo: 2 });
+  assert.equal(f.phase, 'preparing');
+  assert.deepEqual(f.skipPrep(), { kind: 'start', setNo: 2 });
+  assert.deepEqual(f.onCount(6, 40000), { kind: 'setDone', setNo: 2, count: 6, last: true });
+  assert.deepEqual(f.counts, [5, 6]);
+});
+test('세트 자동 진행: 준비 시간이 없으면 beginPrep은 아무것도 안 하고 쉬고 나면 바로 시작', () => {
+  const f = new SetFlow({ targetReps: 5, totalSets: 2, restSec: 10 });
+  assert.equal(f.beginPrep(0), null);
+  assert.equal(f.phase, 'counting');
+  f.onCount(5, 0);
+  assert.deepEqual(f.tick(7500), { kind: 'restTick', secLeft: 3 });
+  assert.deepEqual(f.skipRest(5000), { kind: 'start', setNo: 2 });
+  const g = new SetFlow({ targetReps: 5, totalSets: 2, restSec: 10, prepSec: 5 });
+  g.beginPrep(0);
+  assert.deepEqual(g.finish(3), [3]); // 준비 중에 끝내면 센 게 없으면 빈 목록
+  assert.deepEqual(new SetFlow({ targetReps: 5, totalSets: 2, restSec: 10, prepSec: 5 }).finish(0), []);
+});
+
+test('컨디션: 100%는 그대로, 75%는 무게 −10%·4세트 이상이면 1세트 감소, 50%는 무게 −20%·세트 2/3(최소 2)', () => {
+  assert.deepEqual(adjustForCondition(4, 100, 100, 2.5), { sets: 4, weight: 100 });
+  assert.deepEqual(adjustForCondition(4, 100, 75, 2.5), { sets: 3, weight: 90 });
+  assert.deepEqual(adjustForCondition(3, 60, 75, 2.5), { sets: 3, weight: 55 }); // 54 → 55(2.5 단위)
+  assert.deepEqual(adjustForCondition(3, 60, 50, 2.5), { sets: 2, weight: 47.5 }); // 48 → 47.5
+  assert.deepEqual(adjustForCondition(5, 100, 50, 2.5), { sets: 3, weight: 80 });
+  assert.deepEqual(adjustForCondition(1, 40, 50, 2.5), { sets: 1, weight: 32.5 }); // 32 → 32.5
+  assert.deepEqual(adjustForCondition(3, null, 50, 2.5), { sets: 2, weight: null });
+  assert.equal(adjustForCondition(3, 2.5, 50, 2.5).weight, 2.5); // 0kg가 되지 않음
+  assert.equal(sanitizeRunMode('tempo'), 'tempo');
+  assert.equal(sanitizeRunMode('camera'), 'camera');
+  assert.equal(sanitizeRunMode('x'), 'manual');
+  assert.equal(sanitizeRunMode(null), 'manual');
+});
+
+test('종목 목록: 부위별로 묶고 직접 추가한 종목은 각 부위 맨 위, 기본 종목과 중복 없음', () => {
+  const rows = [
+    { id: 'a', name: '내 가슴 운동', category: '가슴', weight_mode: 'weighted' },
+    { id: 'b', name: '바벨 벤치프레스', category: '가슴', weight_mode: 'weighted' }, // 기본 종목으로 이미 만든 것
+    { id: 'c', name: '이상한 운동', category: null, weight_mode: 'weighted' },
+    { id: 'd', name: '벤치프레스', category: null, weight_mode: 'weighted' }, // 이름이 기본 종목 별칭과 맞음 → 가슴
+    { id: 'e', name: '내 푸시업', category: null, weight_mode: 'bodyweight' },
+  ];
+  const g = buildPickGroups(rows, {});
+  const chest = g.find((x) => x.part === '가슴')!;
+  assert.deepEqual(chest.items.slice(0, 3).map((i) => i.name), ['내 가슴 운동', '내 푸시업', '벤치프레스']); // 직접 추가가 위(가나다순), 이름이 기본 종목과 맞으면 그 부위
+  assert.equal(chest.items.filter((i) => i.name === '바벨 벤치프레스').length, 1);
+  assert.equal(chest.items.find((i) => i.name === '바벨 벤치프레스')!.row!.id, 'b');
+  assert.equal(chest.items.find((i) => i.name === '덤벨 벤치프레스')!.row, null);
+  assert.equal(g[g.length - 1].part, '기타');
+  assert.deepEqual(g[g.length - 1].items.map((i) => i.name), ['이상한 운동']);
+  assert.deepEqual(g.map((x) => x.part).slice(0, 2), ['가슴', '등']);
+  // 장비 필터: 직접 만든 체중 종목은 맨몸으로 잡힘
+  const bw = buildPickGroups(rows, { equip: '맨몸' }).flatMap((x) => x.items.map((i) => i.name));
+  assert.ok(bw.includes('내 푸시업') && bw.includes('푸시업') && !bw.includes('내 가슴 운동'));
+  // 검색: 별칭도 맞고, 이미 만든 종목만 보기
+  assert.ok(buildPickGroups(rows, { q: '사레레' }).flatMap((x) => x.items).some((i) => i.name === '덤벨 사이드 레터럴 레이즈'));
+  const made = buildPickGroups(rows, { includeCatalog: false }).flatMap((x) => x.items.map((i) => i.name));
+  assert.deepEqual(made.sort(), ['내 가슴 운동', '내 푸시업', '바벨 벤치프레스', '벤치프레스', '이상한 운동']);
+  assert.equal(equipOf('이상한 운동'), null);
+  assert.equal(equipOf('덤벨 컬'), '덤벨');
+});
+test('부위: 내가 지정한 부위가 기본 종목 부위보다 우선', () => {
+  assert.equal(partOf('벤치프레스', '어깨'), '어깨');
+  assert.equal(partOf('벤치프레스'), '가슴');
+  assert.equal(partOf('벤치프레스', '이상한값'), '가슴');
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

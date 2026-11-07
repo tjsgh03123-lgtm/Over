@@ -1,58 +1,129 @@
-import React, { useEffect, useState } from 'react';
-import { Modal, Pressable, ScrollView, View } from 'react-native';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Modal, Pressable, ScrollView, Text, View } from 'react-native';
 import { useApp } from '../app/context.tsx';
-import { getExerciseRest, getRestDefault, getTemplateExercises, type TemplateExerciseRow } from '../db/repo.ts';
+import {
+  getExerciseRest, getRestDefault, getSetting, getTemplateExercises, getWeightStep, listTemplates, setSetting,
+  type TemplateExerciseRow, type TemplateRow,
+} from '../db/repo.ts';
+import { adjustForCondition, COND_LABEL, CONDS, RUN_LABEL, sanitizeRunMode, type Cond, type RunMode } from '../domain/condition.ts';
 import { partOf } from '../domain/exerciseCatalog.ts';
+import { moveItem } from '../domain/reorder.ts';
 import { estimateMinutes } from '../domain/workoutStats.ts';
 import { Btn, Chip, H, Row, T } from './components.tsx';
 import { C, S } from './theme.ts';
 
-/** 루틴 시작 전 미리보기: 종목 수, 예상 시간, 부위별 세트 수, 종목 목록 */
-export function RoutinePreview({ templateId, title, onClose, onStart }: { templateId: string | null; title: string; onClose: () => void; onStart: () => void }) {
+export interface StartOpts { templateId: string; order: string[]; cond: Cond }
+
+/**
+ * 루틴 시작 전 미리보기: 루틴 바꾸기, 컨디션, 진행 방식, 순서 변경, 종목 수·예상 시간·부위별 세트 수.
+ * 컨디션과 순서는 이번 운동에만 적용되고 루틴은 그대로다.
+ */
+export function RoutinePreview({ templateId, title, onClose, onStart }: { templateId: string | null; title: string; onClose: () => void; onStart: (o: StartOpts) => void }) {
   const { db } = useApp();
+  const [tplId, setTplId] = useState<string | null>(templateId);
+  const [tpls, setTpls] = useState<TemplateRow[]>([]);
+  const [pickOpen, setPickOpen] = useState(false);
   const [rows, setRows] = useState<TemplateExerciseRow[]>([]);
   const [restDef, setRestDef] = useState(90);
   const [exRest, setExRest] = useState(180);
+  const [step, setStep] = useState(2.5);
+  const [cond, setCond] = useState<Cond>(100);
+  const [runMode, setRunModeState] = useState<RunMode>('manual');
+  const [reorder, setReorder] = useState(false);
 
+  // 열 때마다 처음 상태로: 오늘의 루틴, 컨디션 100%, 순서 그대로
   useEffect(() => {
     if (!templateId) return;
+    setTplId(templateId); setCond(100); setReorder(false); setPickOpen(false);
     (async () => {
-      setRows(await getTemplateExercises(db, templateId));
+      setTpls(await listTemplates(db));
       setRestDef(await getRestDefault(db));
       setExRest(await getExerciseRest(db));
+      setStep(await getWeightStep(db));
+      setRunModeState(sanitizeRunMode(await getSetting(db, 'run_mode')));
     })();
   }, [db, templateId]);
+  useEffect(() => {
+    if (!tplId) return;
+    getTemplateExercises(db, tplId).then(setRows);
+  }, [db, tplId]);
 
-  if (!templateId) return null;
+  const shown = useMemo(() => rows.map((r) => ({ r, adj: adjustForCondition(r.target_sets, r.target_weight, cond, step) })), [rows, cond, step]);
+
+  if (!templateId || !tplId) return null;
   const parts = new Map<string, number>();
-  for (const r of rows) parts.set(partOf(r.name), (parts.get(partOf(r.name)) ?? 0) + r.target_sets);
-  const minutes = estimateMinutes(rows.map((r) => ({ sets: r.target_sets, restSec: (r.rest_sec ?? restDef) + exRest / Math.max(1, r.target_sets) })));
+  for (const { r, adj } of shown) parts.set(partOf(r.name), (parts.get(partOf(r.name)) ?? 0) + adj.sets);
+  const minutes = estimateMinutes(shown.map(({ r, adj }) => ({ sets: adj.sets, restSec: (r.rest_sec ?? restDef) + exRest / Math.max(1, adj.sets) })));
   const h = Math.floor(minutes / 60);
+  const curTpl = tpls.find((t) => t.id === tplId);
+  const heading = tplId === templateId ? title : curTpl?.name ?? title;
+
+  const setRun = (m: RunMode) => { setRunModeState(m); setSetting(db, 'run_mode', m); };
+  const move = (i: number, d: number) => setRows((rs) => moveItem(rs, i, i + d));
 
   return (
     <Modal visible transparent animationType="slide" onRequestClose={onClose}>
       <Pressable style={{ flex: 1, backgroundColor: C.overlay }} onPress={onClose} />
-      <View style={{ backgroundColor: C.bg, borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: S.lg, maxHeight: '85%' }}>
-        <H style={{ fontSize: 20, textAlign: 'center' }}>{title}</H>
-        <T muted style={{ textAlign: 'center', marginBottom: S.md }}>{rows.length}종목 · 약 {h > 0 ? `${h}시간 ` : ''}{minutes % 60}분</T>
-        <Row style={{ flexWrap: 'wrap', justifyContent: 'center', marginBottom: S.md }}>
-          {[...parts.entries()].sort((a, b) => b[1] - a[1]).map(([p, n]) => <Chip key={p} label={`${p} ${n}세트`} />)}
+      <View style={{ backgroundColor: C.bg, borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: S.lg, maxHeight: '90%' }}>
+        <Pressable onPress={() => setPickOpen((v) => !v)} style={{ alignItems: 'center' }}>
+          <H style={{ fontSize: 20, textAlign: 'center' }}>{heading} {pickOpen ? '▴' : '▾'}</H>
+          <T muted style={{ fontSize: 11 }}>다른 루틴으로 바꾸려면 눌러요</T>
+        </Pressable>
+        {pickOpen && (
+          <ScrollView style={{ maxHeight: 180, marginTop: S.sm, borderWidth: 1, borderColor: C.line, borderRadius: 10 }} nestedScrollEnabled>
+            {tpls.map((t) => (
+              <Pressable key={t.id} onPress={() => { setTplId(t.id); setPickOpen(false); setReorder(false); }} style={{ paddingVertical: 10, paddingHorizontal: S.md, borderBottomWidth: 1, borderBottomColor: C.line, flexDirection: 'row', alignItems: 'center' }}>
+                <Text style={{ color: C.text, flex: 1, fontWeight: t.id === tplId ? '800' : '400' }}>{t.name}</Text>
+                {t.id === tplId ? <Text style={{ color: C.text }}>✓</Text> : null}
+              </Pressable>
+            ))}
+          </ScrollView>
+        )}
+        <T muted style={{ textAlign: 'center', marginTop: S.sm, marginBottom: S.md }}>{rows.length}종목 · 약 {h > 0 ? `${h}시간 ` : ''}{minutes % 60}분</T>
+
+        <T muted style={{ fontSize: 12, marginBottom: 4 }}>오늘 컨디션</T>
+        <Row style={{ marginBottom: 2 }}>
+          {CONDS.map((c) => <Chip key={c} label={`${c}%`} active={cond === c} onPress={() => setCond(c)} />)}
         </Row>
+        <T muted style={{ fontSize: 12, marginBottom: S.sm }}>{COND_LABEL[cond]}{cond !== 100 ? '\n이번 운동에만 적용되고 루틴은 그대로예요.' : ''}</T>
+
+        <T muted style={{ fontSize: 12, marginBottom: 4 }}>진행 방식</T>
+        <Row style={{ marginBottom: 2 }}>
+          {(['manual', 'camera', 'tempo'] as RunMode[]).map((m) => <Chip key={m} label={RUN_LABEL[m]} active={runMode === m} onPress={() => setRun(m)} />)}
+        </Row>
+        <T muted style={{ fontSize: 12, marginBottom: S.sm }}>
+          {runMode === 'manual' ? '세트마다 직접 ✓ 체크해 기록해요.' : runMode === 'camera' ? '종목마다 카메라가 횟수를 세요. 카메라를 못 쓰면 직접 기록으로 바꿀 수 있어요.' : '정해 둔 박자로 앱이 횟수를 소리 내어 세요. 카메라 없이 따라 하면 돼요.'}
+        </T>
+
+        <Row style={{ marginBottom: S.sm }}>
+          <View style={{ flex: 1, flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+            {[...parts.entries()].sort((a, b) => b[1] - a[1]).map(([p, n]) => <Chip key={p} label={`${p} ${n}세트`} />)}
+          </View>
+          <Btn label={reorder ? '순서 변경 끝' : '순서 변경'} kind="ghost" small onPress={() => setReorder((v) => !v)} />
+        </Row>
+
         <ScrollView style={{ marginBottom: S.md }}>
-          {rows.map((r, i) => (
+          {shown.map(({ r, adj }, i) => (
             <Row key={r.id} style={{ paddingVertical: 10, borderTopWidth: 1, borderTopColor: C.line }}>
               <View style={{ flex: 1 }}>
                 <T bold>{r.name}{r.ss && rows[i - 1]?.ss === r.ss ? '  ⛓ 슈퍼세트' : ''}</T>
                 <T muted style={{ fontSize: 12 }}>
-                  {r.target_sets}세트{r.target_reps ? ` × ${r.target_reps}회` : ''}{r.target_weight ? ` · ${r.target_weight}kg` : ''} · {partOf(r.name)}
+                  {adj.sets}세트{r.target_reps ? ` × ${r.target_reps}회` : ''}{adj.weight ? ` · ${adj.weight}kg` : ''} · {partOf(r.name)}
+                  {cond !== 100 && (adj.sets !== r.target_sets || adj.weight !== r.target_weight) ? `  (원래 ${r.target_sets}세트${r.target_weight ? ` ${r.target_weight}kg` : ''})` : ''}
                 </T>
               </View>
+              {reorder && (
+                <>
+                  <Btn label="▲" kind="ghost" small disabled={i === 0} onPress={() => move(i, -1)} />
+                  <Btn label="▼" kind="ghost" small disabled={i === rows.length - 1} onPress={() => move(i, 1)} />
+                </>
+              )}
             </Row>
           ))}
         </ScrollView>
         <Row>
           <Btn label="닫기" kind="ghost" style={{ flex: 1 }} onPress={onClose} />
-          <Btn label="운동 시작하기" style={{ flex: 2 }} onPress={onStart} />
+          <Btn label="운동 시작하기" style={{ flex: 2 }} onPress={() => onStart({ templateId: tplId, order: rows.map((r) => r.id), cond })} />
         </Row>
       </View>
     </Modal>

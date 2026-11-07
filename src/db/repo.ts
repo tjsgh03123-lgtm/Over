@@ -7,6 +7,7 @@ import type { ParsedDay } from '../domain/parser.ts';
 import { addDays, weekStart } from '../domain/stats.ts';
 import { shiftStartForMissed } from '../domain/cycle.ts';
 import { moveItem } from '../domain/reorder.ts';
+import { adjustForCondition, type Cond } from '../domain/condition.ts';
 import {
   dayForDate, EMPTY_ROUTINES, inferMode, MAX_DAYS, sanitizeRoutines,
   type DayKind, type Routine, type RoutineDay, type RoutineMode, type RoutinesState,
@@ -68,6 +69,17 @@ export async function renameExercise(db: Db, id: string, newName: string): Promi
       await db.run('INSERT OR IGNORE INTO exercise_aliases (id, exercise_id, alias) VALUES (?,?,?)', [uid('al'), id, old.name]);
     }
   });
+}
+
+/** 종목의 부위를 바꾼다 (null이면 이름으로 자동 분류). 분석의 부위별 통계에도 반영된다. */
+export async function setExerciseCategory(db: Db, id: string, category: string | null): Promise<void> {
+  await db.run('UPDATE exercises SET category = ? WHERE id = ?', [category, id]);
+}
+
+/** 종목 id → 지정된 부위 (부위별 통계·요약에서 partOf에 넘긴다) */
+export async function loadCategoryMap(db: Db): Promise<Map<string, string | null>> {
+  const rows = await db.all<{ id: string; category: string | null }>('SELECT id, category FROM exercises');
+  return new Map(rows.map((r) => [r.id, r.category]));
 }
 
 export async function setExerciseMode(db: Db, id: string, mode: WeightMode): Promise<void> {
@@ -556,10 +568,22 @@ export async function getActiveSession(db: Db): Promise<SessionMeta | null> {
   return db.first<SessionMeta>("SELECT * FROM workout_sessions WHERE status = 'active' ORDER BY started_at DESC LIMIT 1");
 }
 
-export async function startSessionFromTemplate(db: Db, templateId: string, date: string): Promise<string> {
+/**
+ * 루틴으로 운동 시작. opts.order는 이번 운동의 종목 순서(루틴 종목 행 id 순서), opts.cond는 컨디션(%)이며
+ * 둘 다 이번 운동에만 적용되고 루틴 자체는 바뀌지 않는다.
+ */
+export async function startSessionFromTemplate(
+  db: Db, templateId: string, date: string, opts: { order?: string[]; cond?: Cond } = {},
+): Promise<string> {
   const tpl = await db.first<TemplateRow>('SELECT * FROM workout_templates WHERE id = ?', [templateId]);
   if (!tpl) throw new Error('루틴을 찾을 수 없습니다');
-  const exs = await getTemplateExercises(db, templateId);
+  let exs = await getTemplateExercises(db, templateId);
+  if (opts.order?.length) {
+    const rank = new Map(opts.order.map((id, i) => [id, i]));
+    exs = [...exs].sort((a, b) => (rank.get(a.id) ?? 1e9 + a.position) - (rank.get(b.id) ?? 1e9 + b.position));
+  }
+  const cond: Cond = opts.cond ?? 100;
+  const step = await getWeightStep(db);
   const sid = uid('ses');
   await db.transaction(async () => {
     await db.run(
@@ -573,7 +597,8 @@ export async function startSessionFromTemplate(db: Db, templateId: string, date:
         'INSERT INTO workout_session_exercises (id, session_id, exercise_id, exercise_name, weight_mode, position, intensity, ss) VALUES (?,?,?,?,?,?,?,?)',
         [seId, sid, e.exercise_id, e.name, e.weight_mode, pos++, e.intensity, e.ss],
       );
-      for (let i = 1; i <= e.target_sets; i++) await newSet(db, seId, i, 'working', e.target_weight, e.target_reps);
+      const adj = adjustForCondition(e.target_sets, e.target_weight, cond, step);
+      for (let i = 1; i <= adj.sets; i++) await newSet(db, seId, i, 'working', adj.weight, e.target_reps);
     }
   });
   return sid;

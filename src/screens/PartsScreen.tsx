@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { ScrollView, View } from 'react-native';
 import { useApp } from '../app/context.tsx';
-import { loadFlatSets } from '../db/repo.ts';
+import { loadCategoryMap, loadFlatSets } from '../db/repo.ts';
 import { partOf } from '../domain/exerciseCatalog.ts';
 import { addDays, weekStart } from '../domain/stats.ts';
 import { partTotals } from '../domain/workoutStats.ts';
@@ -18,7 +18,8 @@ export function PartsScreen() {
   useEffect(() => {
     (async () => {
       const flat = await loadFlatSets(db);
-      setRows(partTotals(flat, from, to, (s) => partOf(s.exerciseName)));
+      const cats = await loadCategoryMap(db);
+      setRows(partTotals(flat, from, to, (s) => partOf(s.exerciseName, cats.get(s.exerciseId))));
     })();
   }, [db, from, to, version]);
 

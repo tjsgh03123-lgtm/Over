@@ -93,11 +93,10 @@ export const EXTRA_CATALOG: CatalogItem[] = [
 ];
 export const ALL_ITEMS: CatalogItem[] = [...CATALOG, ...EXTRA_CATALOG];
 
-/** 부위 이름: 기본 종목이면 그 부위, 아니면 종목에 지정된 분류, 없으면 '기타' */
+/** 부위 이름: 종목에 지정된 부위가 있으면 그것(내가 바꾼 값 포함), 없으면 이름이 맞는 기본 종목의 부위, 그것도 없으면 '기타' */
 export function partOf(name: string, category?: string | null): string {
-  const hit = matchProfile(name);
-  if (hit) return hit.part;
-  return category && (PARTS as string[]).includes(category) ? category : '기타';
+  if (category && (PARTS as string[]).includes(category)) return category;
+  return matchProfile(name)?.part ?? '기타';
 }
 
 const n = (s: string) => s.replace(/\s+/g, '').toLowerCase();

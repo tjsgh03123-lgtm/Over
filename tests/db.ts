@@ -841,5 +841,38 @@ await test('지난 기록 불러오기·이 종목만 휴식·완료한 날짜 �
   void se1;
 });
 
+await test('루틴 시작: 순서 변경·컨디션은 이번 운동에만 적용되고 루틴은 그대로, 부위 변경은 저장됨', async () => {
+  const db = await emptyDb();
+  const a = await repo.getOrCreateExercise(db, '덤벨 컬');
+  const b = await repo.getOrCreateExercise(db, '바벨 벤치프레스');
+  const tid = await repo.saveTemplate(db, { name: '혼합', exercises: [
+    { exerciseId: a.id, targetSets: 4, targetReps: 10, targetWeight: 20 }, { exerciseId: b.id, targetSets: 3, targetReps: 8, targetWeight: 60 },
+  ] });
+  const rows = await repo.getTemplateExercises(db, tid);
+  // 순서만 바꾸기 (벤치프레스 먼저)
+  const s1 = await repo.startSessionFromTemplate(db, tid, '2026-11-07', { order: [rows[1].id, rows[0].id] });
+  const f1 = (await repo.loadSession(db, s1))!;
+  assert.deepEqual(f1.exercises.map((e) => e.exercise_name), ['바벨 벤치프레스', '덤벨 컬']);
+  assert.equal(f1.exercises[1].sets.length, 4);
+  // 컨디션 75%: 무게 −10%(2.5 단위), 4세트 이상이면 1세트 감소
+  const s2 = await repo.startSessionFromTemplate(db, tid, '2026-11-08', { cond: 75 });
+  const f2 = (await repo.loadSession(db, s2))!;
+  assert.deepEqual(f2.exercises.map((e) => [e.sets.length, e.sets[0].weight]), [[3, 17.5], [3, 55]]);
+  // 컨디션 50%
+  const s3 = await repo.startSessionFromTemplate(db, tid, '2026-11-09', { cond: 50 });
+  const f3 = (await repo.loadSession(db, s3))!;
+  assert.deepEqual(f3.exercises.map((e) => [e.sets.length, e.sets[0].weight]), [[3, 15], [2, 47.5]]);
+  // 루틴은 바뀌지 않음
+  assert.deepEqual((await repo.getTemplateExercises(db, tid)).map((e) => [e.target_sets, e.target_weight]), [[4, 20], [3, 60]]);
+  // 옵션 없이 시작하면 그대로
+  const s4 = await repo.startSessionFromTemplate(db, tid, '2026-11-10');
+  assert.deepEqual((await repo.loadSession(db, s4))!.exercises.map((e) => [e.sets.length, e.sets[0].weight]), [[4, 20], [3, 60]]);
+  // 부위 변경
+  await repo.setExerciseCategory(db, a.id, '어깨');
+  assert.equal((await repo.loadCategoryMap(db)).get(a.id), '어깨');
+  await repo.setExerciseCategory(db, a.id, null);
+  assert.equal((await repo.loadCategoryMap(db)).get(a.id), null);
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

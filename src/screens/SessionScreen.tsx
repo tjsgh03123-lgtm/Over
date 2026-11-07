@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Alert, Pressable, ScrollView, Switch, Text, Vibration, View } from 'react-native';
+import { Alert, Modal, Pressable, ScrollView, Switch, Text, Vibration, View } from 'react-native';
 import { useApp } from '../app/context.tsx';
 import {
-  addCardio, addSessionExercise, addSet, deleteSet, deleteSession, finishSession, getExerciseRest, getLastSets, getRestDefault, getSessionRests, getSetting, listDoneDates, setExerciseRestFor, setRestDefault, getWeightStep, lastPerformance,
+  addCardio, addSessionExercise, addSet, deleteSet, deleteSession, finishSession, getExerciseRest, getLastSets, getRestDefault, getSessionRests, getSetting, setSetting, listDoneDates, setExerciseRestFor, setRestDefault, getWeightStep, lastPerformance, loadCategoryMap,
   loadSession, removeSessionExercise, reopenSession, saveSessionAsDay, setExerciseNote, setExerciseRest,
   setSessionExerciseMode, setSessionNote, updateSet, type SessionExRow, type SessionFull, type SetRow,
 } from '../db/repo.ts';
@@ -14,7 +14,10 @@ import { currentOf, restAfter, type GEx } from '../domain/guided.ts';
 import type { Focus as LiveFocus } from '../domain/liveCount.ts';
 import { speakText } from '../services/speak.ts';
 import { fmtClock, fmtDuration, fmtElapsed, restFor, suggestFor } from '../domain/format.ts';
-import { LiveCountModal } from '../ui/LiveCountModal.tsx';
+import { LiveCountModal, type CountSource } from '../ui/LiveCountModal.tsx';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { RUN_LABEL, sanitizeRunMode, type RunMode } from '../domain/condition.ts';
+import { countWord } from '../domain/liveCount.ts';
 import { Btn, Card, Chip, Header, NumInput, Row, T, TextField } from '../ui/components.tsx';
 import { ExercisePicker } from '../ui/ExercisePicker.tsx';
 import { C, S } from '../ui/theme.ts';
@@ -50,7 +53,12 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
   const [deferred, setDeferred] = useState<string[]>([]); // 나중에 하기로 미룬 종목(덩어리의 첫 종목 id)
   const [skipped, setSkipped] = useState<string[]>([]); // 건너뛴 종목 id
   const [exRest, setExRest] = useState(180);
-  const [live, setLive] = useState<{ exId: string; target: number; sets: number; restSec: number; focus: LiveFocus; tip?: string } | null>(null); // 실시간 횟수 세기 중인 종목
+  const [live, setLive] = useState<{ exId: string; target: number; sets: number; restSec: number; focus: LiveFocus; tip?: string; source: CountSource } | null>(null); // 실시간 횟수 세기 중인 종목
+  const [runMode, setRunMode] = useState<RunMode>('manual'); // 진행 방식: 직접 기록 / 카메라 / 박자
+  const [prepSec, setPrepSec] = useState(10);
+  const [tempoSec, setTempoSec] = useState(3);
+  const [restMini, setRestMini] = useState(false); // 휴식 화면을 작게(아래 줄) 보기
+  const insets = useSafeAreaInsets();
 
   const reload = useCallback(async () => {
     const full = await loadSession(db, sessionId);
@@ -71,6 +79,12 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
       setRests(await getSessionRests(db, sessionId));
       setRestDefault(await getRestDefault(db));
       setExRest(await getExerciseRest(db));
+      setRunMode(sanitizeRunMode(await getSetting(db, 'run_mode')));
+      const rawPrep = await getSetting(db, 'prep_sec');
+      const ps = rawPrep == null ? 10 : Number(rawPrep);
+      setPrepSec(Number.isFinite(ps) && ps >= 0 ? ps : 10);
+      const ts = Number(await getSetting(db, 'tempo_sec'));
+      setTempoSec(Number.isFinite(ts) && ts >= 1 ? ts : 3);
       if (full.template_id) {
         const t = await db.first<{ post_cardio_min: number | null }>('SELECT post_cardio_min FROM workout_templates WHERE id = ?', [full.template_id]);
         setPostCardioMin(t?.post_cardio_min ?? null);
@@ -94,9 +108,14 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
     if (rest && !rest.done && restLeft === 0) {
       Vibration.vibrate([0, 250, 120, 250]);
       if (rest.kind === 'exercise' && rest.next) speakText(`휴식 끝. 다음 운동, ${rest.next}`);
+      else if (rest.kind === 'set') speakText('휴식 끝, 다음 세트 시작');
       setRest({ ...rest, done: true });
     }
   }, [rest, restLeft]);
+  // 끝나기 3초 전부터 3·2·1을 소리로 알려 준다
+  useEffect(() => {
+    if (rest && !rest.done && restLeft > 0 && restLeft <= 3) speakText(countWord(restLeft));
+  }, [restLeft]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!rest?.done) return;
     const t = setTimeout(() => setRest(null), 5000);
@@ -116,7 +135,8 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
   const shownExercises = cur ? s.exercises.filter((e) => cur.block.some((b) => b.id === e.id)) : s.exercises;
   const nameOf = (id: string) => s.exercises.find((e) => e.id === id)?.exercise_name ?? '';
 
-  const openLive = (ex: SessionExRow) => setLive({
+  const openLive = (ex: SessionExRow, source: CountSource = runMode === 'tempo' ? 'tempo' : 'camera') => setLive({
+    source,
     exId: ex.id,
     target: ex.sets.find((x) => x.set_type !== 'warmup' && x.reps)?.reps ?? lasts[ex.id]?.reps ?? 10,
     sets: Math.max(1, ex.sets.filter((x) => !x.done && x.set_type !== 'warmup').length || 3),
@@ -125,14 +145,34 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
     tip: matchProfile(ex.exercise_name)?.tip,
   });
 
-  /** 휴식 시간을 30초 단위로 바꾼다. 종목 간 휴식이면 그 값이 다음부터의 기본값이 된다 */
+  /** 휴식 시간 조절: 세트 간은 10초, 종목 간은 30초 단위. 종목 간 휴식이면 그 값이 다음부터의 기본값이 된다 */
   const adjustRest = (d: number) => {
     if (!rest || rest.done) return;
-    const total = Math.max(30, rest.total + d);
+    const total = Math.max(rest.kind === 'exercise' ? 30 : 10, rest.total + d);
     const delta = total - rest.total;
     setRest({ ...rest, total, endAt: rest.endAt + delta * 1000 });
     if (rest.kind === 'exercise') { setExRest(total); setExerciseRest(db, total); }
   };
+
+  /** 세트 간 휴식 시간을 이 종목만 / 모든 종목에 저장 */
+  const saveSetRest = () => {
+    if (!rest) return;
+    const curEx = s.exercises.find((e) => e.id === rest.exId);
+    Alert.alert('휴식 시간 저장', `${fmtElapsed(rest.total)}을 어디에 쓸까요?`, [
+      { text: '취소', style: 'cancel' },
+      ...(curEx ? [{ text: '이 종목만', onPress: async () => { await setExerciseRestFor(db, curEx.exercise_id, rest.total); reload(); } }] : []),
+      { text: '모든 종목에', onPress: async () => { await setRestDefault(db, rest.total); reload(); } },
+    ]);
+  };
+  /** 휴식 화면의 '다음' 안내: 세트 간이면 다음 세트와 무게·횟수, 종목 간이면 다음 종목 */
+  const restNext = (() => {
+    if (!rest) return null;
+    const exOf = rest.kind === 'set' ? s.exercises.find((e) => e.id === rest.exId) : s.exercises.find((e) => e.id === rest.nextExId);
+    const ns = exOf?.sets.find((x) => !x.done && x.set_type !== 'warmup');
+    const detail = ns ? `${ns.set_no}세트${ns.weight != null ? ` · ${ns.weight}kg` : ''}${ns.reps != null ? ` × ${ns.reps}회` : ''}` : '';
+    if (rest.kind === 'set') return exOf && ns ? { title: `다음 세트 | ${detail}`, tip: undefined } : null;
+    return rest.next ? { title: `다음 종목 | ${rest.next}${detail ? `\n${detail}` : ''}`, tip: rest.nextTip } : null;
+  })();
 
   /** 지금 종목(덩어리) 끝내기: 남은 세트를 지우거나 건너뜀으로 남긴다 */
   const finishBlock = () => {
@@ -197,13 +237,14 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
       const full = await loadSession(db, s.id);
       if (full && doneSets > 0) {
         const dates = await listDoneDates(db);
+        const cats = await loadCategoryMap(db);
         setSummary({
           title: full.title, date: full.date, durationSec: full.duration_sec,
           volume: full.exercises.reduce((n, e) => n + volumeOf(e.sets), 0),
           sets: full.exercises.reduce((n, e) => n + doneWorkingCount(e.sets), 0),
           streak: streakWeeks(dates, today),
           exercises: full.exercises.filter((e) => doneWorkingCount(e.sets) > 0).map((e) => ({
-            name: e.exercise_name, sets: doneWorkingCount(e.sets), e1rm: bestE1rm(e.sets), part: partOf(e.exercise_name),
+            name: e.exercise_name, sets: doneWorkingCount(e.sets), e1rm: bestE1rm(e.sets), part: partOf(e.exercise_name, cats.get(e.exercise_id)),
           })),
         });
       }
@@ -241,6 +282,14 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
             <Chip label="전체 목록" active={!guidedOn} onPress={() => setGuided(false)} />
           </Row>
         )}
+        {editable && s.exercises.length > 0 && (
+          <Row style={{ marginBottom: S.sm }}>
+            <T muted style={{ fontSize: 12, marginRight: 4 }}>진행</T>
+            {(['manual', 'camera', 'tempo'] as RunMode[]).map((m) => (
+              <Chip key={m} label={RUN_LABEL[m]} active={runMode === m} onPress={() => { setRunMode(m); setSetting(db, 'run_mode', m); }} />
+            ))}
+          </Row>
+        )}
         {cur && (
           <Card>
             <T muted style={{ fontSize: 12 }}>종목 {cur.index} / {cur.total}{cur.block.length > 1 ? ' · 슈퍼세트' : ''}</T>
@@ -250,6 +299,12 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
                 다음: {cur.next.map((b) => b.name).join(' ↔ ')}{matchProfile(cur.next[0].name)?.tip ? `\n📍 ${matchProfile(cur.next[0].name)!.tip}` : ''}
               </T>
             ) : <T muted style={{ fontSize: 13, marginTop: 4 }}>마지막 종목이에요</T>}
+            {runMode !== 'manual' && (
+              <Btn
+                label={runMode === 'camera' ? '📷 카메라로 시작' : '⏱ 박자로 시작'} style={{ marginTop: S.sm }}
+                onPress={() => { const ex = s.exercises.find((e) => e.id === cur.exId); if (ex) openLive(ex, runMode === 'tempo' ? 'tempo' : 'camera'); }}
+              />
+            )}
             <Row style={{ marginTop: S.sm }}>
               {cur.next && <Btn label="나중에 하기" kind="ghost" small onPress={() => setDeferred((d) => [...d, cur.block[0].id])} />}
               <Btn label="이 종목 끝내기" kind="ghost" small onPress={finishBlock} />
@@ -305,7 +360,8 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
                   )}
                   {editable && (
                     <Row style={{ marginBottom: S.sm }}>
-                      <Btn label="📷 실시간 횟수 세기" kind="ghost" small style={{ flex: 1 }} onPress={() => openLive(ex)} />
+                      <Btn label="📷 카메라로 세기" kind="ghost" small style={{ flex: 1 }} onPress={() => openLive(ex, 'camera')} />
+                      <Btn label="⏱ 박자로 세기" kind="ghost" small style={{ flex: 1 }} onPress={() => openLive(ex, 'tempo')} />
                       {prevSets.length > 0 && (
                         <Btn label="불러오기" kind="ghost" small onPress={async () => {
                           const free = ex.sets.filter((x) => !x.done && x.set_type !== 'warmup');
@@ -364,7 +420,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
                                 nextExId = currentOf(upd, deferred, skipped)?.exId;
                               }
                               if (sec > 0) {
-                                const t = Date.now(); setNow(t);
+                                const t = Date.now(); setNow(t); setRestMini(false);
                                 const nx = nextExId ? nameOf(nextExId) : undefined;
                                 setRest({ endAt: t + sec * 1000, total: sec, done: false, kind, exId: ex.id, next: nx, nextTip: nx ? matchProfile(nx)?.tip : undefined, nextExId });
                                 if (kind === 'exercise' && nx) speakText(`종목 끝. ${sec}초 쉬세요. 다음은 ${nx}`);
@@ -513,27 +569,15 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
 
       {editable && (
         <View style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: S.lg, backgroundColor: C.bg, borderTopWidth: 1, borderTopColor: C.line }}>
-          {rest && (
+          {rest && restMini && (
             <Row style={{ marginBottom: S.sm, padding: S.md, borderRadius: 12, backgroundColor: C.card2, borderWidth: 1, borderColor: rest.done ? C.accent : C.line }}>
               <View style={{ flex: 1 }}>
                 <T bold style={{ fontSize: 16 }}>{rest.done ? (rest.kind === 'exercise' ? '휴식 끝 · 다음 종목' : '휴식 끝 · 다음 세트') : `${rest.kind === 'exercise' ? '종목 간 휴식' : '휴식'} ${fmtElapsed(restLeft)}`}</T>
                 {rest.next ? <T muted style={{ fontSize: 12 }}>다음: {rest.next}{rest.kind === 'exercise' && rest.nextTip ? `\n📍 ${rest.nextTip}` : ''}</T> : null}
               </View>
-              {!rest.done && <Btn label="−30" kind="ghost" small onPress={() => adjustRest(-30)} />}
-              {!rest.done && <Btn label="+30" kind="ghost" small onPress={() => adjustRest(30)} />}
-              {!rest.done && rest.kind === 'set' && (
-                <Btn label="저장" kind="ghost" small onPress={() => {
-                  const cur = s.exercises.find((e) => e.id === rest.exId);
-                  Alert.alert('휴식 시간 저장', `${fmtElapsed(rest.total)}을 어디에 쓸까요?`, [
-                    { text: '취소', style: 'cancel' },
-                    ...(cur ? [{ text: '이 종목만', onPress: async () => { await setExerciseRestFor(db, cur.exercise_id, rest.total); reload(); } }] : []),
-                    { text: '모든 종목에', onPress: async () => { await setRestDefault(db, rest.total); reload(); } },
-                  ]);
-                }} />
-              )}
-              {rest.kind === 'exercise' && rest.nextExId && (
-                <Btn label="📷" kind="ghost" small onPress={() => { const ex = s.exercises.find((e) => e.id === rest.nextExId); if (ex) openLive(ex); }} />
-              )}
+              {!rest.done && <Btn label={rest.kind === 'exercise' ? '−30' : '−10'} kind="ghost" small onPress={() => adjustRest(rest.kind === 'exercise' ? -30 : -10)} />}
+              {!rest.done && <Btn label={rest.kind === 'exercise' ? '+30' : '+10'} kind="ghost" small onPress={() => adjustRest(rest.kind === 'exercise' ? 30 : 10)} />}
+              <Btn label="크게" kind="ghost" small onPress={() => setRestMini(false)} />
               <Btn label={rest.done ? '닫기' : '건너뛰기'} kind="ghost" small onPress={() => setRest(null)} />
             </Row>
           )}
@@ -583,10 +627,50 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
           />
         );
       })()}
+      <Modal visible={!!rest && !restMini} animationType="fade" onRequestClose={() => setRestMini(true)}>
+        {rest && (
+          <View style={{ flex: 1, backgroundColor: C.bg, paddingTop: insets.top + S.lg, paddingBottom: insets.bottom + S.lg, paddingHorizontal: S.lg }}>
+            <Row>
+              <T muted style={{ flex: 1 }}>{rest.kind === 'exercise' ? '종목 간 휴식' : '세트 간 휴식'}</T>
+              <Btn label="작게 보기" kind="ghost" small onPress={() => setRestMini(true)} />
+            </Row>
+            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+              {rest.done ? (
+                <T bold style={{ fontSize: 44 }}>휴식 끝</T>
+              ) : (
+                <>
+                  <T bold style={{ fontSize: 84, lineHeight: 96 }}>{fmtElapsed(restLeft)}</T>
+                  <T muted style={{ marginBottom: S.sm }}>휴식 시간 설정</T>
+                  <Row>
+                    <Btn label={rest.kind === 'exercise' ? '−30초' : '−10초'} kind="ghost" onPress={() => adjustRest(rest.kind === 'exercise' ? -30 : -10)} />
+                    <Btn label={rest.kind === 'exercise' ? '+30초' : '+10초'} kind="ghost" onPress={() => adjustRest(rest.kind === 'exercise' ? 30 : 10)} />
+                  </Row>
+                </>
+              )}
+              {restNext && (
+                <View style={{ marginTop: S.xl, padding: S.lg, borderRadius: 14, backgroundColor: C.card2, alignSelf: 'stretch' }}>
+                  <T bold style={{ fontSize: 18, textAlign: 'center' }}>{restNext.title}</T>
+                  {restNext.tip ? <T muted style={{ fontSize: 12, marginTop: 6, textAlign: 'center' }}>📍 {restNext.tip}</T> : null}
+                </View>
+              )}
+            </View>
+            <Row>
+              {!rest.done && rest.kind === 'set' && <Btn label="저장" kind="ghost" onPress={saveSetRest} />}
+              {rest.kind === 'exercise' && rest.nextExId && runMode !== 'manual' && (
+                <Btn
+                  label={runMode === 'camera' ? '📷 카메라로 시작' : '⏱ 박자로 시작'} kind="ghost"
+                  onPress={() => { const ex = s.exercises.find((e) => e.id === rest.nextExId); if (ex) { setRest(null); openLive(ex, runMode === 'tempo' ? 'tempo' : 'camera'); } }}
+                />
+              )}
+              <Btn label={rest.done ? '닫기' : '건너뛰기'} style={{ flex: 1 }} onPress={() => setRest(null)} />
+            </Row>
+          </View>
+        )}
+      </Modal>
       <SummaryModal data={summary} onClose={() => setSummary(null)} />
       <LiveCountModal
         visible={!!live}
-                defaults={live ? { targetReps: live.target, totalSets: live.sets, restSec: live.restSec, focus: live.focus, tip: live.tip } : undefined}
+                defaults={live ? { targetReps: live.target, totalSets: live.sets, restSec: live.restSec, focus: live.focus, tip: live.tip, source: live.source, prepSec, tempoSec } : undefined}
         onClose={() => setLive(null)}
         onUse={(counts) => { const l = live; setLive(null); if (l) applyLiveCount(l.exId, counts); }}
       />

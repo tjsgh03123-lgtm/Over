@@ -8,7 +8,7 @@ import {
 import { fmtDuration, fmtElapsed } from '../domain/format.ts';
 import { summarize, weekdayOf } from '../domain/stats.ts';
 import { Btn, Card, H, NumInput, Row, T } from '../ui/components.tsx';
-import { RoutinePreview } from '../ui/RoutinePreview.tsx';
+import { RoutinePreview, type StartOpts } from '../ui/RoutinePreview.tsx';
 import { C, S } from '../ui/theme.ts';
 import { useElapsed } from '../ui/useElapsed.ts';
 
@@ -46,10 +46,9 @@ export function HomeScreen() {
     })();
   }, [db, today, version]);
 
-  const startRoutine = async () => {
-    if (!tpl) return;
+  const startRoutine = async (o: StartOpts) => {
     setPreview(false);
-    nav.openSession(await startSessionFromTemplate(db, tpl.id, today));
+    nav.openSession(await startSessionFromTemplate(db, o.templateId, today, { order: o.order, cond: o.cond }));
     bump();
   };
   const startFree = async () => {

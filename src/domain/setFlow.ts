@@ -1,5 +1,6 @@
 /**
- * 세트 자동 진행: 세트마다 목표 횟수를 채우면 → 쉬는 시간 → 다시 시작을 반복한다.
+ * 세트 자동 진행: (준비) → 세트마다 목표 횟수를 채우면 → 쉬는 시간 → (준비) → 다시 시작을 반복한다.
+ * 준비 시간(prepSec)이 0이면 준비 단계 없이 곧바로 센다.
  * 시간은 밖에서 넣어 주므로(nowMs) 그대로 테스트할 수 있다.
  */
 
@@ -7,14 +8,18 @@ export interface FlowConfig {
   targetReps: number;
   totalSets: number;
   restSec: number;
+  /** 세트를 시작하기 전 자세를 잡는 시간(초). 없거나 0이면 준비 단계 없음 */
+  prepSec?: number;
 }
 
-export type FlowPhase = 'counting' | 'resting' | 'done';
+export type FlowPhase = 'preparing' | 'counting' | 'resting' | 'done';
 
 /** 소리·화면 안내로 바꿀 이벤트 */
 export type FlowEvent =
   | { kind: 'setDone'; setNo: number; count: number; last: boolean }
   | { kind: 'restTick'; secLeft: number }
+  | { kind: 'prep'; setNo: number }
+  | { kind: 'prepTick'; secLeft: number }
   | { kind: 'start'; setNo: number };
 
 export class SetFlow {
@@ -23,13 +28,23 @@ export class SetFlow {
   setNo = 1;
   /** 끝낸 세트들의 횟수 */
   counts: number[] = [];
-  private restEndAt = 0;
+  private endAt = 0;
   private lastTick = -1;
 
   cfg: FlowConfig;
   constructor(cfg: FlowConfig) { this.cfg = cfg; }
 
   get target() { return this.cfg.targetReps; }
+  private get prep() { return this.cfg.prepSec && this.cfg.prepSec > 0 ? this.cfg.prepSec : 0; }
+
+  /** 첫 세트 전에 준비 시간을 시작한다 (준비 시간이 없으면 아무것도 안 함) */
+  beginPrep(nowMs: number): FlowEvent | null {
+    if (!this.prep || this.phase !== 'counting' || this.counts.length > 0) return null;
+    this.phase = 'preparing';
+    this.endAt = nowMs + this.prep * 1000;
+    this.lastTick = -1;
+    return { kind: 'prep', setNo: this.setNo };
+  }
 
   /** 이번 세트의 횟수가 바뀌었을 때 부른다. 목표에 닿으면 세트를 끝내고 쉬기(또는 종료)로 넘어간다. */
   onCount(count: number, nowMs: number): FlowEvent | null {
@@ -39,41 +54,66 @@ export class SetFlow {
     const ev: FlowEvent = { kind: 'setDone', setNo: this.setNo, count, last };
     if (last) { this.phase = 'done'; return ev; }
     this.phase = 'resting';
-    this.restEndAt = nowMs + this.cfg.restSec * 1000;
+    this.endAt = nowMs + this.cfg.restSec * 1000;
     this.lastTick = -1;
     return ev;
   }
 
-  /** 쉬는 중 남은 초 (쉬는 중이 아니면 0) */
+  /** 쉬는 중·준비 중 남은 초 (그 외에는 0) */
   secLeft(nowMs: number): number {
-    return this.phase === 'resting' ? Math.max(0, Math.ceil((this.restEndAt - nowMs) / 1000)) : 0;
+    return this.phase === 'resting' || this.phase === 'preparing' ? Math.max(0, Math.ceil((this.endAt - nowMs) / 1000)) : 0;
   }
 
-  /** 주기적으로(예: 0.25초마다) 부른다. 마지막 3초를 알리고, 끝나면 다음 세트를 시작한다. */
+  /** 쉬는 시간이 끝났을 때: 준비 시간이 있으면 준비로, 없으면 바로 다음 세트 */
+  private afterRest(nowMs: number): FlowEvent {
+    this.setNo++;
+    if (this.prep) {
+      this.phase = 'preparing';
+      this.endAt = nowMs + this.prep * 1000;
+      this.lastTick = -1;
+      return { kind: 'prep', setNo: this.setNo };
+    }
+    this.phase = 'counting';
+    return { kind: 'start', setNo: this.setNo };
+  }
+
+  /**
+   * 주기적으로(예: 0.25초마다) 부른다. 마지막 3초를 알리고, 끝나면 다음 단계로 넘어간다.
+   * 준비 시간이 있으면 쉬는 시간의 마지막 3초 대신 준비 시간의 마지막 3초를 알린다(카운트가 두 번 나오지 않게).
+   */
   tick(nowMs: number): FlowEvent | null {
-    if (this.phase !== 'resting') return null;
+    if (this.phase !== 'resting' && this.phase !== 'preparing') return null;
     const left = this.secLeft(nowMs);
     if (left <= 0) {
+      if (this.phase === 'resting') return this.afterRest(nowMs);
       this.phase = 'counting';
-      this.setNo++;
       return { kind: 'start', setNo: this.setNo };
     }
-    if (left <= 3 && left !== this.lastTick) { this.lastTick = left; return { kind: 'restTick', secLeft: left }; }
+    if (left <= 3 && left !== this.lastTick) {
+      if (this.phase === 'resting' && this.prep) return null;
+      this.lastTick = left;
+      return this.phase === 'resting' ? { kind: 'restTick', secLeft: left } : { kind: 'prepTick', secLeft: left };
+    }
     return null;
   }
 
-  /** 쉬는 시간을 건너뛰고 바로 다음 세트 시작 */
-  skipRest(): FlowEvent | null {
+  /** 쉬는 시간을 건너뛴다 (준비 시간이 있으면 준비부터, 없으면 바로 다음 세트 시작) */
+  skipRest(nowMs = Date.now()): FlowEvent | null {
     if (this.phase !== 'resting') return null;
+    return this.afterRest(nowMs);
+  }
+
+  /** 준비 시간을 건너뛰고 바로 센다 */
+  skipPrep(): FlowEvent | null {
+    if (this.phase !== 'preparing') return null;
     this.phase = 'counting';
-    this.setNo++;
     return { kind: 'start', setNo: this.setNo };
   }
 
   /** 목표를 못 채우고 끝낼 때: 지금까지 센 횟수를 포함한 세트별 횟수 */
   finish(currentCount: number): number[] {
     const out = this.counts.slice();
-    if (this.phase === 'counting' && currentCount > 0) out.push(currentCount);
+    if ((this.phase === 'counting' || this.phase === 'preparing') && currentCount > 0) out.push(currentCount);
     return out;
   }
 }
