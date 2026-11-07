@@ -3,7 +3,8 @@ import { FlatList, Modal, Pressable, Text, View } from 'react-native';
 import { useApp } from '../app/context.tsx';
 import { getOrCreateExercise, listExercises, type ExerciseRow } from '../db/repo.ts';
 import type { WeightMode } from '../domain/types.ts';
-import { Btn, Row, TextField } from './components.tsx';
+import { CATALOG, PARTS, type Part } from '../domain/exerciseCatalog.ts';
+import { Btn, Chip, Row, TextField } from './components.tsx';
 import { C, S } from './theme.ts';
 
 /** 종목 선택/추가 모달. 이름이 같거나 별칭이 같으면 기존 종목으로 통합된다. */
@@ -11,6 +12,7 @@ export function ExercisePicker({ visible, onClose, onPick, newMode }: { visible:
   const { db, version } = useApp();
   const [q, setQ] = useState('');
   const [list, setList] = useState<ExerciseRow[]>([]);
+  const [part, setPart] = useState<Part | null>(null);
 
   useEffect(() => {
     if (visible) listExercises(db).then(setList);
@@ -23,7 +25,7 @@ export function ExercisePicker({ visible, onClose, onPick, newMode }: { visible:
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose} transparent>
       <View style={{ flex: 1, backgroundColor: C.overlay, justifyContent: 'flex-end' }}>
-        <View style={{ backgroundColor: C.bg, maxHeight: '80%', borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: S.lg }}>
+        <View style={{ backgroundColor: C.bg, maxHeight: '88%', borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: S.lg }}>
           <Row style={{ marginBottom: S.md }}>
             <TextField value={q} onChangeText={setQ} placeholder="종목 검색 또는 새 종목 이름" style={{ flex: 1 }} autoFocus />
             <Btn label="닫기" kind="ghost" small onPress={onClose} />
@@ -38,6 +40,22 @@ export function ExercisePicker({ visible, onClose, onPick, newMode }: { visible:
                 onPick(e);
               }}
             />
+          ) : null}
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: S.sm }}>
+            {PARTS.map((p) => <Chip key={p} label={p} active={part === p} onPress={() => setPart(part === p ? null : p)} />)}
+          </View>
+          {part ? (
+            <View style={{ marginBottom: S.sm }}>
+              {CATALOG.filter((c) => c.part === part).map((c) => (
+                <Pressable key={c.name} onPress={async () => {
+                  const e = await getOrCreateExercise(db, c.name, { category: c.part, ...(newMode ? { mode: newMode } : {}) });
+                  setQ(''); setPart(null); onPick(e);
+                }} style={{ paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: C.line }}>
+                  <Text style={{ color: C.text, fontSize: 15 }}>{c.name}</Text>
+                  <Text style={{ color: C.muted, fontSize: 12 }}>{c.part} · {c.equip}</Text>
+                </Pressable>
+              ))}
+            </View>
           ) : null}
           <FlatList
             data={shown}

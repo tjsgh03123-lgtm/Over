@@ -6,6 +6,8 @@ import {
   loadSession, removeSessionExercise, reopenSession, saveSessionAsDay, setExerciseNote,
   setSessionNote, updateSet, type SessionExRow, type SessionFull, type SetRow,
 } from '../db/repo.ts';
+import { matchProfile } from '../domain/exerciseCatalog.ts';
+import type { Focus } from '../domain/liveCount.ts';
 import { fmtClock, fmtDuration, fmtElapsed, restFor, suggestFor } from '../domain/format.ts';
 import { LiveCountModal } from '../ui/LiveCountModal.tsx';
 import { Btn, Card, Chip, Header, NumInput, Row, T, TextField } from '../ui/components.tsx';
@@ -36,7 +38,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
   const [restDefault, setRestDefault] = useState(90);
   const [rest, setRest] = useState<Rest>(null); // 세트 사이 휴식 카운트다운
   const [now, setNow] = useState(Date.now());
-  const [live, setLive] = useState<{ exId: string; target: number; sets: number; restSec: number; focus: 'auto' | 'body' } | null>(null); // 실시간 횟수 세기 중인 종목
+  const [live, setLive] = useState<{ exId: string; target: number; sets: number; restSec: number; focus: Focus; tip?: string } | null>(null); // 실시간 횟수 세기 중인 종목
 
   const reload = useCallback(async () => {
     const full = await loadSession(db, sessionId);
@@ -178,7 +180,8 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
                       target: ex.sets.find((x) => x.set_type !== 'warmup' && x.reps)?.reps ?? last?.reps ?? 10,
                       sets: Math.max(1, ex.sets.filter((x) => !x.done && x.set_type !== 'warmup').length || 3),
                       restSec: restFor(rests[ex.id], restDefault) || 60,
-                      focus: ex.weight_mode === 'bodyweight' ? 'body' : 'auto',
+                      focus: matchProfile(ex.name)?.focus ?? (ex.weight_mode === 'bodyweight' ? 'body' : 'auto'),
+                      tip: matchProfile(ex.name)?.tip,
                     })} />
                   )}
                   {ex.sets.map((row, idx) => {
@@ -401,7 +404,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
 
       <LiveCountModal
         visible={!!live}
-                defaults={live ? { targetReps: live.target, totalSets: live.sets, restSec: live.restSec, focus: live.focus } : undefined}
+                defaults={live ? { targetReps: live.target, totalSets: live.sets, restSec: live.restSec, focus: live.focus, tip: live.tip } : undefined}
         onClose={() => setLive(null)}
         onUse={(counts) => { const l = live; setLive(null); if (l) applyLiveCount(l.exId, counts); }}
       />

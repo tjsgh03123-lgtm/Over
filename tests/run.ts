@@ -14,6 +14,7 @@ import { fmtDuration, fmtElapsed, restFor, suggestFor } from '../src/domain/form
 import { clampDrag, moveItem, targetIndex } from '../src/domain/reorder.ts';
 import { DEFAULT_GRAPH_COLORS, GRAPH_KEYS, sanitizeGraphColors, sanitizeMode } from '../src/domain/themeModel.ts';
 import { SetFlow } from '../src/domain/setFlow.ts';
+import { CATALOG, matchProfile } from '../src/domain/exerciseCatalog.ts';
 import { AutoRepCounter, countWord, JOINTS, jointAngle } from '../src/domain/liveCount.ts';
 import type { SessionRecord, SetRecord } from '../src/domain/types.ts';
 
@@ -529,6 +530,17 @@ test('운동 종류를 고르면 그 동작만 센다 (하체 선택 시 팔 움
   const d = new AutoRepCounter(); d.setFocus('arm');
   runAuto(d, { elbow: wave(151, 30, 45, 160) });
   assert.equal(d.count, 5);
+});
+test('기본 종목: 20개 이상, 부위별, 이름으로 동작 매칭', () => {
+  assert.ok(CATALOG.length >= 20);
+  assert.equal(new Set(CATALOG.map((c) => c.name)).size, CATALOG.length);
+  assert.ok(CATALOG.every((c) => c.equip === '바벨' || c.equip === '덤벨'));
+  assert.equal(matchProfile('사레레')?.name, '덤벨 사이드 레터럴 레이즈');
+  assert.equal(matchProfile('인클라인 덤벨 프레스')?.name, '인클라인 덤벨 프레스');
+  assert.equal(matchProfile('벤치프레스')?.focus, 'arm');
+  assert.equal(matchProfile('스쿼트')?.focus, 'leg');
+  assert.equal(matchProfile('루마니안 데드리프트')?.focus, 'hinge');
+  assert.equal(matchProfile('렛풀다운'), null);
 });
 test('자동: 컬처럼 팔꿈치만 움직여도 5회 (운동 종류를 알려 주지 않음)', () => {
   const c = new AutoRepCounter();

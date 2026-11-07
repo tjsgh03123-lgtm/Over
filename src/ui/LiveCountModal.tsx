@@ -36,7 +36,7 @@ function fmtRep(ms: number) { return `${(ms / 1000).toFixed(1)}초`; }
  */
 export function LiveCountModal({
   visible, onClose, onUse, defaults,
-}: { visible: boolean; defaults?: FlowConfig & { focus?: Focus }; onClose: () => void; onUse: (counts: number[]) => void }) {
+}: { visible: boolean; defaults?: FlowConfig & { focus?: Focus; tip?: string }; onClose: () => void; onUse: (counts: number[]) => void }) {
   if (!visible) return null;
   return (
     <Modal visible animationType="slide" onRequestClose={onClose}>
@@ -58,7 +58,7 @@ function Stepper({ label, value, unit, step, min, max, onChange }: {
   );
 }
 
-function LiveBody({ onClose, onUse, defaults }: { onClose: () => void; onUse: (counts: number[]) => void; defaults: FlowConfig & { focus?: Focus } }) {
+function LiveBody({ onClose, onUse, defaults }: { onClose: () => void; onUse: (counts: number[]) => void; defaults: FlowConfig & { focus?: Focus; tip?: string } }) {
   useKeepAwake();
   const { width: winW, height: winH } = useWindowDimensions();
   const insets = useSafeAreaInsets();
@@ -280,6 +280,7 @@ function LiveBody({ onClose, onUse, defaults }: { onClose: () => void; onUse: (c
         <Row style={{ marginTop: S.sm }}>
           <Chip label={sound ? '🔊 횟수 소리 켜짐' : '🔇 횟수 소리 꺼짐'} active={sound} onPress={() => { if (sound) stopSpeaking(); setSound((v) => !v); }} />
         </Row>
+        {defaults.tip ? <T muted style={{ marginTop: S.md, fontSize: 12 }}>📍 {defaults.tip}</T> : null}
         <T muted style={{ marginTop: S.md, fontSize: 12 }}>운동 종류</T>
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
           {(Object.keys(FOCUS_LABEL) as Focus[]).map((k) => (

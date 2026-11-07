@@ -20,13 +20,15 @@ export const JOINTS: JointDef[] = [
 ];
 
 /** 어떤 운동인지 직접 고르면 그 동작만 본다. auto는 모든 동작을 지켜본다. */
-export type Focus = 'auto' | 'arm' | 'leg' | 'raise' | 'body' | 'calf';
+export type Focus = 'auto' | 'arm' | 'leg' | 'hinge' | 'raise' | 'shrug' | 'body' | 'calf';
 export const FOCUS_LABEL: Record<Focus, string> = {
-  auto: '자동', arm: '팔 굽히기', leg: '하체', raise: '사레레·팔 들기', body: '맨몸(푸시업·풀업)', calf: '종아리',
+  auto: '자동', arm: '팔 굽히기·프레스·로우', leg: '스쿼트·런지', hinge: '데드·힙쓰러스트', shrug: '슈러그', raise: '사레레·팔 들기', body: '맨몸(푸시업·풀업)', calf: '종아리',
 };
 const FOCUS_IDS: Record<Exclude<Focus, 'auto'>, string[]> = {
   arm: ['elbow', 'wristLy', 'wristRy'],
   leg: ['knee', 'hip', 'bodyY', 'hipY'],
+  hinge: ['hip', 'hipY', 'bodyY'],
+  shrug: ['shrug'],
   raise: ['shoulder', 'wristLy', 'wristRy', 'wristLx', 'wristRx', 'shrug'],
   body: ['elbow', 'bodyY', 'hipY', 'wristLy', 'wristRy'],
   calf: ['heelL', 'heelR'],
