@@ -2,11 +2,12 @@ import React, { useEffect, useState } from 'react';
 import { FlatList, Modal, Pressable, Text, View } from 'react-native';
 import { useApp } from '../app/context.tsx';
 import { getOrCreateExercise, listExercises, type ExerciseRow } from '../db/repo.ts';
+import type { WeightMode } from '../domain/types.ts';
 import { Btn, Row, TextField } from './components.tsx';
 import { C, S } from './theme.ts';
 
 /** 종목 선택/추가 모달. 이름이 같거나 별칭이 같으면 기존 종목으로 통합된다. */
-export function ExercisePicker({ visible, onClose, onPick }: { visible: boolean; onClose: () => void; onPick: (e: ExerciseRow) => void }) {
+export function ExercisePicker({ visible, onClose, onPick, newMode }: { visible: boolean; onClose: () => void; onPick: (e: ExerciseRow) => void; /** 새로 만드는 종목의 기본 방식 (맨몸 운동에서는 체중) */ newMode?: WeightMode }) {
   const { db, version } = useApp();
   const [q, setQ] = useState('');
   const [list, setList] = useState<ExerciseRow[]>([]);
@@ -32,7 +33,7 @@ export function ExercisePicker({ visible, onClose, onPick }: { visible: boolean;
               label={`‘${q.trim()}’ 새 종목으로 추가`}
               style={{ marginBottom: S.md }}
               onPress={async () => {
-                const e = await getOrCreateExercise(db, q);
+                const e = await getOrCreateExercise(db, q, newMode ? { mode: newMode } : {});
                 setQ('');
                 onPick(e);
               }}

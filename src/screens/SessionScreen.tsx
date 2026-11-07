@@ -36,7 +36,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
   const [restDefault, setRestDefault] = useState(90);
   const [rest, setRest] = useState<Rest>(null); // 세트 사이 휴식 카운트다운
   const [now, setNow] = useState(Date.now());
-  const [live, setLive] = useState<{ exId: string; name: string } | null>(null); // 실시간 횟수 세기 중인 종목
+  const [live, setLive] = useState<{ exId: string; target: number; sets: number; restSec: number; focus: 'auto' | 'body' } | null>(null); // 실시간 횟수 세기 중인 종목
 
   const reload = useCallback(async () => {
     const full = await loadSession(db, sessionId);
@@ -107,21 +107,20 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
     updateSet(db, row.id, patch).then(bump);
   };
 
-  /** 실시간 횟수 세기 결과를 그 종목의 첫 번째 미완료 본 세트 횟수에 넣는다 (없으면 세트를 추가) */
-  const applyLiveCount = async (exId: string, n: number) => {
+  /** 실시간 횟수 세기 결과를 그 종목의 미완료 본 세트 횟수에 차례로 넣는다 (세트가 모자라면 추가) */
+  const applyLiveCount = async (exId: string, counts: number[]) => {
     const ex = s.exercises.find((e) => e.id === exId);
-    if (!ex) return;
-    const target = ex.sets.find((x) => !x.done && x.set_type !== 'warmup');
-    if (target) patchSet(ex, target, { reps: n });
-    else {
-      await addSet(db, ex.id, 'working');
+    if (!ex || !counts.length) return;
+    let free = ex.sets.filter((x) => !x.done && x.set_type !== 'warmup');
+    const need = counts.length - free.length;
+    for (let i = 0; i < need; i++) await addSet(db, ex.id, 'working');
+    if (need > 0) {
       const full = await loadSession(db, sessionId);
-      const sets = full?.exercises.find((e) => e.id === exId)?.sets ?? [];
-      const last = sets[sets.length - 1];
-      if (last) await updateSet(db, last.id, { reps: n });
-      bump();
-      await reload();
+      free = (full?.exercises.find((e) => e.id === exId)?.sets ?? []).filter((x) => !x.done && x.set_type !== 'warmup');
     }
+    for (let i = 0; i < counts.length && i < free.length; i++) await updateSet(db, free[i].id, { reps: counts[i] });
+    bump();
+    await reload();
   };
 
   const finish = async () => {
@@ -174,7 +173,13 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
               {open && (
                 <View style={{ paddingHorizontal: S.lg, paddingBottom: S.lg }}>
                   {editable && (
-                    <Btn label="📷 실시간 횟수 세기" kind="ghost" small style={{ marginBottom: S.sm }} onPress={() => setLive({ exId: ex.id, name: ex.exercise_name })} />
+                    <Btn label="📷 실시간 횟수 세기" kind="ghost" small style={{ marginBottom: S.sm }} onPress={() => setLive({
+                      exId: ex.id,
+                      target: ex.sets.find((x) => x.set_type !== 'warmup' && x.reps)?.reps ?? last?.reps ?? 10,
+                      sets: Math.max(1, ex.sets.filter((x) => !x.done && x.set_type !== 'warmup').length || 3),
+                      restSec: restFor(rests[ex.id], restDefault) || 60,
+                      focus: ex.weight_mode === 'bodyweight' ? 'body' : 'auto',
+                    })} />
                   )}
                   {ex.sets.map((row, idx) => {
                     const sugW = suggestFor(ex.sets, idx, (x) => x.weight, last?.weight ?? null);
@@ -196,7 +201,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
                             {!!row.is_rm && <T bold style={{ fontSize: 10 }}>1RM</T>}
                           </Pressable>
                           <NumInput
-                            value={row.weight} suggest={sugW} placeholder="kg" width={84}
+                            value={row.weight} suggest={ex.weight_mode === 'bodyweight' ? null : sugW} placeholder={ex.weight_mode === 'bodyweight' ? '+kg' : 'kg'} width={84}
                             onFocus={() => setFocus({ setId: row.id, field: 'weight' })}
                             onCommit={(v) => patchSet(ex, row, { weight: v })}
                           />
@@ -396,11 +401,13 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
 
       <LiveCountModal
         visible={!!live}
-                onClose={() => setLive(null)}
-        onUse={(n) => { const l = live; setLive(null); if (l) applyLiveCount(l.exId, n); }}
+                defaults={live ? { targetReps: live.target, totalSets: live.sets, restSec: live.restSec, focus: live.focus } : undefined}
+        onClose={() => setLive(null)}
+        onUse={(counts) => { const l = live; setLive(null); if (l) applyLiveCount(l.exId, counts); }}
       />
       <ExercisePicker
         visible={picker}
+        newMode={s.title === '맨몸 운동' ? 'bodyweight' : undefined}
         onClose={() => setPicker(false)}
         onPick={async (e) => { setPicker(false); await addSessionExercise(db, s.id, e.id); bump(); reload(); }}
       />

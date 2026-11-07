@@ -19,6 +19,19 @@ export const JOINTS: JointDef[] = [
   { id: 'shoulder', label: '어깨', l: [13, 11, 23], r: [14, 12, 24] },
 ];
 
+/** 어떤 운동인지 직접 고르면 그 동작만 본다. auto는 모든 동작을 지켜본다. */
+export type Focus = 'auto' | 'arm' | 'leg' | 'raise' | 'body' | 'calf';
+export const FOCUS_LABEL: Record<Focus, string> = {
+  auto: '자동', arm: '팔 굽히기', leg: '하체', raise: '사레레·팔 들기', body: '맨몸(푸시업·풀업)', calf: '종아리',
+};
+const FOCUS_IDS: Record<Exclude<Focus, 'auto'>, string[]> = {
+  arm: ['elbow', 'wristLy', 'wristRy'],
+  leg: ['knee', 'hip', 'bodyY', 'hipY'],
+  raise: ['shoulder', 'wristLy', 'wristRy', 'wristLx', 'wristRx', 'shrug'],
+  body: ['elbow', 'bodyY', 'hipY', 'wristLy', 'wristRy'],
+  calf: ['heelL', 'heelR'],
+};
+
 export type Strictness = 'easy' | 'normal' | 'strict';
 export const STRICT_LABEL: Record<Strictness, string> = { easy: '쉬움', normal: '보통', strict: '엄격' };
 /** 한 번으로 세려면 각도가 이만큼(도) 이상 오르내려야 한다 */
@@ -199,6 +212,10 @@ export class AutoRepCounter {
   private all: RepEvent[] = [];
   private scale = { v: 0 };
 
+  private focus: Focus = 'auto';
+  setFocus(f: Focus) { this.focus = f; }
+  private allowed(id: string) { return this.focus === 'auto' || FOCUS_IDS[this.focus].includes(id); }
+
   setStrictness(s: Strictness) { this.minAmp = MIN_AMP[s]; this.mult = POS_MULT[s]; }
 
   reset() {
@@ -222,8 +239,8 @@ export class AutoRepCounter {
       const ev = t.push(v, tMs, min);
       if (ev) done.push({ t, ev, ratio: t.amp / min });
     };
-    for (const t of this.angleT) run(t, angles[t.id as SignalKey] ?? null, this.minAmp);
-    for (const t of this.posT) run(t, pos[t.id] ?? null, t.baseMin * this.mult);
+    for (const t of this.angleT) if (this.allowed(t.id)) run(t, angles[t.id as SignalKey] ?? null, this.minAmp);
+    for (const t of this.posT) if (this.allowed(t.id)) run(t, pos[t.id] ?? null, t.baseMin * this.mult);
     if (!done.length) return null;
 
     const act = this.active;

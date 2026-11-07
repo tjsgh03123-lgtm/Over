@@ -4,8 +4,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { requireNativeView } from 'expo';
 import { useKeepAwake } from 'expo-keep-awake';
 import Svg, { Circle, Line } from 'react-native-svg';
-import { AutoRepCounter, STRICT_LABEL, type Strictness } from '../domain/liveCount.ts';
-import { speakCount, stopSpeaking } from '../services/speak.ts';
+import { AutoRepCounter, countWord, FOCUS_LABEL, type Focus, STRICT_LABEL, type Strictness } from '../domain/liveCount.ts';
+import { SetFlow, type FlowConfig } from '../domain/setFlow.ts';
+import { speakCount, speakText, stopSpeaking } from '../services/speak.ts';
 import { Btn, Chip, Header, Row, Segmented, T } from './components.tsx';
 import { C, GC, S } from './theme.ts';
 
@@ -34,22 +35,40 @@ function fmtRep(ms: number) { return `${(ms / 1000).toFixed(1)}초`; }
  * ‘이 횟수 사용’을 누르면 onUse(횟수)로 돌려준다.
  */
 export function LiveCountModal({
-  visible, onClose, onUse,
-}: { visible: boolean; exerciseName?: string; onClose: () => void; onUse: (count: number) => void }) {
+  visible, onClose, onUse, defaults,
+}: { visible: boolean; defaults?: FlowConfig & { focus?: Focus }; onClose: () => void; onUse: (counts: number[]) => void }) {
   if (!visible) return null;
   return (
     <Modal visible animationType="slide" onRequestClose={onClose}>
-      <LiveBody onClose={onClose} onUse={onUse} />
+      <LiveBody onClose={onClose} onUse={onUse} defaults={defaults ?? { targetReps: 10, totalSets: 3, restSec: 60 }} />
     </Modal>
   );
 }
 
-function LiveBody({ onClose, onUse }: { onClose: () => void; onUse: (n: number) => void }) {
+function Stepper({ label, value, unit, step, min, max, onChange }: {
+  label: string; value: number; unit: string; step: number; min: number; max: number; onChange: (v: number) => void;
+}) {
+  return (
+    <Row style={{ marginTop: S.sm }}>
+      <T muted style={{ flex: 1 }}>{label}</T>
+      <Btn label="−" kind="ghost" small onPress={() => onChange(Math.max(min, value - step))} />
+      <T bold style={{ width: 64, textAlign: 'center' }}>{value}{unit}</T>
+      <Btn label="+" kind="ghost" small onPress={() => onChange(Math.min(max, value + step))} />
+    </Row>
+  );
+}
+
+function LiveBody({ onClose, onUse, defaults }: { onClose: () => void; onUse: (counts: number[]) => void; defaults: FlowConfig & { focus?: Focus } }) {
   useKeepAwake();
   const { width: winW, height: winH } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const [strict, setStrict] = useState<Strictness>('normal');
   const [sound, setSound] = useState(true); // 횟수를 소리로 읽기
+  const [focus, setFocus] = useState<Focus>(defaults.focus ?? 'auto');
+  const [mode, setMode] = useState<'free' | 'sets'>('sets'); // 세트 자동 진행 / 자유 카운트
+  const [cfg, setCfg] = useState<FlowConfig>(defaults);
+  const flow = useRef<SetFlow | null>(null);
+  const [, flowRender] = useState(0);
   const [model, setModel] = useState<'lite' | 'full'>('lite');
   const [front, setFront] = useState(false);
   const [ready, setReady] = useState(false); // 카메라 권한 확인 끝, 카메라 켜짐
@@ -66,7 +85,33 @@ function LiveBody({ onClose, onUse }: { onClose: () => void; onUse: (n: number) 
   const [, force] = useState(0);
 
   useEffect(() => { counter.current.setStrictness(strict); }, [strict]);
+  useEffect(() => { counter.current.setFocus(focus); counter.current.reset(); setCount(0); setLastMs(null); }, [focus]);
   useEffect(() => stopSpeaking, []);
+
+  // 세트 자동 진행: 설정이 바뀌거나 모드를 바꾸면 처음부터 다시 준비
+  useEffect(() => {
+    flow.current = mode === 'sets' ? new SetFlow(cfg) : null;
+    counter.current.reset(); setCount(0); setLastMs(null);
+    flowRender((n) => n + 1);
+  }, [mode, cfg]);
+
+  // 쉬는 시간 카운트다운 (0.25초마다 확인)
+  useEffect(() => {
+    if (mode !== 'sets') return;
+    const id = setInterval(() => {
+      const f = flow.current;
+      if (!f || f.phase !== 'resting') return;
+      const ev = f.tick(Date.now());
+      if (ev?.kind === 'restTick' && sound) speakText(countWord(ev.secLeft));
+      if (ev?.kind === 'start') {
+        counter.current.reset(); setCount(0); setLastMs(null);
+        Vibration.vibrate([0, 200, 100, 200]);
+        if (sound) speakText(`${ev.setNo}세트 시작`);
+      }
+      flowRender((n) => n + 1);
+    }, 250);
+    return () => clearInterval(id);
+  }, [mode, sound]);
 
   // 열자마자 권한을 확인하고 카메라를 켠다 (시작 버튼 없음)
   useEffect(() => {
@@ -108,17 +153,26 @@ function LiveBody({ onClose, onUse }: { onClose: () => void; onUse: (n: number) 
     if (any) lastSeen.current = Date.now();
     setFrame({ lm, w, h });
     setFrames((n) => n + 1);
+    const f = flow.current;
+    if (f && f.phase !== 'counting') return; // 쉬는 중·끝난 뒤에는 세지 않는다
     const ev = counter.current.push(lm, w, h, t);
     if (ev) {
-      setCount(counter.current.count);
+      const n = counter.current.count;
+      setCount(n);
       setLastMs(ev.timeMs);
       Vibration.vibrate(40);
-      if (sound) speakCount(counter.current.count);
+      if (sound) speakCount(n);
+      const fe = f?.onCount(n, Date.now());
+      if (fe?.kind === 'setDone') {
+        Vibration.vibrate([0, 300, 100, 300]);
+        if (sound) speakText(fe.last ? '운동 끝, 수고했어요' : `${fe.setNo}세트 완료, ${cfg.restSec}초 쉬세요`, true);
+        flowRender((x) => x + 1);
+      }
     }
     force((n) => (n + 1) % 1000);
   };
 
-  const reset = () => { stopSpeaking(); counter.current.reset(); setCount(0); setLastMs(null); };
+  const reset = () => { stopSpeaking(); counter.current.reset(); setCount(0); setLastMs(null); if (mode === 'sets') { flow.current = new SetFlow(cfg); flowRender((n) => n + 1); } };
   const restartCamera = () => { setFrames(0); setFrame(null); setErr(null); setCamKey((k) => k + 1); };
 
   // 영상은 비율을 유지(FIT)해서 보이므로, 같은 비율의 상자에 영상과 뼈대를 겹쳐 그린다
@@ -165,6 +219,24 @@ function LiveBody({ onClose, onUse }: { onClose: () => void; onUse: (n: number) 
           )}
         </View>
 
+        {mode === 'sets' && flow.current && (
+          <View style={{ marginTop: S.md, padding: S.md, borderRadius: 12, backgroundColor: C.card2, alignItems: 'center' }}>
+            {flow.current.phase === 'resting' ? (
+              <>
+                <T muted>{flow.current.setNo}세트 완료 · 쉬는 중</T>
+                <T bold style={{ fontSize: 40 }}>{flow.current.secLeft(Date.now())}초</T>
+                <Btn label="쉬기 건너뛰기" kind="ghost" small onPress={() => {
+                  const e = flow.current?.skipRest();
+                  if (e) { counter.current.reset(); setCount(0); setLastMs(null); if (sound) speakText(`${e.setNo}세트 시작`); flowRender((n) => n + 1); }
+                }} />
+              </>
+            ) : flow.current.phase === 'done' ? (
+              <T bold>운동 끝 · {flow.current.counts.join(' / ')}회</T>
+            ) : (
+              <T bold>{flow.current.setNo} / {cfg.totalSets}세트 · 목표 {cfg.targetReps}회</T>
+            )}
+          </View>
+        )}
         <Row style={{ justifyContent: 'center', alignItems: 'flex-end', marginTop: S.md }}>
           <T bold style={{ fontSize: 64, lineHeight: 70 }}>{count}</T>
           <T muted style={{ fontSize: 20, marginBottom: 10 }}>회</T>
@@ -192,9 +264,28 @@ function LiveBody({ onClose, onUse }: { onClose: () => void; onUse: (n: number) 
           <Btn label="처음부터" kind="ghost" style={{ flex: 1 }} onPress={reset} />
           <Btn label={front ? '뒷카메라로' : '앞카메라로'} kind="ghost" style={{ flex: 1 }} onPress={() => setFront((f) => !f)} />
         </Row>
+        <Row style={{ marginTop: S.md }}>
+          <View style={{ flex: 1 }}>
+            <Segmented<'free' | 'sets'> options={[{ key: 'sets', label: '세트 자동 진행' }, { key: 'free', label: '자유 카운트' }]} value={mode} onChange={setMode} />
+          </View>
+        </Row>
+        {mode === 'sets' && (
+          <View>
+            <Stepper label="세트당 목표 횟수" value={cfg.targetReps} unit="회" step={1} min={1} max={100} onChange={(v) => setCfg((c) => ({ ...c, targetReps: v }))} />
+            <Stepper label="세트 수" value={cfg.totalSets} unit="세트" step={1} min={1} max={20} onChange={(v) => setCfg((c) => ({ ...c, totalSets: v }))} />
+            <Stepper label="쉬는 시간" value={cfg.restSec} unit="초" step={15} min={5} max={600} onChange={(v) => setCfg((c) => ({ ...c, restSec: v }))} />
+            <T muted style={{ fontSize: 12, marginTop: 4 }}>목표 횟수를 채우면 쉬는 시간을 알려 주고, 끝나면 “시작”이라고 말한 뒤 자동으로 다음 세트를 셉니다.</T>
+          </View>
+        )}
         <Row style={{ marginTop: S.sm }}>
           <Chip label={sound ? '🔊 횟수 소리 켜짐' : '🔇 횟수 소리 꺼짐'} active={sound} onPress={() => { if (sound) stopSpeaking(); setSound((v) => !v); }} />
         </Row>
+        <T muted style={{ marginTop: S.md, fontSize: 12 }}>운동 종류</T>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
+          {(Object.keys(FOCUS_LABEL) as Focus[]).map((k) => (
+            <Chip key={k} label={FOCUS_LABEL[k]} active={focus === k} onPress={() => setFocus(k)} />
+          ))}
+        </View>
         <Row style={{ marginTop: S.sm }}>
           <View style={{ flex: 1 }}>
             <Segmented<Strictness> options={(['easy', 'normal', 'strict'] as Strictness[]).map((k) => ({ key: k, label: STRICT_LABEL[k] }))} value={strict} onChange={setStrict} />
@@ -205,7 +296,15 @@ function LiveBody({ onClose, onUse }: { onClose: () => void; onUse: (n: number) 
             <Segmented<'lite' | 'full'> options={[{ key: 'lite', label: '빠름' }, { key: 'full', label: '정밀' }]} value={model} onChange={setModel} />
           </View>
         </Row>
-        <Btn label={`이 횟수 사용 (${count}회)`} disabled={count === 0} style={{ marginTop: S.md }} onPress={() => onUse(count)} />
+        {(() => {
+          const counts = mode === 'sets' && flow.current ? flow.current.finish(count) : count > 0 ? [count] : [];
+          return (
+            <Btn
+              label={counts.length > 1 ? `이 기록 사용 (${counts.join(' / ')}회)` : `이 횟수 사용 (${count}회)`}
+              disabled={counts.length === 0} style={{ marginTop: S.md }} onPress={() => onUse(counts)}
+            />
+          );
+        })()}
         <T muted style={{ fontSize: 12, marginTop: S.sm, textAlign: 'center' }}>
           횟수가 틀리면 ‘쉬움/엄격’으로 바꿔 보세요. 쉬움은 작은 움직임도 세고, 엄격은 크게 움직여야 셉니다.
         </T>

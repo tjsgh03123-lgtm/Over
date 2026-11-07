@@ -126,6 +126,10 @@ export function HomeScreen() {
         </Card>
       )}
 
+      <Btn
+        label="맨몸 운동 시작" kind="ghost" style={{ marginBottom: S.sm }}
+        onPress={async () => { nav.openSession(await startFreeSession(db, today, '맨몸 운동')); bump(); }}
+      />
       <Row style={{ marginBottom: S.lg }}>
         <Btn label="AI 루틴 가져오기" kind="ghost" style={{ flex: 1 }} onPress={nav.openImport} />
         <Btn label="인바디 · 신체 기록" kind="ghost" style={{ flex: 1 }} onPress={nav.openBody} />

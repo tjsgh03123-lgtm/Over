@@ -13,6 +13,7 @@ import { AI_IMPORT_PROMPT, AI_PROMPT_DIVIDER } from '../src/domain/importSchema.
 import { fmtDuration, fmtElapsed, restFor, suggestFor } from '../src/domain/format.ts';
 import { clampDrag, moveItem, targetIndex } from '../src/domain/reorder.ts';
 import { DEFAULT_GRAPH_COLORS, GRAPH_KEYS, sanitizeGraphColors, sanitizeMode } from '../src/domain/themeModel.ts';
+import { SetFlow } from '../src/domain/setFlow.ts';
 import { AutoRepCounter, countWord, JOINTS, jointAngle } from '../src/domain/liveCount.ts';
 import type { SessionRecord, SetRecord } from '../src/domain/types.ts';
 
@@ -521,6 +522,14 @@ test('자동: 스쿼트처럼 무릎·고관절이 같이 움직여도 5회', ()
   assert.ok(['무릎', '고관절'].includes(c.jointLabel!));
   assert.ok(c.avgRepMs! > 1000 && c.avgRepMs! < 2200);
 });
+test('운동 종류를 고르면 그 동작만 센다 (하체 선택 시 팔 움직임 무시)', () => {
+  const c = new AutoRepCounter(); c.setFocus('leg');
+  runAuto(c, { elbow: wave(151, 30, 45, 160) });
+  assert.equal(c.count, 0);
+  const d = new AutoRepCounter(); d.setFocus('arm');
+  runAuto(d, { elbow: wave(151, 30, 45, 160) });
+  assert.equal(d.count, 5);
+});
 test('자동: 컬처럼 팔꿈치만 움직여도 5회 (운동 종류를 알려 주지 않음)', () => {
   const c = new AutoRepCounter();
   runAuto(c, { elbow: wave(121, 24, 45, 160), knee: Array(121).fill(172), hip: Array(121).fill(170) });
@@ -624,6 +633,37 @@ test('횟수를 소리로 읽는 말', () => {
   assert.equal(countWord(37), '서른일곱');
   assert.equal(countWord(100), '100');
   assert.equal(countWord(0), '');
+});
+
+test('세트 자동 진행: 목표 횟수 → 쉬는 시간 → 다음 세트 → … → 종료', () => {
+  const f = new SetFlow({ targetReps: 10, totalSets: 3, restSec: 60 });
+  assert.equal(f.onCount(9, 0), null);
+  const e1 = f.onCount(10, 1000);
+  assert.deepEqual(e1, { kind: 'setDone', setNo: 1, count: 10, last: false });
+  assert.equal(f.phase, 'resting');
+  assert.equal(f.onCount(11, 1500), null); // 쉬는 중에는 세지 않음
+  assert.equal(f.secLeft(1000), 60);
+  assert.equal(f.tick(30000), null);
+  assert.deepEqual(f.tick(58500), { kind: 'restTick', secLeft: 3 }); // 61000-58500 = 2.5초 → 3
+  assert.equal(f.tick(58600), null); // 같은 초는 한 번만
+  assert.deepEqual(f.tick(59600), { kind: 'restTick', secLeft: 2 });
+  assert.deepEqual(f.tick(61000), { kind: 'start', setNo: 2 });
+  assert.equal(f.phase, 'counting');
+  f.onCount(10, 70000);
+  assert.deepEqual(f.skipRest(), { kind: 'start', setNo: 3 });
+  const last = f.onCount(12, 90000);
+  assert.deepEqual(last, { kind: 'setDone', setNo: 3, count: 12, last: true });
+  assert.equal(f.phase, 'done');
+  assert.deepEqual(f.counts, [10, 10, 12]);
+  assert.equal(f.tick(999999), null);
+});
+test('세트 자동 진행: 중간에 끝내면 센 만큼만 돌려준다', () => {
+  const f = new SetFlow({ targetReps: 10, totalSets: 3, restSec: 30 });
+  f.onCount(10, 0);
+  f.tick(31000);
+  assert.deepEqual(f.finish(6), [10, 6]);
+  const g = new SetFlow({ targetReps: 5, totalSets: 2, restSec: 10 });
+  assert.deepEqual(g.finish(0), []);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

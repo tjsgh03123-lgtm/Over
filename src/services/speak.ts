@@ -14,3 +14,11 @@ export function speakCount(n: number): void {
 export function stopSpeaking(): void {
   try { Speech.stop(); } catch { /* 무시 */ }
 }
+
+/** 문장을 읽어 준다. queue가 true면 앞의 소리를 끊지 않고 이어서 읽는다. */
+export function speakText(text: string, queue = false): void {
+  try {
+    if (!queue) Speech.stop();
+    Speech.speak(text, { language: 'ko-KR', rate: 1.1 });
+  } catch { /* 무시 */ }
+}
