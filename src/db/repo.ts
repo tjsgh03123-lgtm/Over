@@ -8,6 +8,7 @@ import { addDays, weekStart } from '../domain/stats.ts';
 import { shiftStartForMissed } from '../domain/cycle.ts';
 import { moveItem } from '../domain/reorder.ts';
 import { adjustForCondition, type Cond } from '../domain/condition.ts';
+import { decodeOverride, encodeOverride, parseIds, partSummary } from '../domain/homeCards.ts';
 import {
   dayForDate, EMPTY_ROUTINES, inferMode, MAX_DAYS, sanitizeRoutines,
   type DayKind, type Routine, type RoutineDay, type RoutineMode, type RoutinesState,
@@ -147,6 +148,7 @@ export interface TemplateExerciseRow {
   rest_sec: number | null;
   note: string | null;
   ss: string | null;
+  category: string | null;
 }
 
 export async function listTemplates(db: Db): Promise<TemplateRow[]> {
@@ -155,7 +157,7 @@ export async function listTemplates(db: Db): Promise<TemplateRow[]> {
 
 export async function getTemplateExercises(db: Db, templateId: string): Promise<TemplateExerciseRow[]> {
   return db.all<TemplateExerciseRow>(
-    `SELECT t.id, t.exercise_id, e.name, e.weight_mode, t.position, t.target_sets, t.target_reps, t.target_weight, t.intensity, t.rest_sec, t.note, t.ss
+    `SELECT t.id, t.exercise_id, e.name, e.weight_mode, e.category, t.position, t.target_sets, t.target_reps, t.target_weight, t.intensity, t.rest_sec, t.note, t.ss
        FROM workout_template_exercises t JOIN exercises e ON e.id = t.exercise_id
       WHERE t.template_id = ? ORDER BY t.position`,
     [templateId],
@@ -1057,4 +1059,47 @@ export async function saveSessionAsDay(db: Db, today: string, sessionId: string,
   });
   const dayId = await upsertDay(db, today, routineId, { name, kind: 'weights', exercises });
   return { routineId, dayId };
+}
+
+
+/* ============================== 홈: 루틴 카드 · 오늘 변경 · 보관 ============================== */
+
+export interface TemplateCard {
+  id: string;
+  name: string;
+  count: number;
+  parts: { part: string; sets: number }[];
+  /** 마지막으로 완료한 날짜 (없으면 null) */
+  lastDate: string | null;
+}
+
+/** 홈의 '내 루틴' 카드 데이터: 종목 수, 부위별 세트 수, 마지막으로 한 날 */
+export async function getTemplateCards(db: Db): Promise<TemplateCard[]> {
+  const tpls = await listTemplates(db);
+  const last = await db.all<{ template_id: string; d: string }>(
+    "SELECT template_id, MAX(date) AS d FROM workout_sessions WHERE status = 'done' AND template_id IS NOT NULL GROUP BY template_id",
+  );
+  const lastBy = new Map(last.map((r) => [r.template_id, r.d]));
+  const out: TemplateCard[] = [];
+  for (const t of tpls) {
+    const rows = await getTemplateExercises(db, t.id);
+    out.push({ id: t.id, name: t.name, count: rows.length, parts: partSummary(rows), lastDate: lastBy.get(t.id) ?? null });
+  }
+  return out;
+}
+
+/** 오늘만 다른 날 루틴으로 하기 (일정은 그대로) */
+export async function getTodayOverride(db: Db, today: string): Promise<string | null> {
+  return decodeOverride(await getSetting(db, 'today_override'), today);
+}
+export async function setTodayOverride(db: Db, today: string, templateId: string | null): Promise<void> {
+  await setSetting(db, 'today_override', encodeOverride(today, templateId));
+}
+
+/** 홈에서 숨긴(보관한) 루틴 */
+export async function getArchivedTemplates(db: Db): Promise<string[]> {
+  return parseIds(await getSetting(db, 'home_archived'));
+}
+export async function setArchivedTemplates(db: Db, ids: string[]): Promise<void> {
+  await setSetting(db, 'home_archived', JSON.stringify([...new Set(ids)]));
 }

@@ -52,7 +52,7 @@ export function RoutinePreview({ templateId, title, onClose, onStart }: { templa
 
   if (!templateId || !tplId) return null;
   const parts = new Map<string, number>();
-  for (const { r, adj } of shown) parts.set(partOf(r.name), (parts.get(partOf(r.name)) ?? 0) + adj.sets);
+  for (const { r, adj } of shown) parts.set(partOf(r.name, r.category), (parts.get(partOf(r.name, r.category)) ?? 0) + adj.sets);
   const minutes = estimateMinutes(shown.map(({ r, adj }) => ({ sets: adj.sets, restSec: (r.rest_sec ?? restDef) + exRest / Math.max(1, adj.sets) })));
   const h = Math.floor(minutes / 60);
   const curTpl = tpls.find((t) => t.id === tplId);
@@ -108,7 +108,7 @@ export function RoutinePreview({ templateId, title, onClose, onStart }: { templa
               <View style={{ flex: 1 }}>
                 <T bold>{r.name}{r.ss && rows[i - 1]?.ss === r.ss ? '  ⛓ 슈퍼세트' : ''}</T>
                 <T muted style={{ fontSize: 12 }}>
-                  {adj.sets}세트{r.target_reps ? ` × ${r.target_reps}회` : ''}{adj.weight ? ` · ${adj.weight}kg` : ''} · {partOf(r.name)}
+                  {adj.sets}세트{r.target_reps ? ` × ${r.target_reps}회` : ''}{adj.weight ? ` · ${adj.weight}kg` : ''} · {partOf(r.name, r.category)}
                   {cond !== 100 && (adj.sets !== r.target_sets || adj.weight !== r.target_weight) ? `  (원래 ${r.target_sets}세트${r.target_weight ? ` ${r.target_weight}kg` : ''})` : ''}
                 </T>
               </View>

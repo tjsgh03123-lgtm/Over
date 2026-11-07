@@ -874,5 +874,40 @@ await test('루틴 시작: 순서 변경·컨디션은 이번 운동에만 적�
   assert.equal((await repo.loadCategoryMap(db)).get(a.id), null);
 });
 
+await test('홈 카드: 루틴별 종목 수·부위 요약·마지막으로 한 날, 오늘 변경·보관 저장', async () => {
+  const db = await emptyDb();
+  const a = await repo.getOrCreateExercise(db, '바벨 벤치프레스');
+  const b = await repo.getOrCreateExercise(db, '덤벨 컬');
+  const t1 = await repo.saveTemplate(db, { name: '가슴 팔', exercises: [
+    { exerciseId: a.id, targetSets: 4 }, { exerciseId: b.id, targetSets: 3 },
+  ] });
+  const t2 = await repo.saveTemplate(db, { name: '팔만', exercises: [{ exerciseId: b.id, targetSets: 2 }] });
+  let cards = await repo.getTemplateCards(db);
+  assert.deepEqual(cards.map((c) => [c.name, c.count, c.lastDate]), [['가슴 팔', 2, null], ['팔만', 1, null]]);
+  assert.deepEqual(cards[0].parts, [{ part: '가슴', sets: 4 }, { part: '팔', sets: 3 }]);
+  // 완료한 운동만 '마지막으로 한 날'에 잡힘 (진행 중·루틴 없는 자유 운동은 제외)
+  const s1 = await repo.startSessionFromTemplate(db, t1, '2026-11-01');
+  await repo.finishSession(db, s1);
+  const s2 = await repo.startSessionFromTemplate(db, t1, '2026-11-05');
+  await repo.finishSession(db, s2);
+  await repo.startSessionFromTemplate(db, t2, '2026-11-06'); // 진행 중
+  cards = await repo.getTemplateCards(db);
+  assert.deepEqual(cards.map((c) => c.lastDate), ['2026-11-05', null]);
+  // 부위를 바꾸면 카드 요약에도 반영
+  await repo.setExerciseCategory(db, b.id, '어깨');
+  assert.deepEqual((await repo.getTemplateCards(db))[0].parts, [{ part: '가슴', sets: 4 }, { part: '어깨', sets: 3 }]);
+  // 오늘 변경
+  assert.equal(await repo.getTodayOverride(db, '2026-11-07'), null);
+  await repo.setTodayOverride(db, '2026-11-07', t2);
+  assert.equal(await repo.getTodayOverride(db, '2026-11-07'), t2);
+  assert.equal(await repo.getTodayOverride(db, '2026-11-08'), null);
+  await repo.setTodayOverride(db, '2026-11-07', null);
+  assert.equal(await repo.getTodayOverride(db, '2026-11-07'), null);
+  // 보관
+  assert.deepEqual(await repo.getArchivedTemplates(db), []);
+  await repo.setArchivedTemplates(db, [t2, t2]);
+  assert.deepEqual(await repo.getArchivedTemplates(db), [t2]);
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

@@ -16,6 +16,7 @@ import { DEFAULT_GRAPH_COLORS, GRAPH_KEYS, sanitizeGraphColors, sanitizeMode } f
 import { SetFlow } from '../src/domain/setFlow.ts';
 import { adjustForCondition, sanitizeRunMode } from '../src/domain/condition.ts';
 import { buildPickGroups, equipOf } from '../src/domain/exerciseList.ts';
+import { decodeOverride, encodeOverride, fmtDaysAgo, parseIds, partSummary, weekDays } from '../src/domain/homeCards.ts';
 import { CATALOG, matchProfile, partOf } from '../src/domain/exerciseCatalog.ts';
 import { barbellTotal, bestE1rm, estimateMinutes, monthDays, monthWeeks, partTotals, recommendNext, streakWeeks, volumeOf } from '../src/domain/workoutStats.ts';
 import { blocksOf, currentOf, restAfter, type GEx } from '../src/domain/guided.ts';
@@ -843,6 +844,33 @@ test('부위: 내가 지정한 부위가 기본 종목 부위보다 우선', () 
   assert.equal(partOf('벤치프레스', '어깨'), '어깨');
   assert.equal(partOf('벤치프레스'), '가슴');
   assert.equal(partOf('벤치프레스', '이상한값'), '가슴');
+});
+
+test('홈 카드: 부위별 세트 요약·마지막으로 한 날·이번 주 7일', () => {
+  assert.deepEqual(
+    partSummary([
+      { name: '바벨 벤치프레스', target_sets: 4 }, { name: '덤벨 컬', target_sets: 3 }, { name: '인클라인 덤벨 프레스', target_sets: 3 },
+      { name: '내 운동', category: '어깨', target_sets: 2 }, { name: '이상한 운동', target_sets: 1 },
+    ]),
+    [{ part: '가슴', sets: 7 }, { part: '팔', sets: 3 }, { part: '어깨', sets: 2 }, { part: '기타', sets: 1 }],
+  );
+  assert.equal(fmtDaysAgo(null, '2026-11-07'), '아직 안 함');
+  assert.equal(fmtDaysAgo('2026-11-07', '2026-11-07'), '오늘');
+  assert.equal(fmtDaysAgo('2026-11-06', '2026-11-07'), '어제');
+  assert.equal(fmtDaysAgo('2026-10-28', '2026-11-07'), '10일 전');
+  assert.deepEqual(weekDays('2026-11-07'), ['2026-11-02', '2026-11-03', '2026-11-04', '2026-11-05', '2026-11-06', '2026-11-07', '2026-11-08']);
+  assert.equal(weekDays('2026-11-02')[0], '2026-11-02');
+  assert.equal(weekDays('2026-11-08')[6], '2026-11-08');
+});
+test('홈 카드: 오늘 변경은 오늘 날짜일 때만 유효, 보관 목록은 깨진 값도 안전', () => {
+  assert.equal(decodeOverride(encodeOverride('2026-11-07', 'tpl_1'), '2026-11-07'), 'tpl_1');
+  assert.equal(decodeOverride(encodeOverride('2026-11-07', 'tpl_1'), '2026-11-08'), null);
+  assert.equal(decodeOverride(encodeOverride('2026-11-07', null), '2026-11-07'), null);
+  assert.equal(decodeOverride(null, '2026-11-07'), null);
+  assert.deepEqual(parseIds('["a","b"]'), ['a', 'b']);
+  assert.deepEqual(parseIds('깨진'), []);
+  assert.deepEqual(parseIds(null), []);
+  assert.deepEqual(parseIds('{"a":1}'), []);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);
