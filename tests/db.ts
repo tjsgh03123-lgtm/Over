@@ -783,5 +783,22 @@ await test('세트 사이 휴식: 기본값(90초)·설정값·잘못된 값, �
   assert.equal((await repo.getSessionRests(db, free))[seId], null);
 });
 
+await test('자유 운동: 첫 종목을 고른 때부터 시간 시작, 종목 방식은 운동 중에 바꿈', async () => {
+  const db = await emptyDb();
+  const sid = await repo.startFreeSession(db, '2026-11-07');
+  await db.run("UPDATE workout_sessions SET started_at = '2020-01-01T00:00:00.000Z' WHERE id = ?", [sid]);
+  const ex = await repo.getOrCreateExercise(db, '푸시업');
+  const se = await repo.addSessionExercise(db, sid, ex.id);
+  const m = (await db.first<{ started_at: string }>('SELECT started_at FROM workout_sessions WHERE id = ?', [sid]))!;
+  assert.ok(new Date(m.started_at).getFullYear() >= 2026);
+  const ex2 = await repo.getOrCreateExercise(db, '풀업');
+  await db.run("UPDATE workout_sessions SET started_at = '2020-01-01T00:00:00.000Z' WHERE id = ?", [sid]);
+  await repo.addSessionExercise(db, sid, ex2.id); // 두 번째 종목은 시작 시각을 바꾸지 않음
+  assert.equal((await db.first<{ started_at: string }>('SELECT started_at FROM workout_sessions WHERE id = ?', [sid]))!.started_at, '2020-01-01T00:00:00.000Z');
+  await repo.setSessionExerciseMode(db, se, 'bodyweight');
+  assert.equal((await repo.loadSession(db, sid))!.exercises[0].weight_mode, 'bodyweight');
+  assert.equal((await repo.listExercises(db)).find((e) => e.id === ex.id)!.weight_mode, 'bodyweight');
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

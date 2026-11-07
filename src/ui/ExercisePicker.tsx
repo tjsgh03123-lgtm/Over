@@ -41,6 +41,7 @@ export function ExercisePicker({ visible, onClose, onPick, newMode }: { visible:
               }}
             />
           ) : null}
+          <Text style={{ color: C.muted, fontSize: 12, marginBottom: 4 }}>트래킹 기본 종목 (바벨·덤벨) — 부위를 누르세요</Text>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: S.sm }}>
             {PARTS.map((p) => <Chip key={p} label={p} active={part === p} onPress={() => setPart(part === p ? null : p)} />)}
           </View>

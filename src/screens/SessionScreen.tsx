@@ -4,7 +4,7 @@ import { useApp } from '../app/context.tsx';
 import {
   addCardio, addSessionExercise, addSet, deleteSet, deleteSession, finishSession, getRestDefault, getSessionRests, getWeightStep, lastPerformance,
   loadSession, removeSessionExercise, reopenSession, saveSessionAsDay, setExerciseNote,
-  setSessionNote, updateSet, type SessionExRow, type SessionFull, type SetRow,
+  setSessionExerciseMode, setSessionNote, updateSet, type SessionExRow, type SessionFull, type SetRow,
 } from '../db/repo.ts';
 import { matchProfile } from '../domain/exerciseCatalog.ts';
 import type { Focus } from '../domain/liveCount.ts';
@@ -174,6 +174,13 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
 
               {open && (
                 <View style={{ paddingHorizontal: S.lg, paddingBottom: S.lg }}>
+                  {editable && (
+                    <Row style={{ flexWrap: 'wrap', marginBottom: S.sm }}>
+                      {([['weighted', '중량'], ['bodyweight', '맨몸(체중)'], ['assisted', '보조']] as const).map(([k, label]) => (
+                        <Chip key={k} label={label} active={ex.weight_mode === k} onPress={async () => { await setSessionExerciseMode(db, ex.id, k); bump(); reload(); }} />
+                      ))}
+                    </Row>
+                  )}
                   {editable && (
                     <Btn label="📷 실시간 횟수 세기" kind="ghost" small style={{ marginBottom: S.sm }} onPress={() => setLive({
                       exId: ex.id,
@@ -410,8 +417,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
       />
       <ExercisePicker
         visible={picker}
-        newMode={s.title === '맨몸 운동' ? 'bodyweight' : undefined}
-        onClose={() => setPicker(false)}
+                onClose={() => setPicker(false)}
         onPick={async (e) => { setPicker(false); await addSessionExercise(db, s.id, e.id); bump(); reload(); }}
       />
     </View>

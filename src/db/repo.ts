@@ -75,6 +75,14 @@ export async function setExerciseMode(db: Db, id: string, mode: WeightMode): Pro
   await db.run('UPDATE workout_session_exercises SET weight_mode = ? WHERE exercise_id = ?', [mode, id]);
 }
 
+/** 이 운동(세션)의 종목 방식을 바꾼다 (중량/체중/보조). 이후 새 세션에도 그 방식이 기본이 된다. */
+export async function setSessionExerciseMode(db: Db, sessionExerciseId: string, mode: WeightMode): Promise<void> {
+  const se = await db.first<{ exercise_id: string }>('SELECT exercise_id FROM workout_session_exercises WHERE id = ?', [sessionExerciseId]);
+  if (!se) return;
+  await db.run('UPDATE workout_session_exercises SET weight_mode = ? WHERE id = ?', [mode, sessionExerciseId]);
+  await db.run('UPDATE exercises SET weight_mode = ? WHERE id = ?', [mode, se.exercise_id]);
+}
+
 /** 기록이 있으면 보관(archived) 처리, 없으면 삭제 */
 export async function deleteExercise(db: Db, id: string): Promise<'deleted' | 'archived'> {
   const used = await db.first<{ n: number }>('SELECT COUNT(*) AS n FROM workout_session_exercises WHERE exercise_id = ?', [id]);
@@ -547,7 +555,11 @@ export async function addSessionExercise(db: Db, sessionId: string, exerciseId: 
   if (!ex) throw new Error('종목을 찾을 수 없습니다');
   const pos = await db.first<{ p: number | null }>('SELECT MAX(position) AS p FROM workout_session_exercises WHERE session_id = ?', [sessionId]);
   const seId = uid('se');
+  // 자유 운동은 첫 종목을 고른 순간부터 시간을 센다 (종목 고르기 전 시간은 운동 시간이 아님)
+  const free = await db.first<{ is_free: number; n: number }>(
+    'SELECT s.is_free AS is_free, (SELECT COUNT(*) FROM workout_session_exercises WHERE session_id = s.id) AS n FROM workout_sessions s WHERE s.id = ?', [sessionId]);
   await db.transaction(async () => {
+    if (free && free.is_free && free.n === 0) await db.run('UPDATE workout_sessions SET started_at = ? WHERE id = ?', [nowIso(), sessionId]);
     await db.run(
       'INSERT INTO workout_session_exercises (id, session_id, exercise_id, exercise_name, weight_mode, position, intensity) VALUES (?,?,?,?,?,?,NULL)',
       [seId, sessionId, exerciseId, ex.name, ex.weight_mode, (pos?.p ?? -1) + 1],
