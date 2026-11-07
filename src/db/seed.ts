@@ -15,6 +15,10 @@ const LEGACY_SEED_EXERCISES = [
 /** 예전 버전에서 만든 DB에 없는 열을 추가한다 (여러 번 실행해도 안전) */
 export async function ensureColumns(db: Db): Promise<void> {
   const cols = await db.all<{ name: string }>('PRAGMA table_info(workout_sets)');
+  for (const t of ['workout_template_exercises', 'workout_session_exercises']) {
+    const c2 = await db.all<{ name: string }>(`PRAGMA table_info(${t})`);
+    if (!c2.some((c) => c.name === 'ss')) await db.run(`ALTER TABLE ${t} ADD COLUMN ss TEXT`);
+  }
   if (!cols.some((c) => c.name === 'is_rm')) await db.run('ALTER TABLE workout_sets ADD COLUMN is_rm INTEGER DEFAULT 0');
 }
 

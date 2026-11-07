@@ -44,7 +44,7 @@ export function DayEditorScreen({ routineId, dayId }: { routineId: string; dayId
           setName(d.day.name); setKind(d.day.kind); setWeekday(d.day.weekday); setPostCardio(d.postCardioMin);
           setExercises(d.exercises.map((e) => ({
             key: newKey(), exerciseId: e.exercise_id, name: e.name, targetSets: e.target_sets, targetReps: e.target_reps,
-            targetWeight: e.target_weight, intensity: e.intensity, restSec: e.rest_sec, note: e.note,
+            targetWeight: e.target_weight, intensity: e.intensity, restSec: e.rest_sec, note: e.note, ss: e.ss,
           })));
         }
       }
@@ -112,10 +112,23 @@ export function DayEditorScreen({ routineId, dayId }: { routineId: string; dayId
               renderItem={(e, i, handle) => (
                 <Card>
                   <Row>
-                    <T bold style={{ flex: 1 }}>{i + 1}. {e.name}</T>
+                    <T bold style={{ flex: 1 }}>{i + 1}. {e.name}{e.ss && exercises[i - 1]?.ss === e.ss ? '  ⛓ 슈퍼세트' : ''}</T>
                     <Btn label="✕" kind="danger" small onPress={() => setExercises((l) => l.filter((x) => x.key !== e.key))} />
                     {handle}
                   </Row>
+                  {i > 0 && (
+                    <Row style={{ marginTop: 6 }}>
+                      <Chip
+                        label={e.ss && exercises[i - 1]?.ss === e.ss ? '위 종목과 슈퍼세트 해제' : '위 종목과 슈퍼세트로 묶기'}
+                        active={!!e.ss && exercises[i - 1]?.ss === e.ss}
+                        onPress={() => {
+                          if (e.ss && exercises[i - 1]?.ss === e.ss) return patchEx(i, { ss: null });
+                          const g = exercises[i - 1]?.ss ?? `ss${Date.now().toString(36)}`;
+                          setExercises((l) => l.map((x, k) => (k === i || k === i - 1 ? { ...x, ss: g } : x)));
+                        }}
+                      />
+                    </Row>
+                  )}
                   <Row style={{ marginTop: 6, flexWrap: 'wrap' }}>
                     <T muted>세트</T><NumInput value={e.targetSets ?? 3} decimal={false} width={52} onCommit={(v) => patchEx(i, { targetSets: Math.max(1, v ?? 3) })} />
                     <T muted>횟수</T><NumInput value={e.targetReps ?? null} decimal={false} width={52} onCommit={(v) => patchEx(i, { targetReps: v })} />

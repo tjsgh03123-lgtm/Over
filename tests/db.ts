@@ -800,5 +800,23 @@ await test('자유 운동: 첫 종목을 고른 때부터 시간 시작, 종목 
   assert.equal((await repo.listExercises(db)).find((e) => e.id === ex.id)!.weight_mode, 'bodyweight');
 });
 
+await test('슈퍼세트 묶음이 루틴 저장·세션 시작·백업에 이어지고 종목 간 휴식 기본값은 180초', async () => {
+  const db = await emptyDb();
+  const a = await repo.getOrCreateExercise(db, '덤벨 컬');
+  const b = await repo.getOrCreateExercise(db, '라잉 트라이셉스 익스텐션');
+  const c = await repo.getOrCreateExercise(db, '벤치프레스');
+  const tid = await repo.saveTemplate(db, { name: '팔', exercises: [
+    { exerciseId: a.id, ss: 'g1' }, { exerciseId: b.id, ss: 'g1' }, { exerciseId: c.id },
+  ] });
+  assert.deepEqual((await repo.getTemplateExercises(db, tid)).map((e) => e.ss), ['g1', 'g1', null]);
+  const sid = await repo.startSessionFromTemplate(db, tid, '2026-11-07');
+  assert.deepEqual((await repo.loadSession(db, sid))!.exercises.map((e) => e.ss), ['g1', 'g1', null]);
+  const bk = await exportBackup(db);
+  assert.ok(bk.tables.workout_session_exercises.some((r) => r.ss === 'g1'));
+  assert.equal(await repo.getExerciseRest(db), 180);
+  await repo.setExerciseRest(db, 210);
+  assert.equal(await repo.getExerciseRest(db), 210);
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

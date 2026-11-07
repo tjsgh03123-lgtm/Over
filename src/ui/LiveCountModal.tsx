@@ -172,6 +172,20 @@ function LiveBody({ onClose, onUse, defaults }: { onClose: () => void; onUse: (c
     force((n) => (n + 1) % 1000);
   };
 
+  const adjustCount = (d: number) => {
+    counter.current.adjust(d);
+    const n = counter.current.count;
+    setCount(n);
+    const f = flow.current;
+    if (f && f.phase === 'counting' && d > 0) {
+      const fe = f.onCount(n, Date.now());
+      if (fe?.kind === 'setDone') {
+        Vibration.vibrate([0, 300, 100, 300]);
+        if (sound) speakText(fe.last ? '운동 끝, 수고했어요' : `${fe.setNo}세트 완료, ${cfg.restSec}초 쉬세요`, true);
+        flowRender((x) => x + 1);
+      }
+    }
+  };
   const reset = () => { stopSpeaking(); counter.current.reset(); setCount(0); setLastMs(null); if (mode === 'sets') { flow.current = new SetFlow(cfg); flowRender((n) => n + 1); } };
   const restartCamera = () => { setFrames(0); setFrame(null); setErr(null); setCamKey((k) => k + 1); };
 
@@ -238,8 +252,10 @@ function LiveBody({ onClose, onUse, defaults }: { onClose: () => void; onUse: (c
           </View>
         )}
         <Row style={{ justifyContent: 'center', alignItems: 'flex-end', marginTop: S.md }}>
-          <T bold style={{ fontSize: 64, lineHeight: 70 }}>{count}</T>
-          <T muted style={{ fontSize: 20, marginBottom: 10 }}>회</T>
+          <Btn label="−1" kind="ghost" small onPress={() => adjustCount(-1)} />
+          <T bold style={{ fontSize: 64, lineHeight: 70, marginHorizontal: S.md }}>{count}</T>
+          <T muted style={{ fontSize: 20, marginBottom: 10, marginRight: S.md }}>회</T>
+          <Btn label="+1" kind="ghost" small onPress={() => adjustCount(1)} />
         </Row>
         <T muted style={{ textAlign: 'center' }}>
           {count === 0

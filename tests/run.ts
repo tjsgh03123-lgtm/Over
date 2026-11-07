@@ -15,6 +15,7 @@ import { clampDrag, moveItem, targetIndex } from '../src/domain/reorder.ts';
 import { DEFAULT_GRAPH_COLORS, GRAPH_KEYS, sanitizeGraphColors, sanitizeMode } from '../src/domain/themeModel.ts';
 import { SetFlow } from '../src/domain/setFlow.ts';
 import { CATALOG, matchProfile } from '../src/domain/exerciseCatalog.ts';
+import { blocksOf, currentOf, restAfter, type GEx } from '../src/domain/guided.ts';
 import { AutoRepCounter, countWord, JOINTS, jointAngle } from '../src/domain/liveCount.ts';
 import type { SessionRecord, SetRecord } from '../src/domain/types.ts';
 
@@ -541,6 +542,50 @@ test('기본 종목: 20개 이상, 부위별, 이름으로 동작 매칭', () =>
   assert.equal(matchProfile('스쿼트')?.focus, 'leg');
   assert.equal(matchProfile('루마니안 데드리프트')?.focus, 'hinge');
   assert.equal(matchProfile('렛풀다운'), null);
+});
+const gx = (id: string, ss: string | null, done: number, total: number): GEx => ({
+  id, name: id, ss, sets: Array.from({ length: total }, (_, i) => ({ id: `${id}${i}`, done: i < done ? 1 : 0, set_type: 'working' })),
+});
+test('한 종목씩: 지금 종목·다음 종목·진행 번호', () => {
+  const exs = [gx('A', null, 3, 3), gx('B', null, 1, 3), gx('C', null, 0, 3)];
+  const c = currentOf(exs)!;
+  assert.equal(c.exId, 'B'); assert.equal(c.setId, 'B1'); assert.equal(c.index, 2); assert.equal(c.total, 3);
+  assert.equal(c.next![0].id, 'C');
+  assert.equal(currentOf([gx('A', null, 3, 3)]), null);
+});
+test('한 종목씩: 나중에 하기는 뒤로, 건너뜀은 끝난 것으로', () => {
+  const exs = [gx('A', null, 0, 2), gx('B', null, 0, 2)];
+  assert.equal(currentOf(exs, ['A'])!.exId, 'B');
+  assert.equal(currentOf(exs, ['A'], ['B'])!.exId, 'A'); // B 건너뜀, A는 남은 유일한 것
+  assert.equal(currentOf(exs, [], ['A', 'B']), null);
+});
+test('슈퍼세트: 번갈아 진행하고 한 바퀴 끝날 때만 휴식', () => {
+  const exs = [gx('A', 's1', 0, 2), gx('B', 's1', 0, 2), gx('C', null, 0, 2)];
+  assert.equal(blocksOf(exs).length, 2);
+  assert.equal(currentOf(exs)!.exId, 'A');
+  const a1 = [gx('A', 's1', 1, 2), gx('B', 's1', 0, 2), gx('C', null, 0, 2)];
+  assert.equal(currentOf(a1)!.exId, 'B');
+  assert.equal(restAfter(a1, 'A'), 'none');
+  const b1 = [gx('A', 's1', 1, 2), gx('B', 's1', 1, 2), gx('C', null, 0, 2)];
+  assert.equal(currentOf(b1)!.exId, 'A');
+  assert.equal(restAfter(b1, 'B'), 'set');
+  const end = [gx('A', 's1', 2, 2), gx('B', 's1', 2, 2), gx('C', null, 0, 2)];
+  assert.equal(restAfter(end, 'B'), 'exercise');
+  assert.equal(currentOf(end)!.exId, 'C');
+});
+test('휴식 종류: 단일 종목 세트 간 / 마지막 세트 후 종목 간 / 전부 끝나면 없음', () => {
+  assert.equal(restAfter([gx('A', null, 1, 3), gx('B', null, 0, 2)], 'A'), 'set');
+  assert.equal(restAfter([gx('A', null, 3, 3), gx('B', null, 0, 2)], 'A'), 'exercise');
+  assert.equal(restAfter([gx('A', null, 3, 3), gx('B', null, 2, 2)], 'B'), 'none');
+  assert.equal(restAfter([gx('A', 's', 1, 2), gx('B', 's', 1, 1)], 'B'), 'set'); // B 끝, A 남음, 세트 수가 달라도 남은 종목끼리 같은 바퀴
+});
+test('횟수 손으로 고치기: +1/−1, 0 아래로는 안 내려감', () => {
+  const c = new AutoRepCounter();
+  runAuto(c, { elbow: wave(76, 30, 45, 160) });
+  const n = c.count;
+  c.adjust(1); assert.equal(c.count, n + 1);
+  c.adjust(-3); assert.equal(c.count, Math.max(0, n - 2));
+  c.adjust(-100); assert.equal(c.count, 0);
 });
 test('자동: 컬처럼 팔꿈치만 움직여도 5회 (운동 종류를 알려 주지 않음)', () => {
   const c = new AutoRepCounter();

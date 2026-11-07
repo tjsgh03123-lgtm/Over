@@ -225,6 +225,9 @@ export class AutoRepCounter {
     this.active = null; this.offset = 0; this.all = []; this.scale = { v: 0 };
   }
 
+  /** 잘못 센 횟수를 손으로 고친다 (0 아래로는 내려가지 않음) */
+  adjust(delta: number) { this.offset = Math.max(-(this.active ? this.active.count - this.active.base : 0), this.offset + delta); }
+
   get count() { return this.active ? this.offset + (this.active.count - this.active.base) : this.offset; }
   get reps() { return this.all; }
   get angle() { return this.active ? this.active.value : null; }

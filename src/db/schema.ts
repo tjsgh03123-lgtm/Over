@@ -43,7 +43,8 @@ CREATE TABLE IF NOT EXISTS workout_template_exercises (
   target_weight REAL,
   intensity TEXT CHECK (intensity IN ('high','mid','low','none')),
   rest_sec INTEGER,
-  note TEXT
+  note TEXT,
+  ss TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_wte_template ON workout_template_exercises(template_id, position);
 
@@ -71,7 +72,8 @@ CREATE TABLE IF NOT EXISTS workout_session_exercises (
   weight_mode TEXT NOT NULL DEFAULT 'weighted' CHECK (weight_mode IN ('weighted','bodyweight','assisted')),
   position INTEGER NOT NULL,
   intensity TEXT CHECK (intensity IN ('high','mid','low','none')),
-  note TEXT
+  note TEXT,
+  ss TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_wse_session ON workout_session_exercises(session_id, position);
 CREATE INDEX IF NOT EXISTS idx_wse_exercise ON workout_session_exercises(exercise_id);
@@ -140,12 +142,12 @@ export const TABLE_COLUMNS: Record<string, string[]> = {
   exercise_aliases: ['id', 'exercise_id', 'alias'],
   workout_templates: ['id', 'name', 'default_intensity', 'post_cardio_min', 'is_default', 'created_at'],
   workout_template_exercises: [
-    'id', 'template_id', 'exercise_id', 'position', 'target_sets', 'target_reps', 'target_weight', 'intensity', 'rest_sec', 'note',
+    'id', 'template_id', 'exercise_id', 'position', 'target_sets', 'target_reps', 'target_weight', 'intensity', 'rest_sec', 'note', 'ss',
   ],
   workout_sessions: [
     'id', 'date', 'template_id', 'title', 'intensity', 'is_free', 'status', 'started_at', 'ended_at', 'duration_sec', 'note',
   ],
-  workout_session_exercises: ['id', 'session_id', 'exercise_id', 'exercise_name', 'weight_mode', 'position', 'intensity', 'note'],
+  workout_session_exercises: ['id', 'session_id', 'exercise_id', 'exercise_name', 'weight_mode', 'position', 'intensity', 'note', 'ss'],
   workout_sets: ['id', 'session_exercise_id', 'set_no', 'weight', 'reps', 'done', 'set_type', 'is_rm', 'intensity', 'created_at'],
   body_measurements: ['id', 'date', 'weight', 'skeletal_muscle', 'body_fat_mass', 'body_fat_pct', 'source', 'image_uri', 'created_at'],
   cardio_sessions: ['id', 'date', 'session_id', 'kind', 'intensity', 'duration_min', 'note', 'created_at'],

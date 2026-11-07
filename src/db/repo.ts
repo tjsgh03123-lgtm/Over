@@ -105,6 +105,8 @@ export interface TemplateExerciseInput {
   intensity?: Intensity | null;
   restSec?: number | null;
   note?: string | null;
+  /** 슈퍼세트 묶음 이름: 같은 값이 연달아 있으면 번갈아 진행 */
+  ss?: string | null;
 }
 export interface TemplateInput {
   id?: string;
@@ -132,6 +134,7 @@ export interface TemplateExerciseRow {
   intensity: Intensity | null;
   rest_sec: number | null;
   note: string | null;
+  ss: string | null;
 }
 
 export async function listTemplates(db: Db): Promise<TemplateRow[]> {
@@ -140,7 +143,7 @@ export async function listTemplates(db: Db): Promise<TemplateRow[]> {
 
 export async function getTemplateExercises(db: Db, templateId: string): Promise<TemplateExerciseRow[]> {
   return db.all<TemplateExerciseRow>(
-    `SELECT t.id, t.exercise_id, e.name, e.weight_mode, t.position, t.target_sets, t.target_reps, t.target_weight, t.intensity, t.rest_sec, t.note
+    `SELECT t.id, t.exercise_id, e.name, e.weight_mode, t.position, t.target_sets, t.target_reps, t.target_weight, t.intensity, t.rest_sec, t.note, t.ss
        FROM workout_template_exercises t JOIN exercises e ON e.id = t.exercise_id
       WHERE t.template_id = ? ORDER BY t.position`,
     [templateId],
@@ -165,10 +168,10 @@ export async function saveTemplate(db: Db, input: TemplateInput): Promise<string
     for (const e of input.exercises) {
       await db.run(
         `INSERT INTO workout_template_exercises
-          (id, template_id, exercise_id, position, target_sets, target_reps, target_weight, intensity, rest_sec, note)
-         VALUES (?,?,?,?,?,?,?,?,?,?)`,
+          (id, template_id, exercise_id, position, target_sets, target_reps, target_weight, intensity, rest_sec, note, ss)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
         [uid('twe'), id, e.exerciseId, pos++, e.targetSets ?? 3, e.targetReps ?? null, e.targetWeight ?? null,
-          e.intensity ?? null, e.restSec ?? null, e.note ?? null],
+          e.intensity ?? null, e.restSec ?? null, e.note ?? null, e.ss ?? null],
       );
     }
   });
@@ -422,6 +425,16 @@ export async function getRestDefault(db: Db): Promise<number> {
   return Number.isFinite(v) && v >= 0 ? Math.min(600, Math.round(v)) : 90;
 }
 
+/** 종목과 종목 사이 휴식(초). 설정하지 않았으면 180초. 운동 중 30초 단위로 바꾸면 그 값이 새 기본값이 된다 */
+export async function getExerciseRest(db: Db): Promise<number> {
+  const raw = await getSetting(db, 'exercise_rest_sec');
+  const v = raw == null ? NaN : Number(raw);
+  return Number.isFinite(v) && v >= 0 ? Math.min(900, Math.round(v)) : 180;
+}
+export async function setExerciseRest(db: Db, sec: number): Promise<void> {
+  await setSetting(db, 'exercise_rest_sec', String(Math.max(0, Math.min(900, Math.round(sec)))));
+}
+
 /** 운동(세션)의 종목별로, 루틴에 정해 둔 세트 간 휴식(초). 정해 둔 값이 없으면 null */
 export async function getSessionRests(db: Db, sessionId: string): Promise<Record<string, number | null>> {
   const rows = await db.all<{ id: string; rest: number | null }>(
@@ -476,6 +489,7 @@ export interface SessionExRow {
   position: number;
   intensity: Intensity | null;
   note: string | null;
+  ss: string | null;
   sets: SetRow[];
 }
 export interface SessionFull extends SessionMeta {
@@ -519,8 +533,8 @@ export async function startSessionFromTemplate(db: Db, templateId: string, date:
     for (const e of exs) {
       const seId = uid('se');
       await db.run(
-        'INSERT INTO workout_session_exercises (id, session_id, exercise_id, exercise_name, weight_mode, position, intensity) VALUES (?,?,?,?,?,?,?)',
-        [seId, sid, e.exercise_id, e.name, e.weight_mode, pos++, e.intensity],
+        'INSERT INTO workout_session_exercises (id, session_id, exercise_id, exercise_name, weight_mode, position, intensity, ss) VALUES (?,?,?,?,?,?,?,?)',
+        [seId, sid, e.exercise_id, e.name, e.weight_mode, pos++, e.intensity, e.ss],
       );
       for (let i = 1; i <= e.target_sets; i++) await newSet(db, seId, i, 'working', e.target_weight, e.target_reps);
     }
@@ -977,7 +991,7 @@ export async function saveSessionAsDay(db: Db, today: string, sessionId: string,
   const exercises: TemplateExerciseInput[] = s.exercises.map((e) => {
     const working = e.sets.filter((x) => x.set_type === 'working' && !x.is_rm);
     const top = [...working].reverse().find((x) => x.weight != null);
-    return { exerciseId: e.exercise_id, targetSets: Math.max(1, working.length), targetReps: top?.reps ?? null, targetWeight: top?.weight ?? null };
+    return { exerciseId: e.exercise_id, targetSets: Math.max(1, working.length), targetReps: top?.reps ?? null, targetWeight: top?.weight ?? null, ss: e.ss };
   });
   const dayId = await upsertDay(db, today, routineId, { name, kind: 'weights', exercises });
   return { routineId, dayId };
