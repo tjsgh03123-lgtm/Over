@@ -22,6 +22,11 @@ import { buildPickGroups, equipOf } from '../src/domain/exerciseList.ts';
 import { decodeOverride, encodeOverride, fmtDaysAgo, parseIds, partSummary, weekDays } from '../src/domain/homeCards.ts';
 import { CATALOG, matchProfile, partOf } from '../src/domain/exerciseCatalog.ts';
 import { barbellTotal, bestE1rm, estimateMinutes, monthDays, monthWeeks, partTotals, recommendNext, streakWeeks, volumeOf } from '../src/domain/workoutStats.ts';
+import { trackSequence, zncc, extractPatch, type Gray } from '../src/domain/pointTrack.ts';
+import { angleAt, countSwings, fitRect, lastSeenMs, lineLength, mergeTrack, pointAt, toNorm, toScreen, trackFromNative, validPoints, pathStats, simplifyPath, smoothPath, tiltFromVertical } from '../src/domain/trackMath.ts';
+import { COARSE_OF, coarseOfExercise, EXERCISE_TABLE, lookupExercise } from '../src/domain/exerciseTable.ts';
+import { classifyFeatures, classifyPose, extractFeatures, verifyAgainst } from '../src/domain/patternClassify.ts';
+import { frameOf, SCENES } from './poseSynth.ts';
 import { blocksOf, currentOf, restAfter, type GEx } from '../src/domain/guided.ts';
 import { AutoRepCounter, countWord, JOINTS, jointAngle } from '../src/domain/liveCount.ts';
 import type { SessionRecord, SetRecord } from '../src/domain/types.ts';
@@ -985,6 +990,181 @@ test('끌어서 순서 바꾸기(슈퍼세트 유지): 묶음은 통째로 움�
   assert.deepEqual(moveBlockTo(rows, 1, 2).map((r) => r.n), ['A', 'B', 'C', 'D', 'E']); // 같은 묶음 안
   assert.deepEqual(moveBlockTo(rows, 3, 99).map((r) => r.n), ['A', 'B', 'C', 'E', 'D']); // 범위 밖은 가장자리
   assert.deepEqual(moveBlockTo(rows, -1, 0).map((r) => r.n), ['A', 'B', 'C', 'D', 'E']);
+});
+
+// ---- 영상 점 추적 (합성 프레임) ----
+function synthFrame(w: number, h: number, bx: number | null, by: number, seed = 1, shade = 0): Gray {
+  const d = new Uint8Array(w * h);
+  let s = seed;
+  for (let i = 0; i < d.length; i++) { s = (s * 1103515245 + 12345) & 0x7fffffff; d[i] = 90 + (s % 20); } // 잔잔한 배경 잡음
+  if (bx !== null) {
+    // 모양이 있는 표적: 밝은 십자+모서리 무늬(뭉개진 점이 아니라 위치를 특정할 무늬)
+    for (let dy = -6; dy <= 6; dy++) for (let dx = -6; dx <= 6; dx++) {
+      const x = Math.round(bx) + dx, y = Math.round(by) + dy;
+      if (x < 0 || y < 0 || x >= w || y >= h) continue;
+      const v = (Math.abs(dx) <= 1 || Math.abs(dy) <= 1) ? 230 : (dx > 0 && dy < 0 ? 40 : 150);
+      d[y * w + x] = Math.max(0, Math.min(255, v + shade));
+    }
+  }
+  return { w, h, data: d };
+}
+test('점 추적: 위아래로 움직이는 표적을 끝까지 따라간다', () => {
+  const frames: Gray[] = [];
+  const truth: number[] = [];
+  for (let i = 0; i < 30; i++) { const y = 40 + Math.round(20 * Math.sin(i / 30 * Math.PI)); truth.push(y); frames.push(synthFrame(120, 120, 60, y, 7 + i)); }
+  const r = trackSequence(frames, { x: 60, y: truth[0] });
+  assert.equal(r.lostAt, -1);
+  r.points.forEach((p, i) => { assert.ok(p, 'frame ' + i); assert.ok(Math.abs(p!.y - truth[i]) <= 1 && Math.abs(p!.x - 60) <= 1, `frame ${i}: ${p!.x},${p!.y} vs ${truth[i]}`); });
+});
+test('점 추적: 밝기가 바뀌어도(조명 변화) 따라가고, 표적이 사라지면 놓쳤다고 알린다', () => {
+  const frames = [synthFrame(100, 100, 50, 50, 3), synthFrame(100, 100, 52, 52, 4, -30), synthFrame(100, 100, 54, 54, 5, 25)];
+  const r = trackSequence(frames, { x: 50, y: 50 });
+  assert.equal(r.lostAt, -1);
+  assert.deepEqual([r.points[2]!.x, r.points[2]!.y], [54, 54]);
+  const gone = [...frames, synthFrame(100, 100, null, 0, 9), synthFrame(100, 100, 56, 56, 10)];
+  const g = trackSequence(gone, { x: 50, y: 50 });
+  assert.equal(g.lostAt, 3);
+  assert.equal(g.points[3], null);
+  assert.equal(g.points[4], null); // 한 번 놓치면 이후는 잘못 이어붙이지 않는다
+});
+test('점 추적: 무늬 없는 곳(분산 0)은 점수 0, 같은 조각은 1', () => {
+  const flat = new Float32Array(25).fill(100);
+  assert.equal(zncc(flat, flat), 0);
+  const f = synthFrame(40, 40, 20, 20, 2);
+  const a = extractPatch(f, 20, 20, 4);
+  assert.ok(Math.abs(zncc(a, a) - 1) < 1e-9);
+  assert.equal(trackSequence([], { x: 0, y: 0 }).points.length, 0);
+});
+test('궤적 계산: 선 길이·기울기·각도·평활·단순화·요약·왕복 횟수', () => {
+  assert.ok(Math.abs(lineLength({ x: 0, y: 0 }, { x: 0.3, y: 0.4 }) - 0.5) < 1e-9);
+  assert.equal(tiltFromVertical({ x: 0.5, y: 0.2 }, { x: 0.5, y: 0.8 }), 0);
+  assert.equal(tiltFromVertical({ x: 0.2, y: 0.5 }, { x: 0.8, y: 0.5 }), 90);
+  assert.equal(angleAt({ x: 0, y: 1 }, { x: 0, y: 0 }, { x: 1, y: 0 }), 90);
+  assert.equal(angleAt({ x: 1, y: 0 }, { x: 0, y: 0 }, { x: 2, y: 0 }), 0);
+  assert.equal(angleAt({ x: -1, y: 0 }, { x: 0, y: 0 }, { x: 1, y: 0 }), 180);
+  const sm = smoothPath([{ x: 0, y: 0 }, null, { x: 0, y: 3 }, { x: 0, y: 6 }], 3);
+  assert.equal(sm[1], null);
+  assert.equal(sm[2]!.y, 4.5);
+  const line = Array.from({ length: 50 }, (_, i) => ({ x: i / 50, y: 0.5 }));
+  assert.equal(simplifyPath(line).length, 2); // 직선은 양 끝만
+  const bend = [{ x: 0, y: 0 }, { x: 0.5, y: 0.5 }, { x: 1, y: 0 }];
+  assert.equal(simplifyPath(bend).length, 3);
+  const st = pathStats([{ x: 0.5, y: 0.2, t: 0 }, { x: 0.52, y: 0.8, t: 1 }, { x: 0.5, y: 0.3, t: 2 }])!;
+  assert.equal(st.verticalPct, 60);
+  assert.equal(st.bottomT, 1);
+  assert.equal(st.topT, 0);
+  assert.equal(pathStats([{ x: 0, y: 0, t: 0 }]), null);
+  const ys: number[] = [];
+  for (let r = 0; r < 3; r++) for (let i = 0; i < 20; i++) ys.push(0.5 + 0.3 * Math.cos(i / 20 * 2 * Math.PI) + (i % 2 ? 0.004 : -0.004));
+  ys.push(0.8);
+  assert.equal(countSwings(ys), 3);
+  assert.equal(countSwings([0.5, 0.505, 0.499, 0.502]), 0); // 떨림만 있으면 0
+});
+
+test('영상 좌표: 여백(레터박스)을 빼고 누른 곳을 영상 비율로, 영상 밖은 무시', () => {
+  const r = fitRect(400, 300, 1080, 1920); // 세로 영상을 가로로 넓은 칸에 → 좌우 여백
+  assert.ok(Math.abs(r.h - 300) < 1e-9 && r.x > 0 && Math.abs(r.w / r.h - 1080 / 1920) < 1e-9);
+  assert.equal(toNorm(r.x - 1, 10, r), null);
+  const n = toNorm(r.x + r.w / 2, r.y + r.h / 4, r)!;
+  assert.ok(Math.abs(n.x - 0.5) < 1e-9 && Math.abs(n.y - 0.25) < 1e-9);
+  const s = toScreen(n, r);
+  assert.ok(Math.abs(s.x - (r.x + r.w / 2)) < 1e-9);
+  const wide = fitRect(400, 300, 1920, 1080); // 가로 영상 → 위아래 여백
+  assert.ok(Math.abs(wide.w - 400) < 1e-9 && wide.y > 0);
+  assert.deepEqual(fitRect(0, 0, 10, 10), { x: 0, y: 0, w: 0, h: 0 });
+});
+test('추적 결과: 놓친 곳은 null, 다시 눌러 고친 지점부터 새 결과로 바꿔 이어붙임', () => {
+  const a = trackFromNative([0, 100, 200, 300], [0.1, 0.2, -1, -1], [0.5, 0.5, -1, -1]);
+  assert.deepEqual(a.pts.map((p) => p === null), [false, false, true, true]);
+  assert.equal(lastSeenMs(a), 100);
+  assert.equal(validPoints(a).length, 2);
+  assert.equal(validPoints(a)[1].t, 0.1);
+  const b = trackFromNative([200, 300, 400], [0.3, 0.4, 0.5], [0.5, 0.5, 0.5]);
+  const m = mergeTrack(a, b);
+  assert.deepEqual(m.times, [0, 100, 200, 300, 400]);
+  assert.equal(m.pts[1]!.x, 0.2); // 앞부분 유지
+  assert.equal(m.pts[2]!.x, 0.3); // 뒷부분은 새 결과
+  assert.equal(mergeTrack(null, b), b);
+  const early = mergeTrack(a, trackFromNative([100, 200], [0.9, 0.9], [0.9, 0.9]));
+  assert.deepEqual(early.times, [0, 100, 200]); // 중간부터 고치면 그 뒤 옛 결과는 버림
+  assert.equal(pointAt(m, 210)!.x, 0.3);
+  assert.equal(pointAt(m, 1000), null);
+  assert.equal(pointAt(null, 0), null);
+});
+
+
+// ---- 운동 표 · 움직임 유형 판별 ----
+test('운동 표: 182개, 중복 이름 없음, 표의 모든 움직임 유형이 굵은 유형에 매핑되거나 명시적으로 제외', () => {
+  assert.equal(EXERCISE_TABLE.length, 182);
+  const names = EXERCISE_TABLE.map((r) => r[0]);
+  assert.equal(new Set(names).size, names.length);
+  const skipped = new Set(['고관절 벌리기', '고관절 모으기', '고관절 펴기', '점프', '정적 버티기', '손목 굽히기', '전신 반복(유산소형)', '전신 폭발', '운반', '전신 복합']);
+  for (const r of EXERCISE_TABLE) assert.ok(r[4] in COARSE_OF || skipped.has(r[4]), `${r[0]} → ${r[4]}`);
+  assert.deepEqual(EXERCISE_TABLE.slice(0, 3).map((r) => r[0]), ['벤치프레스', '인클라인 덤벨 프레스', '덤벨 체스트 프레스']);
+});
+test('운동 이름 찾기: 띄어쓰기·도구 이름이 붙어도 표의 운동으로, 모르면 null', () => {
+  assert.equal(coarseOfExercise('바벨 벤치프레스'), 'pushH');
+  assert.equal(coarseOfExercise('랫 풀다운'), 'pullV');
+  assert.equal(coarseOfExercise('덤벨 컬'), 'curlExt');
+  assert.equal(coarseOfExercise('스컬크러셔'), 'curlExt'); // 괄호 안 별칭
+  assert.equal(coarseOfExercise('바벨 백스쿼트'), 'squat');
+  assert.equal(coarseOfExercise('플랭크'), null); // 버티기는 구분 대상 아님
+  assert.equal(coarseOfExercise('아무거나운동'), null);
+  assert.equal(coarseOfExercise(''), null);
+  assert.equal(lookupExercise('인클라인 바벨 벤치프레스')?.[0], '벤치프레스');
+});
+test('동작 유형 판별(합성 자세): 옆면 스쿼트·힙힌지·컬·카프·푸시업·벤치·런지, 정면 레이즈·슈러그·스쿼트', () => {
+  const want: Record<string, string> = {
+    squat: 'squat', hinge: 'hinge', curl: 'curlExt', calf: 'calf', pushUp: 'pushUp', bench: 'pushH', lunge: 'lunge',
+    lateralRaise: 'lift', shrug: 'shrug', frontSquat: 'squat',
+  };
+  for (const [scene, pat] of Object.entries(want)) {
+    const g = classifyPose(SCENES[scene](), 1, 1)!;
+    assert.equal(g.top[0]?.pattern, pat, `${scene}: ${JSON.stringify(g.top)}`);
+    assert.ok(g.top[0].conf >= 0.5, `${scene} 확신도 ${g.top[0].conf}`);
+  }
+});
+test('동작 유형 판별: 머리 위로 밀기·수직 당기기는 구분이 어려워 둘 다 후보로 보여주고 안내', () => {
+  for (const scene of ['overheadPress', 'pulldown']) {
+    const g = classifyPose(SCENES[scene](), 1, 1)!;
+    const pats = g.top.map((c) => c.pattern);
+    assert.ok(pats.includes('pushV') && pats.includes('pullV'), scene + ' ' + pats.join());
+    assert.ok(g.note && g.note.includes('구분'));
+  }
+  assert.equal(classifyPose(SCENES.overheadPress(), 1, 1)!.top[0].pattern, 'pushV');
+  assert.equal(classifyPose(SCENES.pulldown(), 1, 1)!.top[0].pattern, 'pullV');
+});
+test('동작 유형 판별: 카메라 방향 추정, 가만히 서 있으면 판단 안 함, 프레임이 부족하거나 안 보이면 null', () => {
+  assert.equal(extractFeatures(SCENES.curl(), 1, 1)!.view, 'side');
+  assert.equal(extractFeatures(SCENES.lateralRaise(), 1, 1)!.view, 'front');
+  const still = classifyPose(SCENES.still(), 1, 1)!;
+  assert.equal(still.moving, false);
+  assert.equal(still.top.length, 0);
+  assert.equal(classifyPose(SCENES.squat().slice(0, 10), 1, 1), null);
+  assert.equal(classifyPose(Array.from({ length: 60 }, () => frameOf({})), 1, 1), null);
+  assert.equal(classifyFeatures(extractFeatures(SCENES.squat(), 1, 1)!).view, 'side');
+});
+test('루틴과 비교: 같은 유형이면 일치, 후보에만 있으면 비슷, 아니면 다름, 대상이 아니면 말하지 않음', () => {
+  const squat = classifyPose(SCENES.squat(), 1, 1)!;
+  assert.equal(verifyAgainst('squat', squat).status, 'match');
+  assert.equal(verifyAgainst('curlExt', squat).status, 'differ');
+  assert.equal(verifyAgainst(null, squat).text, '');
+  assert.equal(verifyAgainst('squat', null).status, 'unknown');
+  const ohp = classifyPose(SCENES.overheadPress(), 1, 1)!;
+  assert.equal(verifyAgainst('pullV', ohp).status, 'close');
+});
+
+test('동작 유형 판별: 관절이 ±2%% 떨려도 같은 결과, 떨리기만 하는 서 있는 사람은 아무 동작도 아님'.replace('%%', '%'), () => {
+  let seed = 5;
+  const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff - 0.5; };
+  const shake = (fr: Float32Array[], amp: number) => fr.map((f) => { const g = new Float32Array(f); for (let i = 0; i < 33; i++) { g[i * 3] += rnd() * 2 * amp; g[i * 3 + 1] += rnd() * 2 * amp; } return g; });
+  const want: Record<string, string> = { squat: 'squat', hinge: 'hinge', curl: 'curlExt', calf: 'calf', pushUp: 'pushUp', bench: 'pushH', lunge: 'lunge', lateralRaise: 'lift', shrug: 'shrug', frontSquat: 'squat' };
+  for (const [scene, pat] of Object.entries(want)) {
+    const g = classifyPose(shake(SCENES[scene](), 0.02), 1, 1)!;
+    assert.equal(g.top[0]?.pattern, pat, `${scene}: ${JSON.stringify(g.top)}`);
+  }
+  const idle = classifyPose(shake(SCENES.still(), 0.02), 1, 1)!;
+  assert.equal(idle.top.length, 0);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

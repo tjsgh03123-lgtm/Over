@@ -55,7 +55,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
   const [deferred, setDeferred] = useState<string[]>([]); // 나중에 하기로 미룬 종목(덩어리의 첫 종목 id)
   const [skipped, setSkipped] = useState<string[]>([]); // 건너뛴 종목 id
   const [exRest, setExRest] = useState(180);
-  const [live, setLive] = useState<{ exId: string; target: number; sets: number; restSec: number; focus: LiveFocus; tip?: string; source: CountSource } | null>(null); // 실시간 횟수 세기 중인 종목
+  const [live, setLive] = useState<{ exId: string; target: number; sets: number; restSec: number; focus: LiveFocus; tip?: string; source: CountSource; name?: string } | null>(null); // 실시간 횟수 세기 중인 종목
   const [runMode, setRunMode] = useState<RunMode>('manual'); // 진행 방식: 직접 기록 / 카메라 / 박자
   const [prepSec, setPrepSec] = useState(10);
   const [tempoSec, setTempoSec] = useState(3);
@@ -162,6 +162,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
     restSec: restFor(rests[ex.id], restDefault) || 60,
     focus: matchProfile(ex.exercise_name)?.focus ?? (ex.weight_mode === 'bodyweight' ? 'body' : 'auto'),
     tip: matchProfile(ex.exercise_name)?.tip,
+    name: ex.exercise_name,
   });
 
   /** 휴식 시간 조절: 세트 간은 10초, 종목 간은 30초 단위. 종목 간 휴식이면 그 값이 다음부터의 기본값이 된다 */
@@ -705,7 +706,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
       <SummaryModal data={summary} onClose={() => setSummary(null)} />
       <LiveCountModal
         visible={!!live}
-                defaults={live ? { targetReps: live.target, totalSets: live.sets, restSec: live.restSec, focus: live.focus, tip: live.tip, source: live.source, prepSec, tempoSec } : undefined}
+                defaults={live ? { targetReps: live.target, totalSets: live.sets, restSec: live.restSec, focus: live.focus, tip: live.tip, source: live.source, exerciseName: live.name, prepSec, tempoSec } : undefined}
         onClose={() => setLive(null)}
         onUse={(counts) => { const l = live; setLive(null); if (l) applyLiveCount(l.exId, counts); }}
       />

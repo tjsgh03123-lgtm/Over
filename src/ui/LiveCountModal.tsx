@@ -7,6 +7,8 @@ import Svg, { Circle, Line, Polyline } from 'react-native-svg';
 import { jointPoint, PathTrail, TRAIL_LABEL, type TrailJoint } from '../domain/pathTrail.ts';
 import { useApp } from '../app/context.tsx';
 import { setSetting } from '../db/repo.ts';
+import { coarseOfExercise } from '../domain/exerciseTable.ts';
+import { classifyPose, VIEW_LABEL, verifyAgainst, type Guess } from '../domain/patternClassify.ts';
 import { AutoRepCounter, countWord, FOCUS_LABEL, type Focus, STRICT_LABEL, type Strictness } from '../domain/liveCount.ts';
 import { SetFlow, type FlowConfig, type FlowEvent } from '../domain/setFlow.ts';
 import { speakCount, speakText, stopSpeaking } from '../services/speak.ts';
@@ -38,7 +40,7 @@ function fmtRep(ms: number) { return `${(ms / 1000).toFixed(1)}초`; }
  * ‘이 횟수 사용’을 누르면 onUse(횟수)로 돌려준다.
  */
 export type CountSource = 'camera' | 'tempo';
-export type LiveDefaults = FlowConfig & { focus?: Focus; tip?: string; source?: CountSource; tempoSec?: number };
+export type LiveDefaults = FlowConfig & { focus?: Focus; tip?: string; source?: CountSource; tempoSec?: number; exerciseName?: string };
 
 export function LiveCountModal({
   visible, onClose, onUse, defaults,
@@ -93,12 +95,26 @@ function LiveBody({ onClose, onUse, defaults }: { onClose: () => void; onUse: (c
   const [seen, setSeen] = useState(false);
   const [camKey, setCamKey] = useState(0); // 카메라 화면이 안 나올 때 새로 만들기 위한 값
   const counter = useRef(new AutoRepCounter());
+  // 동작 유형 추정: 최근 6초의 관절 프레임을 모아 1초마다 판별
+  const poseBuf = useRef<{ lm: number[]; at: number }[]>([]);
+  const poseDim = useRef({ w: 3, h: 4 });
+  const [guess, setGuess] = useState<Guess | null>(null);
+  const expected = defaults.exerciseName ? coarseOfExercise(defaults.exerciseName) : null;
   const lastSeen = useRef(0);
   const [, force] = useState(0);
 
   useEffect(() => { counter.current.setStrictness(strict); }, [strict]);
   useEffect(() => { counter.current.setFocus(focus); counter.current.reset(); setCount(0); setLastMs(null); }, [focus]);
   useEffect(() => stopSpeaking, []);
+  useEffect(() => {
+    if (source !== 'camera' || !ready) return;
+    const id = setInterval(() => {
+      const now = Date.now();
+      const buf = poseBuf.current = poseBuf.current.filter((f) => now - f.at <= 6000);
+      setGuess(buf.length >= 15 ? classifyPose(buf.map((f) => f.lm), poseDim.current.w, poseDim.current.h) : null);
+    }, 1000);
+    return () => clearInterval(id);
+  }, [source, ready]);
 
   // 세트 자동 진행: 설정이 바뀌거나 모드를 바꾸면 처음부터 다시 준비
   useEffect(() => {
@@ -172,6 +188,9 @@ function LiveBody({ onClose, onUse, defaults }: { onClose: () => void; onUse: (c
     for (let i = 11; i <= 28; i++) if (lm[i * 3 + 2] > 0.5) { any = true; break; }
     if (any) lastSeen.current = Date.now();
     trail.current.push(jointPoint(lm, trailJoint));
+    poseBuf.current.push({ lm, at: Date.now() });
+    if (poseBuf.current.length > 240) poseBuf.current.shift();
+    poseDim.current = { w, h };
     setFrame({ lm, w, h });
     setFrames((n) => n + 1);
     const f = flow.current;
@@ -292,6 +311,21 @@ function LiveBody({ onClose, onUse, defaults }: { onClose: () => void; onUse: (c
         </View>
         )}
 
+        {source === 'camera' && ready && guess && guess.top.length > 0 && (
+          <View style={{ marginTop: S.md, padding: S.md, borderRadius: 12, backgroundColor: C.card2 }}>
+            <T bold>지금 동작은 {guess.top[0].label} 같아요 ({Math.round(guess.top[0].conf * 100)}%)</T>
+            {guess.top.length > 1 && (
+              <T muted style={{ fontSize: 12, marginTop: 2 }}>
+                {guess.top.slice(1).map((c) => `${c.label} ${Math.round(c.conf * 100)}%`).join(' · ')} 일 수도 있어요
+              </T>
+            )}
+            {(() => {
+              const v = verifyAgainst(expected, guess);
+              return v.text ? <T style={{ fontSize: 12, marginTop: 4 }}>{v.status === 'match' ? '✓ ' : v.status === 'close' ? '△ ' : '✕ '}{v.text}</T> : null;
+            })()}
+            <T muted style={{ fontSize: 11, marginTop: 4 }}>카메라 방향: {VIEW_LABEL[guess.view]}{guess.note ? ` · ${guess.note}` : ''}</T>
+          </View>
+        )}
         {mode === 'sets' && flow.current && (
           <View style={{ marginTop: S.md, padding: S.md, borderRadius: 12, backgroundColor: C.card2, alignItems: 'center' }}>
             {flow.current.phase === 'preparing' ? (

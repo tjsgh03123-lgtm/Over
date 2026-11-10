@@ -144,6 +144,7 @@ export function ProfileScreen() {
 
       <Card style={{ padding: 0 }}>
         <MenuRow label="1RM 계산기" onPress={() => setCalc(true)} />
+        <MenuRow label="영상 궤적 (점 추적)" onPress={nav.openTrack} />
         <MenuRow label="종목 관리" onPress={nav.openExercises} last />
       </Card>
 
