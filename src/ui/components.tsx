@@ -123,8 +123,8 @@ export function Header({ title, onBack, right }: { title: string; onBack?: () =>
   return (
     <View style={st.header}>
       {onBack ? (
-        <Pressable onPress={onBack} hitSlop={12} style={{ paddingRight: 12 }}>
-          <Text style={{ color: C.text, fontSize: 22 }}>‹</Text>
+        <Pressable onPress={onBack} hitSlop={8} accessibilityLabel="뒤로" style={{ width: 40, height: 40, marginLeft: -8, marginRight: 4, alignItems: 'center', justifyContent: 'center' }}>
+          <Text style={{ color: C.text, fontSize: 26, lineHeight: 30 }}>‹</Text>
         </Pressable>
       ) : null}
       <Text style={[st.h, { flex: 1 }]} numberOfLines={1}>{title}</Text>
@@ -138,14 +138,14 @@ const st = themed(() => ({
   h: { color: C.text, fontSize: 18, fontWeight: '800' },
   t: { color: C.text, fontSize: 14 },
   btn: { minHeight: 46, paddingHorizontal: 16, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-  btnSm: { minHeight: 34, paddingHorizontal: 12, borderRadius: 9 },
-  chip: { paddingHorizontal: 11, paddingVertical: 7, borderRadius: 18, borderWidth: 1, borderColor: C.line, backgroundColor: C.card2 },
+  btnSm: { minHeight: 38, paddingHorizontal: 14, borderRadius: 10 },
+  chip: { minHeight: 34, paddingHorizontal: 13, paddingVertical: 6, borderRadius: 18, borderWidth: 1, borderColor: C.line, backgroundColor: C.card2, justifyContent: 'center' },
   seg: { flexDirection: 'row', backgroundColor: C.card2, borderRadius: 12, padding: 3 },
-  segItem: { flex: 1, paddingVertical: 9, alignItems: 'center', borderRadius: 10 },
+  segItem: { flex: 1, paddingVertical: 10, alignItems: 'center', justifyContent: 'center', borderRadius: 10 },
   input: {
     height: 44, borderRadius: 10, backgroundColor: C.card2, color: C.text, textAlign: 'center',
     fontSize: 16, fontWeight: '700', borderWidth: 1, borderColor: C.line,
   },
   textField: { backgroundColor: C.card2, color: C.text, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, borderWidth: 1, borderColor: C.line },
-  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: S.lg, paddingVertical: S.md },
+  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: S.lg, paddingVertical: S.sm, minHeight: 52 },
 }));

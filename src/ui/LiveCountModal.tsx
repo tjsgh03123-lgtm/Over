@@ -1,9 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Alert, Modal, PermissionsAndroid, Platform, ScrollView, Text, Vibration, View, useWindowDimensions } from 'react-native';
+import { Alert, Modal, PermissionsAndroid, Platform, Pressable, ScrollView, Text, Vibration, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { requireNativeView } from 'expo';
 import { useKeepAwake } from 'expo-keep-awake';
-import Svg, { Polyline } from 'react-native-svg';
+import Svg, { Path, Polyline } from 'react-native-svg';
 import { jointPoint, PathTrail, TRAIL_LABEL, type TrailJoint } from '../domain/pathTrail.ts';
 import { useApp } from '../app/context.tsx';
 import { setSetting } from '../db/repo.ts';
@@ -14,7 +14,7 @@ import { shareTextFile, stamp } from '../services/files.ts';
 import { AutoRepCounter, countWord, FOCUS_LABEL, type Focus, STRICT_LABEL, type Strictness } from '../domain/liveCount.ts';
 import { SetFlow, type FlowConfig, type FlowEvent } from '../domain/setFlow.ts';
 import { speakCount, speakText, stopSpeaking } from '../services/speak.ts';
-import { Btn, Chip, Header, Row, Segmented, T } from './components.tsx';
+import { Btn, Card, Chip, Header, Row, Segmented, T } from './components.tsx';
 import { C, GC, S } from './theme.ts';
 
 interface PoseEvent { nativeEvent: { lm: number[]; w: number; h: number; t: number } }
@@ -65,6 +65,23 @@ function Stepper({ label, value, unit, step, min, max, onChange }: {
   );
 }
 
+function Label({ children }: { children: React.ReactNode }) {
+  return <T muted style={{ fontSize: 12, fontWeight: '700', marginTop: S.lg, marginBottom: S.sm }}>{children}</T>;
+}
+
+/** 카메라 + 회전 화살표 아이콘(앞/뒤 카메라 전환) */
+function FlipIcon({ size = 26 }: { size?: number }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M4 8h3l1.5-2h7L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z" />
+      <Path d="M9 12.6A3.2 3.2 0 0 1 14.7 11.7" />
+      <Path d="M14.9 9.9l-.2 1.8-1.8-.2" />
+      <Path d="M15 14.4A3.2 3.2 0 0 1 9.3 15.3" />
+      <Path d="M9.1 17.1l.2-1.8 1.8.2" />
+    </Svg>
+  );
+}
+
 function LiveBody({ onClose, onUse, defaults }: { onClose: () => void; onUse: (counts: number[]) => void; defaults: LiveDefaults }) {
   useKeepAwake();
   const { db } = useApp();
@@ -81,7 +98,8 @@ function LiveBody({ onClose, onUse, defaults }: { onClose: () => void; onUse: (c
   const flow = useRef<SetFlow | null>(null);
   const [, flowRender] = useState(0);
   const [model, setModel] = useState<'lite' | 'full'>('lite');
-  const [front, setFront] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [front, setFront] = useState(true); // 기본은 전면. 바꾸려면 미리보기 오른쪽 위 아이콘
   const [ready, setReady] = useState(false); // 카메라 권한 확인 끝, 카메라 켜짐
   const [perm, setPerm] = useState<boolean | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -272,6 +290,12 @@ function LiveBody({ onClose, onUse, defaults }: { onClose: () => void; onUse: (c
     if (f && f.phase === 'counting' && d > 0) handleFlow(f.onCount(n, Date.now()));
   };
   const reset = () => { trail.current.reset(); stopSpeaking(); counter.current.reset(); setCount(0); setLastMs(null); nextAt.current = 0; if (mode === 'sets') { flow.current = newFlow(cfg); flowRender((n) => n + 1); } };
+  /** 앞/뒤 전환: 카메라 화면을 통째로 새로 만들어 다시 켠다(제자리에서 바꾸면 검은 화면이 남는 기기가 있음). 앞/뒤 좌표가 섞이지 않게 모아 둔 것은 비운다 */
+  const flipCamera = () => {
+    poseBuf.current = []; logFrames.current = []; trail.current.reset(); setGuess(null);
+    setFront((f) => !f);
+    restartCamera();
+  };
   const restartCamera = () => { setFrames(0); setFrame(null); setErr(null); setCamKey((k) => k + 1); };
 
   // 영상은 비율을 유지(FIT)해서 보이므로, 같은 비율의 상자에 영상과 뼈대를 겹쳐 그린다
@@ -309,6 +333,12 @@ function LiveBody({ onClose, onUse, defaults }: { onClose: () => void; onUse: (c
                   ● 인식 중{counter.current.partialBody ? ' · 상체만' : ''}
                 </Text>
               )}
+              <Pressable
+                onPress={flipCamera} accessibilityLabel="카메라 전환" hitSlop={6}
+                style={({ pressed }) => ({ position: 'absolute', right: 8, top: 8, width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center', opacity: pressed ? 0.7 : 1 })}
+              >
+                <FlipIcon />
+              </Pressable>
               {frames > 0 && !seen && (
                 <Text style={{ position: 'absolute', left: 8, right: 8, bottom: 8, color: '#FFFFFFCC', textAlign: 'center', fontSize: 12 }}>
                   사람이 보이지 않아요 — 몸 전체가 화면에 들어오게 해 주세요
@@ -399,83 +429,78 @@ function LiveBody({ onClose, onUse, defaults }: { onClose: () => void; onUse: (c
           </View>
         )}
 
-        <Row style={{ marginTop: S.md }}>
-          <Btn label="처음부터" kind="ghost" style={{ flex: 1 }} onPress={reset} />
-          {source === 'camera' && <Btn label={front ? '뒷카메라로' : '앞카메라로'} kind="ghost" style={{ flex: 1 }} onPress={() => setFront((f) => !f)} />}
-        </Row>
-        <Row style={{ marginTop: S.md }}>
-          <View style={{ flex: 1 }}>
-            <Segmented<CountSource> options={[{ key: 'camera', label: '📷 카메라로' }, { key: 'tempo', label: '⏱ 박자로' }]} value={source} onChange={(v) => { setSource(v); setSetting(db, 'run_mode', v); }} />
-          </View>
-        </Row>
-        {source === 'camera' && (
-          <Row style={{ marginTop: S.sm }}>
-            <View style={{ flex: 1 }}>
-              <Segmented<'free' | 'sets'> options={[{ key: 'sets', label: '세트 자동 진행' }, { key: 'free', label: '자유 카운트' }]} value={mode} onChange={setMode} />
-            </View>
-          </Row>
-        )}
-        {mode === 'sets' && (
-          <View>
-            <Stepper label="세트당 목표 횟수" value={cfg.targetReps} unit="회" step={1} min={1} max={100} onChange={(v) => setCfg((c) => ({ ...c, targetReps: v }))} />
-            <Stepper label="세트 수" value={cfg.totalSets} unit="세트" step={1} min={1} max={20} onChange={(v) => setCfg((c) => ({ ...c, totalSets: v }))} />
-            <Stepper label="쉬는 시간" value={cfg.restSec} unit="초" step={15} min={5} max={600} onChange={(v) => setCfg((c) => ({ ...c, restSec: v }))} />
-            <Stepper label="준비 시간 (0이면 없음)" value={cfg.prepSec ?? 0} unit="초" step={5} min={0} max={30} onChange={(v) => { setCfg((c) => ({ ...c, prepSec: v })); setSetting(db, 'prep_sec', String(v)); }} />
-            {source === 'tempo' && (
-              <Stepper label="박자 (한 회당)" value={tempoSec} unit="초" step={0.5} min={1} max={10} onChange={(v) => { setTempoSec(v); setSetting(db, 'tempo_sec', String(v)); }} />
-            )}
-            <T muted style={{ fontSize: 12, marginTop: 4 }}>준비 시간이 끝나기 전 3·2·1로 알려 주고 “시작”이라고 말합니다. 목표 횟수를 채우면 쉬는 시간을 알려 주고, 쉬고 나면 다시 준비 → 시작으로 이어져요.</T>
-          </View>
-        )}
-        <Row style={{ marginTop: S.sm }}>
-          <Chip label={sound ? '🔊 횟수 소리 켜짐' : '🔇 횟수 소리 꺼짐'} active={sound} onPress={() => { if (sound) stopSpeaking(); setSound((v) => !v); }} />
-        </Row>
-        {defaults.tip ? <T muted style={{ marginTop: S.md, fontSize: 12 }}>📍 {defaults.tip}</T> : null}
-        {source === 'camera' && (<>
-        <T muted style={{ marginTop: S.md, fontSize: 12 }}>운동 종류</T>
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
-          {(Object.keys(FOCUS_LABEL) as Focus[]).map((k) => (
-            <Chip key={k} label={FOCUS_LABEL[k]} active={focus === k} onPress={() => setFocus(k)} />
-          ))}
-        </View>
-        <T muted style={{ marginTop: S.md, fontSize: 12 }}>움직인 길 보기 (화면에 선으로 그려요 · 손목은 바벨이 지나간 길과 비슷해요)</T>
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
-          {(Object.keys(TRAIL_LABEL) as TrailJoint[]).map((k) => (
-            <Chip key={k} label={TRAIL_LABEL[k]} active={trailJoint === k} onPress={() => { trail.current.reset(); setTrailJoint(k); }} />
-          ))}
-        </View>
-        {trailJoint !== 'off' && trail.current.points.length > 1 && (
-          <T muted style={{ fontSize: 12, marginTop: 4 }}>위아래로 움직인 폭: 화면 높이의 약 {trail.current.verticalRangePct}%</T>
-        )}
-        <Row style={{ marginTop: S.sm }}>
-          <View style={{ flex: 1 }}>
-            <Segmented<Strictness> options={(['easy', 'normal', 'strict'] as Strictness[]).map((k) => ({ key: k, label: STRICT_LABEL[k] }))} value={strict} onChange={setStrict} />
-          </View>
-        </Row>
-        <Row style={{ marginTop: S.sm }}>
-          <View style={{ flex: 1 }}>
-            <Segmented<'lite' | 'full'> options={[{ key: 'lite', label: '빠름' }, { key: 'full', label: '정밀' }]} value={model} onChange={setModel} />
-          </View>
-        </Row>
-        </>)}
         {(() => {
           const counts = mode === 'sets' && flow.current ? flow.current.finish(count) : count > 0 ? [count] : [];
           return (
             <Btn
               label={counts.length > 1 ? `이 기록 사용 (${counts.join(' / ')}회)` : `이 횟수 사용 (${count}회)`}
-              disabled={counts.length === 0} style={{ marginTop: S.md }} onPress={() => onUse(counts)}
+              disabled={counts.length === 0} style={{ marginTop: S.lg }} onPress={() => onUse(counts)}
             />
           );
         })()}
-        {source === 'camera' && <T muted style={{ fontSize: 12, marginTop: S.sm, textAlign: 'center' }}>
-          횟수가 틀리면 ‘쉬움/엄격’으로 바꿔 보세요. 쉬움은 작은 움직임도 세고, 엄격은 크게 움직여야 셉니다.
-        </T>}
-        {source === 'camera' && ready && <T muted style={{ fontSize: 11, marginTop: 4, textAlign: 'center' }}>카메라 프레임 {frames}</T>}
-        {source === 'camera' && ready && (
-          <View style={{ marginTop: S.sm }}>
-            <Btn label="최근 60초 좌표 기록 저장 (횟수가 이상할 때)" kind="ghost" small onPress={saveLog} />
-            <T muted style={{ fontSize: 11, marginTop: 4, textAlign: 'center' }}>영상은 저장하지 않고 관절 좌표만 담아요. 공유해 주시면 원인을 확인할 수 있어요.</T>
-          </View>
+        <Row style={{ marginTop: S.sm }}>
+          <Btn label="처음부터" kind="ghost" style={{ flex: 1 }} onPress={reset} />
+          <Btn label={showSettings ? '설정 닫기' : '설정'} kind="ghost" style={{ flex: 1 }} onPress={() => setShowSettings((v) => !v)} />
+        </Row>
+        {defaults.tip ? <T muted style={{ marginTop: S.md, fontSize: 12 }}>📍 {defaults.tip}</T> : null}
+
+        {showSettings && (
+          <Card style={{ marginTop: S.md }}>
+            <Label>방식</Label>
+            <Segmented<CountSource> options={[{ key: 'camera', label: '카메라로' }, { key: 'tempo', label: '박자로' }]} value={source} onChange={(v) => { setSource(v); setSetting(db, 'run_mode', v); }} />
+            {source === 'camera' && (
+              <View style={{ marginTop: S.sm }}>
+                <Segmented<'free' | 'sets'> options={[{ key: 'sets', label: '세트 자동 진행' }, { key: 'free', label: '자유 카운트' }]} value={mode} onChange={setMode} />
+              </View>
+            )}
+            {mode === 'sets' && (
+              <>
+                <Label>세트</Label>
+                <Stepper label="세트당 목표 횟수" value={cfg.targetReps} unit="회" step={1} min={1} max={100} onChange={(v) => setCfg((c) => ({ ...c, targetReps: v }))} />
+                <Stepper label="세트 수" value={cfg.totalSets} unit="세트" step={1} min={1} max={20} onChange={(v) => setCfg((c) => ({ ...c, totalSets: v }))} />
+                <Stepper label="쉬는 시간" value={cfg.restSec} unit="초" step={15} min={5} max={600} onChange={(v) => setCfg((c) => ({ ...c, restSec: v }))} />
+                <Stepper label="준비 시간 (0이면 없음)" value={cfg.prepSec ?? 0} unit="초" step={5} min={0} max={30} onChange={(v) => { setCfg((c) => ({ ...c, prepSec: v })); setSetting(db, 'prep_sec', String(v)); }} />
+                {source === 'tempo' && (
+                  <Stepper label="박자 (한 회당)" value={tempoSec} unit="초" step={0.5} min={1} max={10} onChange={(v) => { setTempoSec(v); setSetting(db, 'tempo_sec', String(v)); }} />
+                )}
+                <T muted style={{ fontSize: 12, marginTop: 4 }}>준비 시간이 끝나기 전 3·2·1로 알려 주고 “시작”이라고 말합니다. 목표 횟수를 채우면 쉬는 시간을 알려 주고, 쉬고 나면 다시 준비 → 시작으로 이어져요.</T>
+              </>
+            )}
+            <Label>소리</Label>
+            <Row>
+              <Chip label={sound ? '🔊 횟수 소리 켜짐' : '🔇 횟수 소리 꺼짐'} active={sound} onPress={() => { if (sound) stopSpeaking(); setSound((v) => !v); }} />
+            </Row>
+            {source === 'camera' && (
+              <>
+                <Label>운동 종류</Label>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                  {(Object.keys(FOCUS_LABEL) as Focus[]).map((k) => (
+                    <Chip key={k} label={FOCUS_LABEL[k]} active={focus === k} onPress={() => setFocus(k)} />
+                  ))}
+                </View>
+                <Label>움직인 길 (손목은 바벨이 지나간 길과 비슷해요)</Label>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                  {(Object.keys(TRAIL_LABEL) as TrailJoint[]).map((k) => (
+                    <Chip key={k} label={TRAIL_LABEL[k]} active={trailJoint === k} onPress={() => { trail.current.reset(); setTrailJoint(k); }} />
+                  ))}
+                </View>
+                {trailJoint !== 'off' && trail.current.points.length > 1 && (
+                  <T muted style={{ fontSize: 12, marginTop: 4 }}>위아래로 움직인 폭: 화면 높이의 약 {trail.current.verticalRangePct}%</T>
+                )}
+                <Label>세는 기준 (틀리면 바꿔 보세요: 쉬움은 작은 움직임도, 엄격은 크게 움직여야 셉니다)</Label>
+                <Segmented<Strictness> options={(['easy', 'normal', 'strict'] as Strictness[]).map((k) => ({ key: k, label: STRICT_LABEL[k] }))} value={strict} onChange={setStrict} />
+                <Label>인식 정밀도</Label>
+                <Segmented<'lite' | 'full'> options={[{ key: 'lite', label: '빠름' }, { key: 'full', label: '정밀' }]} value={model} onChange={setModel} />
+                {ready && (
+                  <>
+                    <Label>횟수가 이상할 때</Label>
+                    <Btn label="최근 60초 좌표 기록 저장" kind="ghost" small onPress={saveLog} />
+                    <T muted style={{ fontSize: 11, marginTop: 4 }}>영상은 저장하지 않고 관절 좌표만 담아요. 공유해 주시면 원인을 확인할 수 있어요. (카메라 프레임 {frames})</T>
+                  </>
+                )}
+              </>
+            )}
+          </Card>
         )}
       </ScrollView>
     </View>
