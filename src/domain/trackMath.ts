@@ -145,3 +145,57 @@ export function lastSeenMs(tr: Track | null): number {
   for (let i = tr.pts.length - 1; i >= 0; i--) if (tr.pts[i]) return tr.times[i];
   return -1;
 }
+
+// ---- 선(점 2개) · 호(점 3개) 수치 ----
+export interface LineSample {
+  t: number;
+  /** 양 끝을 이은 선이 수직에서 기운 정도(도) */ tilt: number;
+  /** 양 끝 사이 길이(영상 높이 대비 %) */ length: number;
+  /** 호일 때만: 가운데 점이 양 끝 연결선에서 벗어난 거리(선 길이 대비 %) */ bend?: number;
+  /** 호일 때만: 호의 중심각(도). 곧은 선이면 0 */ arc?: number;
+}
+/** 점 pm이 a–b 연결선에서 떨어진 거리 ÷ 선 길이 (가로세로 비 보정). 선 길이 0이면 0 */
+export function bendRatio(a: P, pm: P, b: P, aspect = 1): number {
+  const ax = a.x * aspect, bx = b.x * aspect, mx = pm.x * aspect;
+  const dx = bx - ax, dy = b.y - a.y;
+  const len = Math.hypot(dx, dy);
+  if (len === 0) return 0;
+  return Math.abs(dx * (pm.y - a.y) - dy * (mx - ax)) / len / len;
+}
+/** 점 2개(직선) 또는 3개(호: 순서는 한쪽 끝 → 가운데 → 반대쪽 끝)의 시간별 수치. 한 점이라도 놓친 시각은 건너뛴다 */
+export function lineSamples(tracks: (Track | null)[], n: 2 | 3, aspect = 1): LineSample[] {
+  const first = tracks[0];
+  if (!first) return [];
+  const out: LineSample[] = [];
+  first.times.forEach((t, i) => {
+    const ps: (P | null)[] = [first.pts[i]];
+    for (let k = 1; k < n; k++) ps.push(pointAt(tracks[k] ?? null, t, 40));
+    if (ps.some((p) => !p)) return;
+    const a = ps[0]!, e = ps[n - 1]!;
+    const s: LineSample = {
+      t, tilt: tiltFromVertical(a, e, aspect), length: Math.round(lineLength(a, e, aspect) * 1000) / 10,
+    };
+    if (n === 3) {
+      const m = ps[1]!;
+      s.bend = Math.round(bendRatio(a, m, e, aspect) * 1000) / 10;
+      s.arc = Math.round(2 * (180 - angleAt(a, m, e, aspect)) * 10) / 10;
+    }
+    out.push(s);
+  });
+  return out;
+}
+export function rangeOf(vals: number[]): { min: number; max: number } | null {
+  return vals.length ? { min: Math.min(...vals), max: Math.max(...vals) } : null;
+}
+/** 시각 t에 가장 가까운 샘플. maxGapMs보다 멀면 null */
+export function sampleAt(ss: LineSample[], t: number, maxGapMs = 150): LineSample | null {
+  let best: LineSample | null = null, bd = Infinity;
+  for (const s of ss) { const d = Math.abs(s.t - t); if (d < bd) { bd = d; best = s; } }
+  return best && bd <= maxGapMs ? best : null;
+}
+/** 점이 움직인 총 거리(영상 높이 대비 %) */
+export function pathLengthPct(pts: P[], aspect = 1): number {
+  let L = 0;
+  for (let i = 1; i < pts.length; i++) L += Math.hypot((pts[i].x - pts[i - 1].x) * aspect, pts[i].y - pts[i - 1].y);
+  return Math.round(L * 1000) / 10;
+}

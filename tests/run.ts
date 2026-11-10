@@ -23,12 +23,13 @@ import { decodeOverride, encodeOverride, fmtDaysAgo, parseIds, partSummary, week
 import { CATALOG, matchProfile, partOf } from '../src/domain/exerciseCatalog.ts';
 import { barbellTotal, bestE1rm, estimateMinutes, monthDays, monthWeeks, partTotals, recommendNext, streakWeeks, volumeOf } from '../src/domain/workoutStats.ts';
 import { trackSequence, zncc, extractPatch, type Gray } from '../src/domain/pointTrack.ts';
-import { angleAt, countSwings, fitRect, lastSeenMs, lineLength, mergeTrack, pointAt, toNorm, toScreen, trackFromNative, validPoints, pathStats, simplifyPath, smoothPath, tiltFromVertical } from '../src/domain/trackMath.ts';
+import { bendRatio, lineSamples, pathLengthPct, rangeOf, sampleAt, angleAt, countSwings, fitRect, lastSeenMs, lineLength, mergeTrack, pointAt, toNorm, toScreen, trackFromNative, validPoints, pathStats, simplifyPath, smoothPath, tiltFromVertical } from '../src/domain/trackMath.ts';
 import { COARSE_OF, coarseOfExercise, EXERCISE_TABLE, lookupExercise } from '../src/domain/exerciseTable.ts';
 import { classifyFeatures, classifyPose, extractFeatures, verifyAgainst } from '../src/domain/patternClassify.ts';
 import { frameOf, SCENES } from './poseSynth.ts';
 import { blocksOf, currentOf, restAfter, type GEx } from '../src/domain/guided.ts';
-import { AutoRepCounter, countWord, JOINTS, jointAngle } from '../src/domain/liveCount.ts';
+import { AutoRepCounter, countWord, JOINTS, jointAngle, usable } from '../src/domain/liveCount.ts';
+import { buildPoseLog } from '../src/domain/poseLog.ts';
 import type { SessionRecord, SetRecord } from '../src/domain/types.ts';
 import { moveBlock, moveBlockTo } from '../src/domain/reorder.ts';
 import { warmupPlan } from '../src/domain/warmup.ts';
@@ -1165,6 +1166,96 @@ test('동작 유형 판별: 관절이 ±2%% 떨려도 같은 결과, 떨리기�
   }
   const idle = classifyPose(shake(SCENES.still(), 0.02), 1, 1)!;
   assert.equal(idle.top.length, 0);
+});
+
+
+// ---- 카운트 오탐 방지(화면 밖 관절·좌우 전환·튐) ----
+test('화면 안 확인: 가장자리 밖으로 나간 관절은 신뢰도가 높아도 쓰지 않는다', () => {
+  const f = lmFrame({ 0: [0.5, 0.5, 0.9], 1: [0.5, 1.2, 0.9], 2: [0.01, 0.5, 0.9], 3: [0.5, 0.5, 0.2] });
+  assert.equal(usable(f, 0), true);
+  assert.equal(usable(f, 1), false); // 화면 아래로 나감
+  assert.equal(usable(f, 2), false); // 왼쪽 가장자리
+  assert.equal(usable(f, 3), false); // 신뢰도 낮음
+});
+test('몸이 일부만 보일 때: 화면 밖 발목·뒤꿈치가 높은 신뢰도로 마구 떨려도 0회, 상체 컬은 그대로 센다', () => {
+  let seed = 11;
+  const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff - 0.5; };
+  const c = new AutoRepCounter();
+  const frames = Array.from({ length: 300 }, () => {
+    const f = standing({ sy: 0.3, wristDy: 0.4 });
+    // 발은 화면 아래(y>1)로 나갔는데 모델이 신뢰도 0.9로 위치를 추정하며 크게 떨림
+    for (const i of [25, 26, 27, 28, 29, 30, 31, 32]) { f[i * 3] = 0.45 + rnd() * 0.3; f[i * 3 + 1] = 1.1 + rnd() * 0.5; f[i * 3 + 2] = 0.9; }
+    return f;
+  });
+  runFrames(c, frames);
+  assert.equal(c.count, 0);
+  const d = new AutoRepCounter();
+  runFrames(d, wave(121, 24, -0.05, 0.4).map((dy) => {
+    const f = standing({ wristDy: dy, hip: false });
+    for (const i of [25, 27, 29, 31]) { f[i * 3] = 0.5; f[i * 3 + 1] = 1.2 + rnd(); f[i * 3 + 2] = 0.9; }
+    return f;
+  }));
+  assert.equal(d.count, 5);
+  assert.equal(d.partialBody, true);
+});
+test('좌우 고정·튐 제거: 왼쪽/오른쪽 신뢰도가 번갈아 바뀌어도 각도가 튀지 않아 헛카운트가 없다', () => {
+  const c = new AutoRepCounter();
+  const frames = Array.from({ length: 240 }, (_, i) => {
+    // 왼팔은 굽은 채(90°), 오른팔은 편 채(180°)로 가만히 있는데 더 잘 보이는 쪽이 매 프레임 바뀜
+    const lv = i % 2 ? 0.95 : 0.6, rv = i % 2 ? 0.6 : 0.95;
+    return lmFrame({
+      11: [0.6, 0.3, lv], 13: [0.6, 0.5, lv], 15: [0.8, 0.5, lv], // 왼팔 90°
+      12: [0.4, 0.3, rv], 14: [0.4, 0.5, rv], 16: [0.4, 0.7, rv], // 오른팔 180°
+      23: [0.58, 0.7, 0.9], 24: [0.42, 0.7, 0.9],
+    });
+  });
+  runFrames(c, frames);
+  assert.equal(c.count, 0);
+});
+test('튐 제거: 한 프레임짜리 이상값은 건너뛰지만 계속되면 진짜 움직임으로 센다', () => {
+  const c = new AutoRepCounter();
+  const base = wave(151, 30, 80, 175);
+  const noisy = base.map((v, i) => (i % 17 === 5 ? v + 90 : v)); // 가끔 한 프레임만 90° 튐
+  runAuto(c, { knee: noisy });
+  assert.equal(c.count, 5);
+});
+test('좌표 기록: 최근 60초만, 소수 3자리, 센 시점 포함', () => {
+  const fr = Array.from({ length: 100 }, (_, i) => ({ t: i * 1000, lm: new Float32Array(99).fill(0.123456) }));
+  const out = JSON.parse(buildPoseLog(fr, [{ t: 5000, n: 1, joint: '무릎' }, { t: 90000, n: 2, joint: '무릎' }], { w: 480, h: 640, focus: 'auto', strict: 'normal', exercise: null, count: 2 }));
+  assert.equal(out.frames.length, 61);
+  assert.equal(out.frames[out.frames.length - 1].s, 0);
+  assert.equal(out.frames[0].lm[0], 0.123);
+  assert.equal(out.events.length, 1);
+  assert.equal(out.events[0].n, 2);
+  assert.equal(out.seconds, 60);
+});
+
+test('선·호 수치: 기울기·길이·휘어짐(현에서 벗어난 %)·호 중심각, 놓친 시각은 건너뜀', () => {
+  const T = (xs: number[], ys: number[]) => trackFromNative([0, 100, 200], xs, ys);
+  // 직선: 점 2개, 수직선 → 기울기 0, 길이 50%
+  const a = T([0.5, 0.5, 0.5], [0.2, 0.2, 0.2]), b = T([0.5, 0.6, -1], [0.7, 0.7, -1]);
+  const ss = lineSamples([a, b], 2);
+  assert.equal(ss.length, 2); // 세 번째 시각은 점 2를 놓쳐서 제외
+  assert.equal(ss[0].tilt, 0);
+  assert.equal(ss[0].length, 50);
+  assert.ok(ss[1].tilt > 10 && ss[1].tilt < 15);
+  assert.equal(ss[0].bend, undefined);
+  // 호: 곧은 3점은 휘어짐 0·중심각 0, 가운데가 옆으로 빠지면 커진다
+  const e = T([0.5, 0.5, 0.5], [0.8, 0.8, 0.8]);
+  const straight = lineSamples([a, T([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]), e], 3);
+  assert.equal(straight[0].bend, 0);
+  assert.equal(straight[0].arc, 0);
+  const bent = lineSamples([a, T([0.6, 0.6, 0.6], [0.5, 0.5, 0.5]), e], 3);
+  assert.ok(Math.abs(bent[0].bend! - 16.7) < 0.1, String(bent[0].bend)); // 0.1 ÷ 0.6
+  assert.ok(Math.abs(bent[0].arc! - 73.8) < 0.2, String(bent[0].arc)); // 현 0.6·휘어짐 0.1 → 반지름 0.5 → 중심각 약 73.7°
+  assert.ok(Math.abs(bendRatio({ x: 0, y: 0 }, { x: 0.1, y: 0.5 }, { x: 0, y: 1 }) - 0.1) < 1e-9);
+  assert.equal(bendRatio({ x: 0, y: 0 }, { x: 0.3, y: 0.3 }, { x: 0, y: 0 }), 0);
+  assert.deepEqual(rangeOf([3, 1, 2]), { min: 1, max: 3 });
+  assert.equal(rangeOf([]), null);
+  assert.equal(sampleAt(ss, 90)!.t, 100);
+  assert.equal(sampleAt(ss, 5000), null);
+  assert.equal(pathLengthPct([{ x: 0, y: 0 }, { x: 0, y: 0.3 }, { x: 0.4, y: 0.3 }]), 70);
+  assert.deepEqual(lineSamples([null, null], 2), []);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

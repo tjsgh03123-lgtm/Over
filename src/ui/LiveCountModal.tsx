@@ -1,14 +1,16 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Modal, PermissionsAndroid, Platform, ScrollView, Text, Vibration, View, useWindowDimensions } from 'react-native';
+import { Alert, Modal, PermissionsAndroid, Platform, ScrollView, Text, Vibration, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { requireNativeView } from 'expo';
 import { useKeepAwake } from 'expo-keep-awake';
-import Svg, { Circle, Line, Polyline } from 'react-native-svg';
+import Svg, { Polyline } from 'react-native-svg';
 import { jointPoint, PathTrail, TRAIL_LABEL, type TrailJoint } from '../domain/pathTrail.ts';
 import { useApp } from '../app/context.tsx';
 import { setSetting } from '../db/repo.ts';
 import { coarseOfExercise } from '../domain/exerciseTable.ts';
 import { classifyPose, VIEW_LABEL, verifyAgainst, type Guess } from '../domain/patternClassify.ts';
+import { buildPoseLog, LOG_SECONDS, type LogEvent, type LogFrame } from '../domain/poseLog.ts';
+import { shareTextFile, stamp } from '../services/files.ts';
 import { AutoRepCounter, countWord, FOCUS_LABEL, type Focus, STRICT_LABEL, type Strictness } from '../domain/liveCount.ts';
 import { SetFlow, type FlowConfig, type FlowEvent } from '../domain/setFlow.ts';
 import { speakCount, speakText, stopSpeaking } from '../services/speak.ts';
@@ -28,9 +30,6 @@ function cameraView() {
   return NativeCamera;
 }
 
-const BONES: [number, number][] = [
-  [11, 12], [23, 24], [11, 13], [13, 15], [12, 14], [14, 16], [11, 23], [12, 24], [23, 25], [25, 27], [24, 26], [26, 28],
-];
 
 function fmtRep(ms: number) { return `${(ms / 1000).toFixed(1)}초`; }
 
@@ -98,6 +97,8 @@ function LiveBody({ onClose, onUse, defaults }: { onClose: () => void; onUse: (c
   // 동작 유형 추정: 최근 6초의 관절 프레임을 모아 1초마다 판별
   const poseBuf = useRef<{ lm: number[]; at: number }[]>([]);
   const poseDim = useRef({ w: 3, h: 4 });
+  const logFrames = useRef<LogFrame[]>([]); // 오작동 확인용 좌표 기록(최근 60초, 영상 아님)
+  const logEvents = useRef<LogEvent[]>([]);
   const [guess, setGuess] = useState<Guess | null>(null);
   const expected = defaults.exerciseName ? coarseOfExercise(defaults.exerciseName) : null;
   const lastSeen = useRef(0);
@@ -189,6 +190,8 @@ function LiveBody({ onClose, onUse, defaults }: { onClose: () => void; onUse: (c
     if (any) lastSeen.current = Date.now();
     trail.current.push(jointPoint(lm, trailJoint));
     poseBuf.current.push({ lm, at: Date.now() });
+    logFrames.current.push({ t: Date.now(), lm });
+    if (logFrames.current.length > LOG_SECONDS * 30) logFrames.current.shift();
     if (poseBuf.current.length > 240) poseBuf.current.shift();
     poseDim.current = { w, h };
     setFrame({ lm, w, h });
@@ -200,6 +203,8 @@ function LiveBody({ onClose, onUse, defaults }: { onClose: () => void; onUse: (c
       const n = counter.current.count;
       setCount(n);
       setLastMs(ev.timeMs);
+      logEvents.current.push({ t: Date.now(), n, joint: counter.current.jointLabel });
+      if (logEvents.current.length > 200) logEvents.current.shift();
       Vibration.vibrate(40);
       if (sound) speakCount(n);
       handleFlow(f?.onCount(n, Date.now()) ?? null);
@@ -247,6 +252,18 @@ function LiveBody({ onClose, onUse, defaults }: { onClose: () => void; onUse: (c
     return () => clearInterval(id);
   }, [source, tempoSec]);
 
+  const saveLog = async () => {
+    try {
+      if (!logFrames.current.length) { Alert.alert('저장할 기록이 없어요', '카메라에 사람이 보이는 상태에서 잠깐 움직인 뒤 눌러 주세요'); return; }
+      const json = buildPoseLog(logFrames.current, logEvents.current, {
+        w: poseDim.current.w, h: poseDim.current.h, focus, strict, exercise: defaults.exerciseName ?? null, count,
+      });
+      await shareTextFile(`overdrive-pose-${stamp()}.json`, json, 'application/json');
+    } catch (e) {
+      Alert.alert('저장하지 못했어요', String((e as Error)?.message ?? e));
+    }
+  };
+
   const adjustCount = (d: number) => {
     counter.current.adjust(d);
     const n = counter.current.count;
@@ -262,8 +279,6 @@ function LiveBody({ onClose, onUse, defaults }: { onClose: () => void; onUse: (c
   const maxH = winH * 0.4;
   const boxW = Math.min(winW - S.lg * 2, maxH * ar);
   const boxH = boxW / ar;
-  const lm = frame?.lm;
-  const vis = (i: number) => (lm ? lm[i * 3 + 2] > 0.5 : false);
   const cnt = counter.current;
 
   return (
@@ -285,16 +300,15 @@ function LiveBody({ onClose, onUse, defaults }: { onClose: () => void; onUse: (c
                 onPose={onPose} onError={(e) => setErr(e.nativeEvent.message)}
               />
               <Svg width={boxW} height={boxH} style={{ position: 'absolute', left: 0, top: 0 }} pointerEvents="none">
-                {lm && BONES.map(([a, b], i) => (vis(a) && vis(b) ? (
-                  <Line key={i} x1={lm[a * 3] * boxW} y1={lm[a * 3 + 1] * boxH} x2={lm[b * 3] * boxW} y2={lm[b * 3 + 1] * boxH} stroke="#FFFFFF" strokeOpacity={0.6} strokeWidth={2} />
-                ) : null))}
                 {trailJoint !== 'off' && trail.current.points.length > 1 && (
                   <Polyline points={trail.current.points.map((p) => `${p.x * boxW},${p.y * boxH}`).join(' ')} fill="none" stroke={GC.all} strokeWidth={3} strokeOpacity={0.9} strokeLinejoin="round" />
                 )}
-                {lm && [11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28].map((i) => (vis(i) ? (
-                  <Circle key={i} cx={lm[i * 3] * boxW} cy={lm[i * 3 + 1] * boxH} r={4} fill={GC.all} />
-                ) : null))}
               </Svg>
+              {seen && (
+                <Text style={{ position: 'absolute', left: 8, top: 6, color: '#FFFFFFCC', fontSize: 11 }}>
+                  ● 인식 중{counter.current.partialBody ? ' · 상체만' : ''}
+                </Text>
+              )}
               {frames > 0 && !seen && (
                 <Text style={{ position: 'absolute', left: 8, right: 8, bottom: 8, color: '#FFFFFFCC', textAlign: 'center', fontSize: 12 }}>
                   사람이 보이지 않아요 — 몸 전체가 화면에 들어오게 해 주세요
@@ -457,6 +471,12 @@ function LiveBody({ onClose, onUse, defaults }: { onClose: () => void; onUse: (c
           횟수가 틀리면 ‘쉬움/엄격’으로 바꿔 보세요. 쉬움은 작은 움직임도 세고, 엄격은 크게 움직여야 셉니다.
         </T>}
         {source === 'camera' && ready && <T muted style={{ fontSize: 11, marginTop: 4, textAlign: 'center' }}>카메라 프레임 {frames}</T>}
+        {source === 'camera' && ready && (
+          <View style={{ marginTop: S.sm }}>
+            <Btn label="최근 60초 좌표 기록 저장 (횟수가 이상할 때)" kind="ghost" small onPress={saveLog} />
+            <T muted style={{ fontSize: 11, marginTop: 4, textAlign: 'center' }}>영상은 저장하지 않고 관절 좌표만 담아요. 공유해 주시면 원인을 확인할 수 있어요.</T>
+          </View>
+        )}
       </ScrollView>
     </View>
   );

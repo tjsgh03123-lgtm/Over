@@ -7,9 +7,17 @@
 export const LM_COUNT = 33;
 export const MIN_VIS = 0.5;
 
+/** 화면 가장자리 이 비율 안쪽만 '화면 안'으로 본다. 밖으로 나간 관절은 모델이 위치를 추정해 내놓는데 신뢰도는 높고 위치는 떨린다 */
+export const EDGE = 0.03;
+/** 관절 i가 믿을 만한가: 신뢰도가 충분하고 화면 안에 있어야 한다 */
+export function usable(lm: ArrayLike<number>, i: number): boolean {
+  const x = lm[i * 3], y = lm[i * 3 + 1];
+  return lm[i * 3 + 2] >= MIN_VIS && x >= EDGE && x <= 1 - EDGE && y >= EDGE && y <= 1 - EDGE;
+}
+
 export type JointId = 'elbow' | 'knee' | 'hip' | 'shoulder';
 
-interface JointDef { id: JointId; label: string; l: [number, number, number]; r: [number, number, number] }
+export interface JointDef { id: JointId; label: string; l: [number, number, number]; r: [number, number, number] }
 
 /** MediaPipe 관절 번호: [앞점, 꼭짓점, 뒷점] */
 export const JOINTS: JointDef[] = [
@@ -46,6 +54,13 @@ export function angleDeg(a: { x: number; y: number }, b: { x: number; y: number 
   return (Math.acos(Math.max(-1, Math.min(1, (v1x * v2x + v1y * v2y) / n))) * 180) / Math.PI;
 }
 
+/** 한쪽(앞점·꼭짓점·뒷점)의 각도. 세 점이 모두 화면 안에서 믿을 만할 때만 값이 나온다 */
+function sideAngle(lm: ArrayLike<number>, ids: [number, number, number], w: number, h: number): { vis: number; ang: number } | null {
+  if (!ids.every((i) => usable(lm, i))) return null;
+  const p = ids.map((i) => ({ x: lm[i * 3] * w, y: lm[i * 3 + 1] * h, v: lm[i * 3 + 2] }));
+  return { vis: Math.min(p[0].v, p[1].v, p[2].v), ang: angleDeg(p[0], p[1], p[2]) };
+}
+
 /**
  * 프레임의 관절 배열(33×3: x,y,신뢰도 / x,y는 0~1)에서 관절 각도를 구한다.
  * 왼쪽·오른쪽 중 더 잘 보이는 쪽을 쓴다. 둘 다 안 보이면 null.
@@ -80,31 +95,40 @@ class SignalTracker {
   private lastHiT = 0;
   private minVal = 1e9;
   private lostSince: number | null = null;
+  /** 한 프레임에 이만큼 넘게 튀면 한 번은 잡음으로 보고 건너뛴다(다음 프레임도 그 자리면 진짜 움직임) */
+  private spiked = false;
+  /** 연속으로 값이 들어온 프레임 수. 화면 가장자리를 들락날락하는 관절의 띄엄띄엄한 값은 믿지 않는다 */
+  private streak = 0;
+  readonly spike: number;
   readonly id: string;
   readonly label: string;
   readonly baseMin: number;
   /** 움직임이 멈추면 '위/아래 끝' 기억이 초당 이만큼 좁혀진다 */
   readonly decay: number;
 
-  constructor(id: string, label: string, baseMin: number, decay: number) {
-    this.id = id; this.label = label; this.baseMin = baseMin; this.decay = decay;
+  constructor(id: string, label: string, baseMin: number, decay: number, spike: number) {
+    this.id = id; this.label = label; this.baseMin = baseMin; this.decay = decay; this.spike = spike;
   }
 
   get amp() { return this.hi - this.lo; }
 
   reset() {
     this.count = 0; this.reps = []; this.value = null; this.smooth = null; this.phase = 'unknown'; this.hi = 0; this.lo = 0;
-    this.lostSince = null; this.minVal = 1e9; this.base = 0; this.lastRepT = -1e9;
+    this.lostSince = null; this.minVal = 1e9; this.base = 0; this.lastRepT = -1e9; this.spiked = false; this.streak = 0;
   }
 
   /** minAmp: 한 번으로 인정할 최소 오르내림 크기 */
   push(raw: number | null, tMs: number, minAmp: number): RepEvent | null {
     if (raw == null) {
+      this.streak = 0;
       if (this.lostSince == null) this.lostSince = tMs;
       if (tMs - this.lostSince > 3000) { this.smooth = null; this.phase = 'unknown'; this.hi = 0; this.lo = 0; }
       return null;
     }
+    if (++this.streak < MIN_STREAK) return null;
     this.lostSince = null;
+    if (this.smooth != null && Math.abs(raw - this.smooth) > this.spike && !this.spiked) { this.spiked = true; return null; }
+    this.spiked = false;
     const first = this.smooth == null;
     this.smooth = first ? raw : (this.smooth as number) * 0.5 + raw * 0.5;
     const a = this.smooth;
@@ -141,10 +165,15 @@ class SignalTracker {
 }
 
 const MIN_REP_MS = 400;
+const MIN_STREAK = 4; // 이만큼 연속으로 보여야 값을 쓴다
 const ANGLE_DECAY = 3; // 도/초
 const POS_DECAY = 0.04; // 어깨너비/초
 /** 위치 신호의 최소 크기(어깨너비 배수): 손목·몸·골반·으쓱·뒤꿈치 */
-const POS_MIN = { wrist: 0.5, body: 0.35, shrug: 0.12, heel: 0.1 };
+const POS_MIN = { wrist: 0.5, body: 0.35, shrug: 0.3, heel: 0.25 };
+/** 골반이 화면 밖이면 기준 길이가 어깨너비뿐이라 더 흔들리므로 위치 신호의 문턱을 높인다 */
+const PARTIAL_MULT = 1.5;
+const ANGLE_SPIKE = 60; // 도/프레임
+const POS_SPIKE = 1.5; // 어깨너비/프레임
 const POS_MULT: Record<Strictness, number> = { easy: 0.6, normal: 1, strict: 1.5 };
 /** 한 동작이 이 시간(ms) 넘게 멈추면 다른 동작으로 넘어갈 수 있다 */
 const IDLE_SWITCH_MS = 4000;
@@ -152,13 +181,14 @@ const IDLE_SWITCH_MS = 4000;
 export type SignalKey = 'elbow' | 'knee' | 'hip' | 'shoulder';
 
 /** 프레임에서 위치 신호를 꺼낸다. 어깨너비로 나눠 카메라 거리와 상관없게 만든다. */
-function positionSignals(lm: ArrayLike<number>, w: number, h: number, scaleRef: { v: number }): Record<string, number | null> {
+function positionSignals(lm: ArrayLike<number>, w: number, h: number, scaleRef: { v: number; partial: boolean }): Record<string, number | null> {
   const P = (i: number) => ({ x: lm[i * 3] * w, y: lm[i * 3 + 1] * h, v: lm[i * 3 + 2] });
-  const ok = (i: number) => lm[i * 3 + 2] >= MIN_VIS;
+  const ok = (i: number) => usable(lm, i);
   const out: Record<string, number | null> = {
     wristLy: null, wristRy: null, wristLx: null, wristRx: null, bodyY: null, hipY: null, shrug: null, heelL: null, heelR: null,
   };
   const sL = P(11), sR = P(12);
+  scaleRef.partial = !(ok(23) && ok(24));
   if (ok(11) && ok(12)) {
     const sw = Math.hypot(sL.x - sR.x, sL.y - sR.y);
     // 옆으로 서면 어깨너비가 줄어들므로 몸통 길이도 같이 본다
@@ -195,24 +225,28 @@ function positionSignals(lm: ArrayLike<number>, w: number, h: number, scaleRef: 
  * 그 동작이 4초 넘게 멈춘 뒤 다른 동작이 시작되면 그쪽으로 넘어가며, 횟수는 이어서 쌓인다.
  */
 export class AutoRepCounter {
-  private angleT = JOINTS.map((j) => new SignalTracker(j.id, j.label, 0, ANGLE_DECAY));
+  private angleT = JOINTS.map((j) => new SignalTracker(j.id, j.label, 0, ANGLE_DECAY, ANGLE_SPIKE));
   private posT: SignalTracker[] = [
-    new SignalTracker('wristLy', '손목 위아래', POS_MIN.wrist, POS_DECAY),
-    new SignalTracker('wristRy', '손목 위아래', POS_MIN.wrist, POS_DECAY),
-    new SignalTracker('wristLx', '손목 좌우', POS_MIN.wrist, POS_DECAY),
-    new SignalTracker('wristRx', '손목 좌우', POS_MIN.wrist, POS_DECAY),
-    new SignalTracker('bodyY', '몸 위아래', POS_MIN.body, POS_DECAY),
-    new SignalTracker('hipY', '골반 위아래', POS_MIN.body, POS_DECAY),
-    new SignalTracker('shrug', '어깨 으쓱', POS_MIN.shrug, POS_DECAY),
-    new SignalTracker('heelL', '뒤꿈치 들기', POS_MIN.heel, POS_DECAY),
-    new SignalTracker('heelR', '뒤꿈치 들기', POS_MIN.heel, POS_DECAY),
+    new SignalTracker('wristLy', '손목 위아래', POS_MIN.wrist, POS_DECAY, POS_SPIKE),
+    new SignalTracker('wristRy', '손목 위아래', POS_MIN.wrist, POS_DECAY, POS_SPIKE),
+    new SignalTracker('wristLx', '손목 좌우', POS_MIN.wrist, POS_DECAY, POS_SPIKE),
+    new SignalTracker('wristRx', '손목 좌우', POS_MIN.wrist, POS_DECAY, POS_SPIKE),
+    new SignalTracker('bodyY', '몸 위아래', POS_MIN.body, POS_DECAY, POS_SPIKE),
+    new SignalTracker('hipY', '골반 위아래', POS_MIN.body, POS_DECAY, POS_SPIKE),
+    new SignalTracker('shrug', '어깨 으쓱', POS_MIN.shrug, POS_DECAY, POS_SPIKE),
+    new SignalTracker('heelL', '뒤꿈치 들기', POS_MIN.heel, POS_DECAY, POS_SPIKE),
+    new SignalTracker('heelR', '뒤꿈치 들기', POS_MIN.heel, POS_DECAY, POS_SPIKE),
   ];
   private minAmp = MIN_AMP.normal;
   private mult = POS_MULT.normal;
   private active: SignalTracker | null = null;
   private offset = 0; // 이전 동작들에서 쌓인 횟수
   private all: RepEvent[] = [];
-  private scale = { v: 0 };
+  private scale = { v: 0, partial: false };
+  /** 관절마다 한 번 고른 쪽(왼/오)을 계속 쓴다. 프레임마다 바꾸면 쪽이 바뀌는 순간 각도가 튄다 */
+  private lock: Partial<Record<JointId, 'l' | 'r'>> = {};
+  /** 위치 신호의 문턱이 높아진 상태(골반이 화면 밖) */
+  get partialBody() { return this.scale.partial; }
 
   private focus: Focus = 'auto';
   setFocus(f: Focus) { this.focus = f; }
@@ -222,7 +256,7 @@ export class AutoRepCounter {
 
   reset() {
     [...this.angleT, ...this.posT].forEach((t) => t.reset());
-    this.active = null; this.offset = 0; this.all = []; this.scale = { v: 0 };
+    this.active = null; this.offset = 0; this.all = []; this.scale = { v: 0, partial: false }; this.lock = {};
   }
 
   /** 잘못 센 횟수를 손으로 고친다 (0 아래로는 내려가지 않음) */
@@ -245,7 +279,8 @@ export class AutoRepCounter {
       if (ev) done.push({ t, ev, ratio: t.amp / min });
     };
     for (const t of this.angleT) if (this.allowed(t.id)) run(t, angles[t.id as SignalKey] ?? null, this.minAmp);
-    for (const t of this.posT) if (this.allowed(t.id)) run(t, pos[t.id] ?? null, t.baseMin * this.mult);
+    const pm = this.scale.partial ? PARTIAL_MULT : 1;
+    for (const t of this.posT) if (this.allowed(t.id)) run(t, pos[t.id] ?? null, t.baseMin * this.mult * pm);
     if (!done.length) return null;
 
     const act = this.active;
@@ -276,10 +311,21 @@ export class AutoRepCounter {
     return this.step(angles, {}, tMs);
   }
 
+  private lockedAngle(lm: ArrayLike<number>, j: JointDef, w: number, h: number): number | null {
+    const sideOf = (k: 'l' | 'r') => sideAngle(lm, k === 'l' ? j.l : j.r, w, h);
+    const lk = this.lock[j.id];
+    if (lk) { const r = sideOf(lk); if (r) return r.ang; }
+    const l = sideOf('l'), r = sideOf('r');
+    if (!l && !r) return null;
+    const pickL = !!l && (!r || l.vis >= r.vis);
+    this.lock[j.id] = pickL ? 'l' : 'r';
+    return pickL ? l!.ang : r!.ang;
+  }
+
   /** 관절 33개(x,y,신뢰도) 한 프레임을 넣는다. w,h는 영상 가로·세로 픽셀. */
   push(lm: ArrayLike<number>, w: number, h: number, tMs: number): RepEvent | null {
     const a: Partial<Record<SignalKey, number | null>> = {};
-    for (const j of JOINTS) a[j.id] = jointAngle(lm, j, w, h);
+    for (const j of JOINTS) a[j.id] = this.lockedAngle(lm, j, w, h);
     return this.step(a, positionSignals(lm, w, h, this.scale), tMs);
   }
 }
