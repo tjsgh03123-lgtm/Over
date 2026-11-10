@@ -9,7 +9,7 @@ export interface TrackRequest {
   xs: number[]; ys: number[];
   stepMs?: number;
 }
-export interface NativeTrack { xs: number[]; ys: number[]; scores: number[]; lostAtMs: number }
+export interface NativeTrack { xs: number[]; ys: number[]; scores: number[]; lostAtMs: number; weak?: boolean }
 export interface TrackReply { times: number[]; frameW: number; frameH: number; tracks: NativeTrack[] }
 
 interface Native {

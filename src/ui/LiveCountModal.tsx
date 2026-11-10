@@ -11,7 +11,7 @@ import { coarseOfExercise } from '../domain/exerciseTable.ts';
 import { classifyPose, VIEW_LABEL, verifyAgainst, type Guess } from '../domain/patternClassify.ts';
 import { buildPoseLog, LOG_SECONDS, type LogEvent, type LogFrame } from '../domain/poseLog.ts';
 import { shareTextFile, stamp } from '../services/files.ts';
-import { AutoRepCounter, countWord, FOCUS_LABEL, type Focus, STRICT_LABEL, type Strictness } from '../domain/liveCount.ts';
+import { AutoRepCounter, countWord, FOCUS_LABEL, type Focus, STRICT_LABEL, STRICT_RANGE, type Strictness } from '../domain/liveCount.ts';
 import { SetFlow, type FlowConfig, type FlowEvent } from '../domain/setFlow.ts';
 import { speakCount, speakText, stopSpeaking } from '../services/speak.ts';
 import { Btn, Card, Chip, Header, Row, Segmented, T } from './components.tsx';
@@ -487,8 +487,8 @@ function LiveBody({ onClose, onUse, defaults }: { onClose: () => void; onUse: (c
                 {trailJoint !== 'off' && trail.current.points.length > 1 && (
                   <T muted style={{ fontSize: 12, marginTop: 4 }}>위아래로 움직인 폭: 화면 높이의 약 {trail.current.verticalRangePct}%</T>
                 )}
-                <Label>세는 기준 (틀리면 바꿔 보세요: 쉬움은 작은 움직임도, 엄격은 크게 움직여야 셉니다)</Label>
-                <Segmented<Strictness> options={(['easy', 'normal', 'strict'] as Strictness[]).map((k) => ({ key: k, label: STRICT_LABEL[k] }))} value={strict} onChange={setStrict} />
+                <Label>세는 범위 (강: 작은 움직임도 셈 · 약: 크게 움직여야 셈. 안 세지면 강, 헛세면 약)</Label>
+                <Segmented<Strictness> options={(['easy', 'normal', 'strict'] as Strictness[]).map((k) => ({ key: k, label: `${STRICT_LABEL[k]} (${STRICT_RANGE[k]}~)` }))} value={strict} onChange={setStrict} />
                 <Label>인식 정밀도</Label>
                 <Segmented<'lite' | 'full'> options={[{ key: 'lite', label: '빠름' }, { key: 'full', label: '정밀' }]} value={model} onChange={setModel} />
                 {ready && (

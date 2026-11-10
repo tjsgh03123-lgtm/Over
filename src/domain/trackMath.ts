@@ -73,9 +73,11 @@ export function pathStats(pts: TimedP[], aspect = 1): PathStats | null {
     if (p.x < minX) minX = p.x;
     if (p.x > maxX) maxX = p.x;
   }
+  // 0.4% 안쪽은 점 떨림이므로 움직임으로 치지 않는다
+  const dz = (v: number) => (v < 0.004 ? 0 : v);
   return {
-    verticalPct: Math.round((bot.y - top.y) * 1000) / 10,
-    horizontalPct: Math.round((maxX - minX) * aspect * 1000) / 10,
+    verticalPct: Math.round(dz(bot.y - top.y) * 1000) / 10,
+    horizontalPct: Math.round(dz((maxX - minX) * aspect) * 1000) / 10,
     topT: top.t, bottomT: bot.t, points: pts.length,
   };
 }

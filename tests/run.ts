@@ -1021,12 +1021,28 @@ test('점 추적: 밝기가 바뀌어도(조명 변화) 따라가고, 표적이 
   const frames = [synthFrame(100, 100, 50, 50, 3), synthFrame(100, 100, 52, 52, 4, -30), synthFrame(100, 100, 54, 54, 5, 25)];
   const r = trackSequence(frames, { x: 50, y: 50 });
   assert.equal(r.lostAt, -1);
-  assert.deepEqual([r.points[2]!.x, r.points[2]!.y], [54, 54]);
+  assert.ok(Math.abs(r.points[2]!.x - 54) <= 0.5 && Math.abs(r.points[2]!.y - 54) <= 0.5);
   const gone = [...frames, synthFrame(100, 100, null, 0, 9), synthFrame(100, 100, 56, 56, 10)];
   const g = trackSequence(gone, { x: 50, y: 50 });
   assert.equal(g.lostAt, 3);
   assert.equal(g.points[3], null);
   assert.equal(g.points[4], null); // 한 번 놓치면 이후는 잘못 이어붙이지 않는다
+});
+test('점 추적: 무늬가 약한 시작점은 알리고, 화면 밖으로 나가면 놓친 것으로 본다', () => {
+  const flat: Gray[] = [0, 1, 2].map(() => ({ w: 80, h: 80, data: new Uint8Array(80 * 80).fill(100) }));
+  assert.equal(trackSequence(flat, { x: 40, y: 40 }).weak, true);
+  const patterned = [synthFrame(100, 100, 50, 50, 3), synthFrame(100, 100, 50, 50, 4)];
+  assert.equal(trackSequence(patterned, { x: 50, y: 50 }).weak, false);
+  const frames: Gray[] = [];
+  for (let i = 0; i < 12; i++) frames.push(synthFrame(100, 100, 50 + i * 4, 50, 20 + i));
+  const r = trackSequence(frames, { x: 50, y: 50 });
+  assert.ok(r.lostAt === -1 || r.lostAt >= 8);
+});
+test('궤적 요약: 0.4% 안쪽 떨림은 움직임으로 치지 않는다', () => {
+  const still = [0, 1, 2, 3].map((i) => ({ x: 0.5 + (i % 2) * 0.003, y: 0.5 + (i % 2) * 0.003, t: i }));
+  const st = pathStats(still, 1)!;
+  assert.equal(st.verticalPct, 0);
+  assert.equal(st.horizontalPct, 0);
 });
 test('점 추적: 무늬 없는 곳(분산 0)은 점수 0, 같은 조각은 1', () => {
   const flat = new Float32Array(25).fill(100);

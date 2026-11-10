@@ -20,10 +20,12 @@ class TrackOptions : Record {
   @Field var xs: List<Double> = listOf(0.5) // 시작 프레임에서 찍은 점들(1~2개). 0~1, 영상 가로 비율
   @Field var ys: List<Double> = listOf(0.5) // 0~1, 영상 세로 비율
   @Field var maxSide: Int = 320        // 추적용으로 줄인 프레임의 긴 변(px)
-  @Field var radius: Int = 8           // 템플릿 반지름(줄인 프레임 기준 px)
-  @Field var search: Int = 18          // 프레임마다 찾아볼 범위 반지름(px)
-  @Field var minScore: Double = 0.6    // 이보다 덜 비슷하면 놓친 것으로 본다
-  @Field var refreshScore: Double = 0.85
+  @Field var radius: Int = 12          // 템플릿 반지름(줄인 프레임 기준 px)
+  @Field var search: Int = 26          // 프레임마다 찾아볼 범위 반지름(px)
+  @Field var minScore: Double = 0.5    // 이보다 덜 비슷하면 놓친 것으로 본다
+  @Field var refreshScore: Double = 0.8 // 이 이상일 때만 템플릿에 새 모습을 섞는다
+  @Field var blend: Double = 0.5       // 새 모습을 섞는 비율
+  @Field var margin: Int = 3           // 가장자리 이 px 안이면 화면 밖으로 나간 것
   @Field var jobId: String = ""
 }
 
@@ -89,6 +91,7 @@ class VideoTrackerModule : Module() {
   private class PointState(var cx: Double, var cy: Double, n: Int) {
     var tpl: FloatArray? = null
     var lost = false
+    var weak = false
     var lostAt = -1.0
     val xs = DoubleArray(n) { -1.0 }
     val ys = DoubleArray(n) { -1.0 }
@@ -133,16 +136,23 @@ class VideoTrackerModule : Module() {
           if (p.lost) continue
           val t0 = p.tpl
           if (t0 == null) {
-            p.tpl = patch(gray, fw, fh, Math.round(p.cx).toInt(), Math.round(p.cy).toInt(), rad)
+            val tp = patch(gray, fw, fh, Math.round(p.cx).toInt(), Math.round(p.cy).toInt(), rad)
+            p.tpl = tp
+            p.weak = textureStd(tp) < 12.0
             p.xs[i] = p.cx / fw; p.ys[i] = p.cy / fh; p.scores[i] = 1.0
           } else {
             val res = matchStep(t0, gray, fw, fh, p.cx, p.cy, rad, o.search)
-            if (res[2] < o.minScore) {
+            val m = o.margin
+            if (res[2] < o.minScore || res[0] < m || res[1] < m || res[0] > fw - 1 - m || res[1] > fh - 1 - m) {
               p.lost = true; p.lostAt = tMs
             } else {
               p.cx = res[0]; p.cy = res[1]
               p.xs[i] = p.cx / fw; p.ys[i] = p.cy / fh; p.scores[i] = res[2]
-              if (res[2] >= o.refreshScore) p.tpl = patch(gray, fw, fh, Math.round(p.cx).toInt(), Math.round(p.cy).toInt(), rad)
+              if (o.blend > 0 && res[2] >= o.refreshScore) {
+                val fresh = patch(gray, fw, fh, Math.round(p.cx).toInt(), Math.round(p.cy).toInt(), rad)
+                val b = o.blend.toFloat()
+                for (q in t0.indices) t0[q] = t0[q] * (1 - b) + fresh[q] * b
+              }
             }
           }
         }
@@ -154,7 +164,7 @@ class VideoTrackerModule : Module() {
       }
       return mapOf(
         "times" to times.toList(), "frameW" to fw, "frameH" to fh,
-        "tracks" to pts.map { mapOf("xs" to it.xs.toList(), "ys" to it.ys.toList(), "scores" to it.scores.toList(), "lostAtMs" to it.lostAt) },
+        "tracks" to pts.map { mapOf("xs" to it.xs.toList(), "ys" to it.ys.toList(), "scores" to it.scores.toList(), "lostAtMs" to it.lostAt, "weak" to it.weak) },
       )
     } finally {
       r.release()
@@ -198,42 +208,99 @@ class VideoTrackerModule : Module() {
     return out
   }
 
-  /** 반환: [x, y, 점수(ZNCC)] */
-  private fun matchStep(tpl: FloatArray, g: FloatArray, w: Int, h: Int, px: Double, py: Double, r: Int, search: Int): DoubleArray {
-    val n = 2 * r + 1
-    val cnt = n * n
+  private fun textureStd(p: FloatArray): Double {
+    var m = 0.0
+    for (v in p) m += v
+    m /= p.size
+    var d = 0.0
+    for (v in p) d += (v - m) * (v - m)
+    return Math.sqrt(d / p.size)
+  }
+
+  /** (cx,cy) 중심 조각과 tpl(step 간격으로 뽑은 것)의 ZNCC */
+  private fun zncc(tpl: FloatArray, g: FloatArray, w: Int, h: Int, cx: Int, cy: Int, r: Int, step: Int, cur: FloatArray): Double {
+    val m = (2 * r) / step + 1
+    var k = 0
+    var mc = 0.0
+    for (j in 0 until m) {
+      val yy = (cy - r + j * step).coerceIn(0, h - 1)
+      for (i in 0 until m) { val v = g[yy * w + (cx - r + i * step).coerceIn(0, w - 1)]; cur[k++] = v; mc += v }
+    }
+    val cnt = m * m
+    mc /= cnt
     var mt = 0.0
-    for (v in tpl) mt += v
+    for (q in 0 until cnt) mt += tpl[q]
     mt /= cnt
+    var num = 0.0
     var dt = 0.0
-    for (v in tpl) { val a = v - mt; dt += a * a }
+    var dc = 0.0
+    for (q in 0 until cnt) { val a = tpl[q] - mt; val b = cur[q] - mc; num += a * b; dt += a * a; dc += b * b }
+    return if (dt < 1e-6 || dc < 1e-6) 0.0 else num / Math.sqrt(dt * dc)
+  }
+
+  private fun parabola(l: Double, c: Double, r: Double): Double {
+    val d = l - 2 * c + r
+    if (d >= -1e-9) return 0.0
+    val o = (l - r) / (2 * d)
+    return if (o > 0.5) 0.5 else if (o < -0.5) -0.5 else o
+  }
+
+  /**
+   * 반환: [x, y, 점수(ZNCC)]. 1) 조각을 2칸씩 건너뛰며 넓게 훑고 2) 최고점 주변 ±2칸을 촘촘히 본 뒤
+   * 3) 점수 분포로 소수점 위치까지 보정한다. (src/domain/pointTrack.ts의 trackStep과 같은 방식)
+   */
+  private fun matchStep(tpl: FloatArray, g: FloatArray, w: Int, h: Int, px: Double, py: Double, r: Int, search: Int): DoubleArray {
+    val coarse = 2
+    val n = 2 * r + 1
+    val mC = (2 * r) / coarse + 1
+    val tplC = FloatArray(mC * mC)
+    run {
+      var k = 0
+      for (j in 0 until mC) for (i in 0 until mC) tplC[k++] = tpl[j * coarse * n + i * coarse]
+    }
     val x0 = Math.round(px).toInt()
     val y0 = Math.round(py).toInt()
+    val curC = FloatArray(mC * mC)
+    val curF = FloatArray(n * n)
     var best = -2.0
     var bx = x0
     var by = y0
-    val cur = FloatArray(cnt)
-    for (dy in -search..search) {
+    var dy = -search
+    while (dy <= search) {
       val cy = y0 + dy
-      if (cy < 0 || cy >= h) continue
-      for (dx in -search..search) {
-        val cx = x0 + dx
-        if (cx < 0 || cx >= w) continue
-        var k = 0
-        var mc = 0.0
-        for (j in -r..r) {
-          val yy = (cy + j).coerceIn(0, h - 1)
-          for (i in -r..r) { val v = g[yy * w + (cx + i).coerceIn(0, w - 1)]; cur[k++] = v; mc += v }
+      if (cy >= 0 && cy < h) {
+        var dx = -search
+        while (dx <= search) {
+          val cx = x0 + dx
+          if (cx >= 0 && cx < w) {
+            val s = zncc(tplC, g, w, h, cx, cy, r, coarse, curC)
+            val closer = dx * dx + dy * dy < (bx - x0) * (bx - x0) + (by - y0) * (by - y0)
+            if (s > best + 1e-9 || (Math.abs(s - best) <= 1e-9 && closer)) { best = s; bx = cx; by = cy }
+          }
+          dx += coarse
         }
-        mc /= cnt
-        var num = 0.0
-        var dc = 0.0
-        for (q in 0 until cnt) { val a = tpl[q] - mt; val b = cur[q] - mc; num += a * b; dc += b * b }
-        val s = if (dt < 1e-6 || dc < 1e-6) 0.0 else num / Math.sqrt(dt * dc)
-        val closer = dx * dx + dy * dy < (bx - x0) * (bx - x0) + (by - y0) * (by - y0)
+      }
+      dy += coarse
+    }
+    val fx = bx
+    val fy = by
+    val cache = HashMap<Int, Double>()
+    fun at(cx: Int, cy: Int): Double {
+      if (cx < 0 || cy < 0 || cx >= w || cy >= h) return -2.0
+      return cache.getOrPut(cy * 100000 + cx) { zncc(tpl, g, w, h, cx, cy, r, 1, curF) }
+    }
+    best = -2.0
+    for (j in -coarse..coarse) {
+      for (i in -coarse..coarse) {
+        val cx = fx + i
+        val cy = fy + j
+        val s = at(cx, cy)
+        val closer = (cx - px) * (cx - px) + (cy - py) * (cy - py) < (bx - px) * (bx - px) + (by - py) * (by - py)
         if (s > best + 1e-9 || (Math.abs(s - best) <= 1e-9 && closer)) { best = s; bx = cx; by = cy }
       }
     }
-    return doubleArrayOf(bx.toDouble(), by.toDouble(), best)
+    val ox = parabola(at(bx - 1, by), best, at(bx + 1, by))
+    val oy = parabola(at(bx, by - 1), best, at(bx, by + 1))
+    return doubleArrayOf(bx + ox, by + oy, best)
   }
 }

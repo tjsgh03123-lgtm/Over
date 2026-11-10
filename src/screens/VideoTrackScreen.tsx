@@ -105,6 +105,7 @@ export function VideoTrackScreen() {
         rep.tracks.forEach((nt, k) => { next[which[k]] = nt.lostAtMs; });
         return next;
       });
+      if (rep.tracks.some((t) => t.weak)) setTapMsg('무늬가 약한 곳이라 흔들릴 수 있어요. 손목 띠·로고처럼 무늬가 있는 곳에 찍어 보세요');
     } catch (e) {
       if (!isCancelled(e)) Alert.alert('추적하지 못했습니다', String((e as Error)?.message ?? e));
     } finally {

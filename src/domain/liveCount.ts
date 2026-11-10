@@ -43,7 +43,9 @@ const FOCUS_IDS: Record<Exclude<Focus, 'auto'>, string[]> = {
 };
 
 export type Strictness = 'easy' | 'normal' | 'strict';
-export const STRICT_LABEL: Record<Strictness, string> = { easy: '쉬움', normal: '보통', strict: '엄격' };
+export const STRICT_LABEL: Record<Strictness, string> = { easy: '강', normal: '중', strict: '약' };
+/** 강·중·약이 각각 몇 도 이상 움직여야 한 번으로 세는지(각도 동작 기준) */
+export const STRICT_RANGE: Record<Strictness, string> = { easy: '20°', normal: '35°', strict: '50°' };
 /** 한 번으로 세려면 각도가 이만큼(도) 이상 오르내려야 한다 */
 const MIN_AMP: Record<Strictness, number> = { easy: 20, normal: 35, strict: 50 };
 
