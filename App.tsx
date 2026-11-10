@@ -5,7 +5,7 @@ import { StatusBar } from 'expo-status-bar';
 import * as SystemUI from 'expo-system-ui';
 import { Ctx, useApp, type AppCtx, type Nav, type Tab } from './src/app/context.tsx';
 import { localDateStr, type Db } from './src/db/adapter.ts';
-import { openAppDb } from './src/db/expoAdapter.ts';
+import { openDb } from './src/db/openDb.ts';
 import { BodyEntryScreen } from './src/screens/BodyEntryScreen.tsx';
 import { CalendarScreen } from './src/screens/CalendarScreen.tsx';
 import { ExercisesScreen } from './src/screens/ExercisesScreen.tsx';
@@ -60,7 +60,7 @@ export default function App() {
 
   useEffect(() => {
     (async () => {
-      const d = await openAppDb();
+      const d = await openDb();
       // 저장된 화면 모드·그래프 색상 복원 (없으면 다크 + 기본 색)
       const m = sanitizeMode(await getSetting(d, 'theme_mode'));
       applyTheme(m, sanitizeGraphColors(await getSetting(d, 'graph_colors')));

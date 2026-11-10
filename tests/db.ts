@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { openTestDb } from './nodeAdapter.ts';
 import { DDL, TABLE_ORDER } from '../src/db/schema.ts';
 import { seedDefaults } from '../src/db/seed.ts';
+import { seedDemo } from '../src/db/demoData.ts';
 import { seedLegacy } from './legacySeed.ts';
 import * as repo from '../src/db/repo.ts';
 import { exportBackup, exportBodyCsv, exportWorkoutCsv, restoreBackup } from '../src/db/backup.ts';
@@ -1031,6 +1032,19 @@ await test('칸 배치 통째로 저장(끌어서 옮긴 결과): 칸 수는 그
   assert.deepEqual((await repo.getRoutines(db, '2026-11-01')).routines[0].slots, [b, null, a]);
   await repo.setRoutineSlots(db, '2026-11-01', id, ['없는날', a, b, a, b]); // 칸 수(3)를 넘는 값은 버리고 없는 날은 비움
   assert.deepEqual((await repo.getRoutines(db, '2026-11-01')).routines[0].slots, [null, a, b]);
+});
+
+console.log('웹 미리보기 샘플 기록');
+await test('샘플 기록: 완료된 운동·세트·체성분이 들어가고 두 번 넣어도 늘지 않음', async () => {
+  const db = await emptyDb();
+  await seedDemo(db);
+  const n = await db.first<{ n: number }>("SELECT COUNT(*) AS n FROM workout_sessions WHERE status='done'");
+  assert.equal(n!.n, 7);
+  const sets = await db.first<{ n: number }>('SELECT COUNT(*) AS n FROM workout_sets WHERE done = 1');
+  assert.ok(sets!.n > 30);
+  assert.ok((await db.first<{ n: number }>('SELECT COUNT(*) AS n FROM body_measurements'))!.n >= 4);
+  await seedDemo(db);
+  assert.equal((await db.first<{ n: number }>('SELECT COUNT(*) AS n FROM workout_sessions'))!.n, 7);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);
