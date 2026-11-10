@@ -2,6 +2,9 @@ name: Web preview
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   web:
     runs-on: ubuntu-latest
@@ -25,3 +28,12 @@ jobs:
         with:
           name: web-preview
           path: dist
+      - name: 결과를 preview-dist 브랜치에 올림 (내려받기 편하게)
+        run: |
+          cd dist
+          git init -q -b preview-dist
+          git config user.name "preview-bot"
+          git config user.email "preview-bot@users.noreply.github.com"
+          git add -A
+          git commit -q -m "web preview ${GITHUB_SHA}"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" preview-dist
