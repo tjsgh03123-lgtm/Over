@@ -10,6 +10,11 @@ export interface FlowConfig {
   restSec: number;
   /** 세트를 시작하기 전 자세를 잡는 시간(초). 없거나 0이면 준비 단계 없음 */
   prepSec?: number;
+  /**
+   * 세트를 '동작이 멈춘 뒤'에 끝낸다(초). 목표에 닿아도 바로 끝내지 않고, 마지막 1회 뒤로 이 시간 동안 새 횟수가 없으면 끝낸다.
+   * 목표보다 적게 했어도 같은 조건으로 끝나고, 그 안에 동작이 이어지면 계속 센다. 기록은 센 횟수 그대로. 없으면 목표 도달 즉시 끝.
+   */
+  idleEndSec?: number;
 }
 
 export type FlowPhase = 'preparing' | 'counting' | 'resting' | 'done';
@@ -30,6 +35,7 @@ export class SetFlow {
   counts: number[] = [];
   private endAt = 0;
   private lastTick = -1;
+  private lastRepAt = 0;
 
   cfg: FlowConfig;
   constructor(cfg: FlowConfig) { this.cfg = cfg; }
@@ -46,10 +52,25 @@ export class SetFlow {
     return { kind: 'prep', setNo: this.setNo };
   }
 
-  /** 이번 세트의 횟수가 바뀌었을 때 부른다. 목표에 닿으면 세트를 끝내고 쉬기(또는 종료)로 넘어간다. */
+  /** 이번 세트의 횟수가 바뀌었을 때 부른다. 목표에 닿으면 세트를 끝내고 쉬기(또는 종료)로 넘어간다. (idleEndSec이 있으면 끝내지 않고 마지막 횟수 시각만 적어 둔다) */
   onCount(count: number, nowMs: number): FlowEvent | null {
-    if (this.phase !== 'counting' || count < this.cfg.targetReps) return null;
+    if (this.phase !== 'counting') return null;
+    if (this.cfg.idleEndSec && this.cfg.idleEndSec > 0) { this.lastRepAt = nowMs; return null; }
+    if (count < this.cfg.targetReps) return null;
+    return this.endSet(count, nowMs);
+  }
+
+  /** 주기적으로 부른다: 마지막 1회 뒤로 idleEndSec 동안 새 횟수가 없으면 세트를 끝낸다 (횟수는 센 그대로) */
+  checkIdle(count: number, nowMs: number): FlowEvent | null {
+    const idle = this.cfg.idleEndSec;
+    if (!idle || idle <= 0 || this.phase !== 'counting' || count <= 0 || this.lastRepAt <= 0) return null;
+    if (nowMs - this.lastRepAt < idle * 1000) return null;
+    return this.endSet(count, nowMs);
+  }
+
+  private endSet(count: number, nowMs: number): FlowEvent {
     this.counts.push(count);
+    this.lastRepAt = 0;
     const last = this.setNo >= this.cfg.totalSets;
     const ev: FlowEvent = { kind: 'setDone', setNo: this.setNo, count, last };
     if (last) { this.phase = 'done'; return ev; }
@@ -74,6 +95,7 @@ export class SetFlow {
       return { kind: 'prep', setNo: this.setNo };
     }
     this.phase = 'counting';
+    this.lastRepAt = 0;
     return { kind: 'start', setNo: this.setNo };
   }
 
@@ -107,6 +129,7 @@ export class SetFlow {
   skipPrep(): FlowEvent | null {
     if (this.phase !== 'preparing') return null;
     this.phase = 'counting';
+    this.lastRepAt = 0;
     return { kind: 'start', setNo: this.setNo };
   }
 

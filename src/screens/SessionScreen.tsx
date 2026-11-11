@@ -220,7 +220,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
   });
 
   /** 세트 ✓: 이미 완료면 되돌리고, 아니면 완료로 기록하며 휴식 카운트다운을 시작한다 */
-  const completeSet = (ex: SessionExRow, row: SetRow, sugW: number | null, sugR: number | null, repsOverride?: number): boolean => {
+  const completeSet = (ex: SessionExRow, row: SetRow, sugW: number | null, sugR: number | null, repsOverride?: number, fillWeight = true): boolean => {
     setFocus(null);
     if (row.done) { patchSet(ex, row, { done: false }); return false; }
     // 세트를 끝내면 휴식 카운트다운 시작 (준비 세트·마지막 세트는 제외, 0이면 끔)
@@ -248,7 +248,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
     // ✓: 칸에 들어 있는(또는 흐리게 보이던) 숫자를 그대로 이 세트의 기록으로 확정
     patchSet(ex, row, {
       done: true,
-      ...(row.weight == null && sugW != null ? { weight: sugW } : {}),
+      ...(fillWeight && row.weight == null && sugW != null ? { weight: sugW } : {}),
       ...(repsOverride != null ? { reps: repsOverride } : row.reps == null && sugR != null ? { reps: sugR } : {}),
     });
     return sec > 0;
@@ -288,7 +288,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
     setCoach(null);
     if (!ex || !row) return;
     const info = setInfo(ex, row);
-    const started = completeSet(ex, row, info.sugW, info.sugR, count);
+    const started = completeSet(ex, row, info.sugW, info.sugR, count, false); // 무게는 사용자가 정한 값 그대로(비어 있으면 비워 둠)
     speakText(`${row.set_no}세트 완료`, true);
     if (!started && autoRun.current) {
       const nx = nextUndone(ex.id, row.id);
@@ -893,7 +893,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
           <CoachSheet
             visible
             phase={coach.phase} title={cex.exercise_name}
-            sub={`${crow.set_no}세트 · ${inf.weight != null && inf.weight > 0 ? `${inf.weight}kg × ` : ''}${coach.target}회`}
+            sub={`${crow.set_no}세트 · ${crow.weight != null && crow.weight > 0 ? `${crow.weight}kg × ` : ''}${coach.target}회`}
             left={Math.max(0, Math.ceil((coach.endAt - now) / 1000))} total={coach.total}
             count={coach.count} target={coach.target} tempoSec={tempoSec} exercisePrep={coach.fresh}
             onPrepAdjust={adjustPrep} onTempoAdjust={adjustTempo} onReady={readyCoach}

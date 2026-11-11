@@ -835,6 +835,32 @@ test('횟수를 소리로 읽는 말', () => {
   assert.equal(countWord(0), '');
 });
 
+test('세트 자동 진행(동작 멈춤 기준): 목표를 채워도 5초 동안 새 횟수가 없어야 끝난다', () => {
+  const f = new SetFlow({ targetReps: 3, totalSets: 2, restSec: 30, idleEndSec: 5 });
+  assert.equal(f.onCount(1, 1000), null);
+  assert.equal(f.onCount(2, 2000), null);
+  assert.equal(f.onCount(3, 3000), null); // 목표에 닿아도 바로 끝나지 않음
+  assert.equal(f.checkIdle(3, 7000), null); // 마지막 1회 뒤 4초
+  assert.equal(f.onCount(4, 7500), null); // 5초 안에 동작이 이어지면 계속 센다
+  assert.equal(f.checkIdle(4, 12000), null); // 마지막 1회(7.5초) 뒤 4.5초
+  const e = f.checkIdle(4, 12500);
+  assert.deepEqual(e, { kind: 'setDone', setNo: 1, count: 4, last: false }); // 센 횟수 그대로(목표 3이 아니라 4)
+  assert.equal(f.phase, 'resting');
+});
+
+test('세트 자동 진행(동작 멈춤 기준): 목표보다 적어도 5초 멈추면 센 횟수로 끝난다', () => {
+  const f = new SetFlow({ targetReps: 10, totalSets: 1, restSec: 30, idleEndSec: 5 });
+  f.onCount(1, 1000); f.onCount(2, 3000);
+  assert.equal(f.checkIdle(2, 7999), null);
+  assert.deepEqual(f.checkIdle(2, 8000), { kind: 'setDone', setNo: 1, count: 2, last: true });
+  assert.equal(f.phase, 'done');
+});
+
+test('세트 자동 진행(동작 멈춤 기준): 아직 한 번도 안 셌으면 끝나지 않는다', () => {
+  const f = new SetFlow({ targetReps: 10, totalSets: 1, restSec: 30, idleEndSec: 5 });
+  assert.equal(f.checkIdle(0, 60000), null);
+});
+
 test('세트 자동 진행: 목표 횟수 → 쉬는 시간 → 다음 세트 → … → 종료', () => {
   const f = new SetFlow({ targetReps: 10, totalSets: 3, restSec: 60 });
   assert.equal(f.onCount(9, 0), null);

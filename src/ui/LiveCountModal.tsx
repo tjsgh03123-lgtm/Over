@@ -39,7 +39,7 @@ function fmtRep(ms: number) { return `${(ms / 1000).toFixed(1)}초`; }
  * ‘이 횟수 사용’을 누르면 onUse(횟수)로 돌려준다.
  */
 export type CountSource = 'camera' | 'tempo';
-export type LiveDefaults = FlowConfig & { focus?: Focus; tip?: string; source?: CountSource; tempoSec?: number; exerciseName?: string; sound?: boolean };
+export type LiveDefaults = FlowConfig & { focus?: Focus; tip?: string; source?: CountSource; tempoSec?: number; exerciseName?: string; sound?: boolean; idleEndSec?: number };
 
 export function LiveCountModal({
   visible, onClose, onUse, defaults,
@@ -92,7 +92,7 @@ function LiveBody({ onClose, onUse, defaults, leave }: { leave: React.MutableRef
   const [sound, setSound] = useState(defaults.sound ?? true); // 횟수를 소리로 읽기
   const [focus, setFocus] = useState<Focus>(defaults.focus ?? 'auto');
   const [mode, setMode] = useState<'free' | 'sets'>('sets'); // 세트 자동 진행 / 자유 카운트
-  const [cfg, setCfg] = useState<FlowConfig>({ targetReps: defaults.targetReps, totalSets: defaults.totalSets, restSec: defaults.restSec, prepSec: defaults.prepSec ?? 10 });
+  const [cfg, setCfg] = useState<FlowConfig>({ targetReps: defaults.targetReps, totalSets: defaults.totalSets, restSec: defaults.restSec, prepSec: defaults.prepSec ?? 10, idleEndSec: (defaults.source ?? 'camera') === 'camera' ? (defaults.idleEndSec ?? 5) : undefined });
   const [source, setSource] = useState<CountSource>(defaults.source ?? 'camera'); // 카메라로 세기 / 박자에 맞춰 세기
   const [tempoSec, setTempoSec] = useState(defaults.tempoSec ?? 3); // 박자: 한 회당 초
   const nextAt = useRef(0);
@@ -167,6 +167,17 @@ function LiveBody({ onClose, onUse, defaults, leave }: { leave: React.MutableRef
     }, 250);
     return () => clearInterval(id);
   }, [mode, sound]);
+
+  // 카메라: 마지막 1회 뒤 일정 시간 동작이 없으면 세트를 끝낸다 (목표를 채웠든 못 채웠든 센 횟수 그대로 기록)
+  useEffect(() => {
+    if (mode !== 'sets' || source !== 'camera') return;
+    const id = setInterval(() => {
+      const f = flow.current;
+      if (!f || f.phase !== 'counting') return;
+      handleFlow(f.checkIdle(counter.current.count, Date.now()));
+    }, 500);
+    return () => clearInterval(id);
+  }, [mode, source, cfg]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 열자마자 권한을 확인하고 카메라를 켠다 (시작 버튼 없음)
   useEffect(() => {
@@ -458,6 +469,9 @@ function LiveBody({ onClose, onUse, defaults, leave }: { leave: React.MutableRef
                 <Stepper label="세트 수" value={cfg.totalSets} unit="세트" step={1} min={1} max={20} onChange={(v) => setCfg((c) => ({ ...c, totalSets: v }))} />
                 <Stepper label="쉬는 시간" value={cfg.restSec} unit="초" step={15} min={5} max={600} onChange={(v) => setCfg((c) => ({ ...c, restSec: v }))} />
                 <Stepper label="준비 시간 (0이면 없음)" value={cfg.prepSec ?? 0} unit="초" step={5} min={0} max={30} onChange={(v) => { setCfg((c) => ({ ...c, prepSec: v })); setSetting(db, 'prep_sec', String(v)); }} />
+                {source === 'camera' && (
+                  <Stepper label="동작이 멈추면 세트 끝 (초)" value={cfg.idleEndSec ?? 5} unit="초" step={1} min={2} max={20} onChange={(v) => setCfg((c) => ({ ...c, idleEndSec: v }))} />
+                )}
                 {source === 'tempo' && (
                   <Stepper label="음성 간격 (한 회당)" value={tempoSec} unit="초" step={0.5} min={1} max={10} onChange={(v) => { setTempoSec(v); setSetting(db, 'tempo_sec', String(v)); }} />
                 )}
