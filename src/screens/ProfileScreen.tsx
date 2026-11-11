@@ -77,7 +77,7 @@ export function ProfileScreen() {
             </Pressable>
           )}
           <T muted style={{ fontSize: 12 }}>
-            운동 {totals.workouts}회 · 총 볼륨 {Math.round(totals.volume).toLocaleString()}kg{totals.seconds ? ` · ${fmtDuration(totals.seconds)}` : ''}
+            운동 {totals.workouts}회{totals.seconds ? ` · ${fmtDuration(totals.seconds)}` : ''}
           </T>
         </View>
         <Btn label="⚙ 설정" kind="ghost" small onPress={nav.openSettings} />

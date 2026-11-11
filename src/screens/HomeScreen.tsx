@@ -3,14 +3,15 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Alert, Modal, Pressable, ScrollView, Text, View } from 'react-native';
 import { useApp } from '../app/context.tsx';
 import {
-  addCardio, getActiveSession, getArchivedTemplates, getTemplateCards, getTodayOverride, listDoneDates, listWatchedExercises, loadFlatSets,
+  addCardio, getActiveSession, getArchivedTemplates, getTemplateCards, getTodayOverride, listDoneDates, listWatchedExercises, loadCategoryMap, loadFlatSets,
   sessionsOnDate, setArchivedTemplates, setTodayOverride, slotForDate, startFreeSession, startSessionFromTemplate, weekStats,
   type DaySlot, type SessionMeta, type TemplateCard, type WeekStats,
 } from '../db/repo.ts';
 import { fmtDuration, fmtElapsed } from '../domain/format.ts';
 import { fmtDaysAgo, weekDays } from '../domain/homeCards.ts';
-import { dailyPoints, filterSets, summarize, weekdayOf } from '../domain/stats.ts';
-import { streakWeeks } from '../domain/workoutStats.ts';
+import { partOf } from '../domain/exerciseCatalog.ts';
+import { addDays, dailyPoints, filterSets, summarize, weekdayOf, weekStart } from '../domain/stats.ts';
+import { partTotals, streakWeeks } from '../domain/workoutStats.ts';
 import { Btn, Card, Chip, H, NumInput, Row, T } from '../ui/components.tsx';
 import { RoutinePreview, type StartOpts } from '../ui/RoutinePreview.tsx';
 import { C, GC, S } from '../ui/theme.ts';
@@ -47,6 +48,7 @@ export function HomeScreen() {
   const [doneToday, setDoneToday] = useState<SessionMeta[]>([]);
   const [doneDates, setDoneDates] = useState<string[]>([]);
   const [week, setWeek] = useState<WeekStats | null>(null);
+  const [parts, setParts] = useState<{ part: string; sets: number }[]>([]); // 이번 주 부위별 완료 세트
   const [growth, setGrowth] = useState<Growth[]>([]);
   const [cardioMin, setCardioMin] = useState<number | null>(30);
   const [previewId, setPreviewId] = useState<string | null>(null);
@@ -66,6 +68,9 @@ export function HomeScreen() {
       setWeek(await weekStats(db, today));
       const tracked = (await listWatchedExercises(db)).slice(0, 5);
       const flat = await loadFlatSets(db);
+      const cats = await loadCategoryMap(db);
+      const wk0 = weekStart(today);
+      setParts(partTotals(flat, wk0, addDays(wk0, 6), (x) => partOf(x.exerciseName, cats.get(x.exerciseId))).map((r) => ({ part: r.part, sets: r.sets })));
       setGrowth(tracked.flatMap((t) => {
         const sm = summarize(flat, t.id, t.weight_mode);
         if (!sm.currentBest) return [];
@@ -258,9 +263,23 @@ export function HomeScreen() {
           <Row style={{ justifyContent: 'space-between' }}>
             <Stat label="운동 횟수" value={`${week?.workouts ?? 0}회`} />
             <Stat label="완료 세트" value={`${week?.sets ?? 0}`} />
-            <Stat label="총 볼륨" value={`${Math.round(week?.volume ?? 0).toLocaleString()}kg`} />
             <Stat label="유산소" value={`${Math.round(week?.cardioMin ?? 0)}분`} />
           </Row>
+          <View style={{ marginTop: S.md, paddingTop: S.md, borderTopWidth: 1, borderTopColor: C.line }}>
+            <T muted style={{ fontSize: 12, marginBottom: 6 }}>부위별 완료 세트</T>
+            {parts.length === 0 ? (
+              <T muted>이번 주 완료한 세트가 없어요.</T>
+            ) : (
+              <Row style={{ flexWrap: 'wrap' }}>
+                {parts.map((p) => (
+                  <View key={p.part} style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, backgroundColor: C.card2, alignItems: 'center', minWidth: 64 }}>
+                    <T bold style={{ fontSize: 18 }}>{p.sets}</T>
+                    <T muted style={{ fontSize: 12 }}>{p.part}</T>
+                  </View>
+                ))}
+              </Row>
+            )}
+          </View>
         </Card>
 
         <Card>

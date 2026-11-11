@@ -41,7 +41,6 @@ export function SummaryModal({ data, onClose }: { data: SummaryData | null; onCl
             <T style={{ color: K.muted, marginTop: 2 }}>{data.date} · {data.title}</T>
             <Row style={{ justifyContent: 'space-between', marginVertical: S.lg }}>
               <Big label="운동 시간" value={data.durationSec != null ? fmtDuration(data.durationSec) : '-'} />
-              <Big label="총 볼륨" value={`${Math.round(data.volume).toLocaleString()}kg`} />
               <Big label="완료 세트" value={`${data.sets}`} />
             </Row>
             {data.streak > 0 && <T bold style={{ color: K.text, marginBottom: S.md }}>{data.streak}주 연속 기록</T>}

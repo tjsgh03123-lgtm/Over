@@ -8,7 +8,7 @@ import { partTotals } from '../domain/workoutStats.ts';
 import { Btn, Card, Empty, H, Row, T } from '../ui/components.tsx';
 import { C, GC, S } from '../ui/theme.ts';
 
-/** 분석 > 부위별: 주간 부위별 완료 세트·볼륨 막대 (색은 그래프 색 하나만 사용) */
+/** 분석 > 부위별: 주간 부위별 완료 세트 막대 (색은 그래프 색 하나만 사용) */
 export function PartsScreen() {
   const { db, today, version } = useApp();
   const [from, setFrom] = useState(weekStart(today));
@@ -43,7 +43,7 @@ export function PartsScreen() {
           <View key={r.part} style={{ marginBottom: S.md }}>
             <Row>
               <T bold style={{ flex: 1 }}>{r.part}</T>
-              <T muted>{r.sets}세트{r.volume > 0 ? ` · ${Math.round(r.volume).toLocaleString()}kg` : ''}</T>
+              <T muted>{r.sets}세트</T>
             </Row>
             <View style={{ height: 8, borderRadius: 4, backgroundColor: C.card2, overflow: 'hidden', marginTop: 4 }}>
               <View style={{ height: '100%', width: `${(r.sets / max) * 100}%`, backgroundColor: GC.all }} />

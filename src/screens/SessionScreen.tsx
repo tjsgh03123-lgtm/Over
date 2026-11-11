@@ -291,7 +291,6 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
       />
       {editable && (
         <Row style={{ justifyContent: 'space-around', paddingVertical: S.md, backgroundColor: C.card, borderBottomWidth: 1, borderBottomColor: C.line }}>
-          <SumStat label="볼륨" value={`${Math.round(s.exercises.reduce((n, e) => n + volumeOf(e.sets), 0)).toLocaleString()}kg`} />
           <SumStat label="완료 세트" value={`${s.exercises.reduce((n, e) => n + doneWorkingCount(e.sets), 0)}`} />
           <SumStat label="종목" value={`${s.exercises.filter((e) => doneWorkingCount(e.sets) > 0).length}/${s.exercises.length}`} />
         </Row>
