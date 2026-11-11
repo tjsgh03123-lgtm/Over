@@ -1100,7 +1100,7 @@ export async function applyImportedRoutine(
       const exs: TemplateExerciseInput[] = [];
       if (kind === 'weights') {
         for (const e of d.exercises) {
-          const ex = await getOrCreateExercise(db, e.name);
+          const ex = await getOrCreateExercise(db, e.name, e.category ? { category: e.category } : {});
           exs.push({ exerciseId: ex.id, targetSets: e.sets, targetReps: e.reps, targetWeight: e.weight, restSec: e.restSec });
         }
       }

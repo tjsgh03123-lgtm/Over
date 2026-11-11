@@ -22,13 +22,13 @@ import { buildPickGroups, equipOf } from '../src/domain/exerciseList.ts';
 import { decodeOverride, encodeOverride, fmtDaysAgo, parseIds, partSummary, weekDays } from '../src/domain/homeCards.ts';
 import { CATALOG, matchProfile, partOf } from '../src/domain/exerciseCatalog.ts';
 import { barbellTotal, bestE1rm, estimateMinutes, monthDays, monthWeeks, partTotals, recommendNext, streakWeeks, volumeOf } from '../src/domain/workoutStats.ts';
-import { trackSequence, zncc, extractPatch, type Gray } from '../src/domain/pointTrack.ts';
-import { bendRatio, lineSamples, pathLengthPct, rangeOf, sampleAt, angleAt, countSwings, fitRect, lastSeenMs, lineLength, mergeTrack, pointAt, toNorm, toScreen, trackFromNative, validPoints, pathStats, simplifyPath, smoothPath, tiltFromVertical } from '../src/domain/trackMath.ts';
 import { COARSE_OF, coarseOfExercise, EXERCISE_TABLE, lookupExercise } from '../src/domain/exerciseTable.ts';
 import { classifyFeatures, classifyPose, extractFeatures, verifyAgainst } from '../src/domain/patternClassify.ts';
 import { frameOf, SCENES } from './poseSynth.ts';
 import { blocksOf, currentOf, restAfter, type GEx } from '../src/domain/guided.ts';
-import { AutoRepCounter, countWord, JOINTS, jointAngle, usable } from '../src/domain/liveCount.ts';
+import { AutoRepCounter, countWord, JOINTS, jointAngle, minAngleFor, rangeText, usable } from '../src/domain/liveCount.ts';
+import { buildPlan, exercisesPerDay, type Gear } from '../src/domain/routineWizard.ts';
+import { ROM_PRESET } from '../src/domain/romPreset.ts';
 import { buildPoseLog } from '../src/domain/poseLog.ts';
 import type { SessionRecord, SetRecord } from '../src/domain/types.ts';
 import { moveBlock, moveBlockTo } from '../src/domain/reorder.ts';
@@ -719,6 +719,36 @@ test('자동: 움직임이 작은 반복(진폭 약 30도)은 보통에서 0회,
   const b = new AutoRepCounter(); b.setStrictness('easy'); runAuto(b, small);
   assert.ok(b.count >= 6, `count ${b.count}`);
 });
+test('세는 크기: 운동마다 표준 가동범위의 30·50·75% — 운동을 모르면 예전과 비슷한 21·35·53°', () => {
+  assert.equal(minAngleFor('normal'), 35);
+  assert.equal(minAngleFor('easy'), 21);
+  assert.equal(minAngleFor('strict'), 53);
+  assert.equal(minAngleFor('normal', '덤벨 컬'), 50);
+  assert.equal(minAngleFor('easy', '스쿼트'), 30);
+  assert.equal(minAngleFor('normal', '표에 없는 이상한 운동'), 35);
+  assert.ok(rangeText('normal', '덤벨 컬').includes('팔꿈치') && rangeText('normal', '덤벨 컬').includes('50°'));
+  assert.ok(rangeText('strict', '바벨 슈러그').includes('어깨 으쓱'));
+  assert.ok(Object.values(ROM_PRESET).every((p) => p.rom == null || (p.rom >= 40 && p.rom <= 120)));
+});
+test('세는 크기: 컬은 40° 반복을 보통에서 안 세고(기준 50°), 작은 동작도에서는 센다', () => {
+  const small = { elbow: wave(150, 20, 120, 160) };
+  const a = new AutoRepCounter(); a.setExercise('덤벨 컬'); runAuto(a, small);
+  assert.equal(a.count, 0);
+  const b = new AutoRepCounter(); b.setExercise('덤벨 컬'); b.setStrictness('easy'); runAuto(b, small);
+  assert.ok(b.count >= 6, `count ${b.count}`);
+  assert.equal(b.minAngle, 30);
+});
+test('자동 보정: 크게 3번 센 뒤에는 그보다 훨씬 작은 흔들림 반복을 세지 않고, 배운 크기를 알려 준다', () => {
+  const big = wave(121, 30, 60, 160);
+  const small = wave(240, 30, 115, 160, 0);
+  const c = new AutoRepCounter(); runAuto(c, { elbow: [...big, ...small] });
+  const control = new AutoRepCounter(); runAuto(control, { elbow: small });
+  assert.ok(control.count >= 6, `control ${control.count}`);
+  assert.ok(c.count <= 6, `count ${c.count}`);
+  assert.ok(c.learnedRange != null && c.learnedRange > 70, String(c.learnedRange));
+  c.reset();
+  assert.equal(c.learnedRange, null);
+});
 test('자동: 쉬었다가 시작하고, 중간에 잠깐 안 보여도 이어서 센다', () => {
   const c = new AutoRepCounter();
   const rest = Array(40).fill(170);
@@ -993,123 +1023,6 @@ test('끌어서 순서 바꾸기(슈퍼세트 유지): 묶음은 통째로 움�
   assert.deepEqual(moveBlockTo(rows, -1, 0).map((r) => r.n), ['A', 'B', 'C', 'D', 'E']);
 });
 
-// ---- 영상 점 추적 (합성 프레임) ----
-function synthFrame(w: number, h: number, bx: number | null, by: number, seed = 1, shade = 0): Gray {
-  const d = new Uint8Array(w * h);
-  let s = seed;
-  for (let i = 0; i < d.length; i++) { s = (s * 1103515245 + 12345) & 0x7fffffff; d[i] = 90 + (s % 20); } // 잔잔한 배경 잡음
-  if (bx !== null) {
-    // 모양이 있는 표적: 밝은 십자+모서리 무늬(뭉개진 점이 아니라 위치를 특정할 무늬)
-    for (let dy = -6; dy <= 6; dy++) for (let dx = -6; dx <= 6; dx++) {
-      const x = Math.round(bx) + dx, y = Math.round(by) + dy;
-      if (x < 0 || y < 0 || x >= w || y >= h) continue;
-      const v = (Math.abs(dx) <= 1 || Math.abs(dy) <= 1) ? 230 : (dx > 0 && dy < 0 ? 40 : 150);
-      d[y * w + x] = Math.max(0, Math.min(255, v + shade));
-    }
-  }
-  return { w, h, data: d };
-}
-test('점 추적: 위아래로 움직이는 표적을 끝까지 따라간다', () => {
-  const frames: Gray[] = [];
-  const truth: number[] = [];
-  for (let i = 0; i < 30; i++) { const y = 40 + Math.round(20 * Math.sin(i / 30 * Math.PI)); truth.push(y); frames.push(synthFrame(120, 120, 60, y, 7 + i)); }
-  const r = trackSequence(frames, { x: 60, y: truth[0] });
-  assert.equal(r.lostAt, -1);
-  r.points.forEach((p, i) => { assert.ok(p, 'frame ' + i); assert.ok(Math.abs(p!.y - truth[i]) <= 1 && Math.abs(p!.x - 60) <= 1, `frame ${i}: ${p!.x},${p!.y} vs ${truth[i]}`); });
-});
-test('점 추적: 밝기가 바뀌어도(조명 변화) 따라가고, 표적이 사라지면 놓쳤다고 알린다', () => {
-  const frames = [synthFrame(100, 100, 50, 50, 3), synthFrame(100, 100, 52, 52, 4, -30), synthFrame(100, 100, 54, 54, 5, 25)];
-  const r = trackSequence(frames, { x: 50, y: 50 });
-  assert.equal(r.lostAt, -1);
-  assert.ok(Math.abs(r.points[2]!.x - 54) <= 0.5 && Math.abs(r.points[2]!.y - 54) <= 0.5);
-  const gone = [...frames, synthFrame(100, 100, null, 0, 9), synthFrame(100, 100, 56, 56, 10)];
-  const g = trackSequence(gone, { x: 50, y: 50 });
-  assert.equal(g.lostAt, 3);
-  assert.equal(g.points[3], null);
-  assert.equal(g.points[4], null); // 한 번 놓치면 이후는 잘못 이어붙이지 않는다
-});
-test('점 추적: 무늬가 약한 시작점은 알리고, 화면 밖으로 나가면 놓친 것으로 본다', () => {
-  const flat: Gray[] = [0, 1, 2].map(() => ({ w: 80, h: 80, data: new Uint8Array(80 * 80).fill(100) }));
-  assert.equal(trackSequence(flat, { x: 40, y: 40 }).weak, true);
-  const patterned = [synthFrame(100, 100, 50, 50, 3), synthFrame(100, 100, 50, 50, 4)];
-  assert.equal(trackSequence(patterned, { x: 50, y: 50 }).weak, false);
-  const frames: Gray[] = [];
-  for (let i = 0; i < 12; i++) frames.push(synthFrame(100, 100, 50 + i * 4, 50, 20 + i));
-  const r = trackSequence(frames, { x: 50, y: 50 });
-  assert.ok(r.lostAt === -1 || r.lostAt >= 8);
-});
-test('궤적 요약: 0.4% 안쪽 떨림은 움직임으로 치지 않는다', () => {
-  const still = [0, 1, 2, 3].map((i) => ({ x: 0.5 + (i % 2) * 0.003, y: 0.5 + (i % 2) * 0.003, t: i }));
-  const st = pathStats(still, 1)!;
-  assert.equal(st.verticalPct, 0);
-  assert.equal(st.horizontalPct, 0);
-});
-test('점 추적: 무늬 없는 곳(분산 0)은 점수 0, 같은 조각은 1', () => {
-  const flat = new Float32Array(25).fill(100);
-  assert.equal(zncc(flat, flat), 0);
-  const f = synthFrame(40, 40, 20, 20, 2);
-  const a = extractPatch(f, 20, 20, 4);
-  assert.ok(Math.abs(zncc(a, a) - 1) < 1e-9);
-  assert.equal(trackSequence([], { x: 0, y: 0 }).points.length, 0);
-});
-test('궤적 계산: 선 길이·기울기·각도·평활·단순화·요약·왕복 횟수', () => {
-  assert.ok(Math.abs(lineLength({ x: 0, y: 0 }, { x: 0.3, y: 0.4 }) - 0.5) < 1e-9);
-  assert.equal(tiltFromVertical({ x: 0.5, y: 0.2 }, { x: 0.5, y: 0.8 }), 0);
-  assert.equal(tiltFromVertical({ x: 0.2, y: 0.5 }, { x: 0.8, y: 0.5 }), 90);
-  assert.equal(angleAt({ x: 0, y: 1 }, { x: 0, y: 0 }, { x: 1, y: 0 }), 90);
-  assert.equal(angleAt({ x: 1, y: 0 }, { x: 0, y: 0 }, { x: 2, y: 0 }), 0);
-  assert.equal(angleAt({ x: -1, y: 0 }, { x: 0, y: 0 }, { x: 1, y: 0 }), 180);
-  const sm = smoothPath([{ x: 0, y: 0 }, null, { x: 0, y: 3 }, { x: 0, y: 6 }], 3);
-  assert.equal(sm[1], null);
-  assert.equal(sm[2]!.y, 4.5);
-  const line = Array.from({ length: 50 }, (_, i) => ({ x: i / 50, y: 0.5 }));
-  assert.equal(simplifyPath(line).length, 2); // 직선은 양 끝만
-  const bend = [{ x: 0, y: 0 }, { x: 0.5, y: 0.5 }, { x: 1, y: 0 }];
-  assert.equal(simplifyPath(bend).length, 3);
-  const st = pathStats([{ x: 0.5, y: 0.2, t: 0 }, { x: 0.52, y: 0.8, t: 1 }, { x: 0.5, y: 0.3, t: 2 }])!;
-  assert.equal(st.verticalPct, 60);
-  assert.equal(st.bottomT, 1);
-  assert.equal(st.topT, 0);
-  assert.equal(pathStats([{ x: 0, y: 0, t: 0 }]), null);
-  const ys: number[] = [];
-  for (let r = 0; r < 3; r++) for (let i = 0; i < 20; i++) ys.push(0.5 + 0.3 * Math.cos(i / 20 * 2 * Math.PI) + (i % 2 ? 0.004 : -0.004));
-  ys.push(0.8);
-  assert.equal(countSwings(ys), 3);
-  assert.equal(countSwings([0.5, 0.505, 0.499, 0.502]), 0); // 떨림만 있으면 0
-});
-
-test('영상 좌표: 여백(레터박스)을 빼고 누른 곳을 영상 비율로, 영상 밖은 무시', () => {
-  const r = fitRect(400, 300, 1080, 1920); // 세로 영상을 가로로 넓은 칸에 → 좌우 여백
-  assert.ok(Math.abs(r.h - 300) < 1e-9 && r.x > 0 && Math.abs(r.w / r.h - 1080 / 1920) < 1e-9);
-  assert.equal(toNorm(r.x - 1, 10, r), null);
-  const n = toNorm(r.x + r.w / 2, r.y + r.h / 4, r)!;
-  assert.ok(Math.abs(n.x - 0.5) < 1e-9 && Math.abs(n.y - 0.25) < 1e-9);
-  const s = toScreen(n, r);
-  assert.ok(Math.abs(s.x - (r.x + r.w / 2)) < 1e-9);
-  const wide = fitRect(400, 300, 1920, 1080); // 가로 영상 → 위아래 여백
-  assert.ok(Math.abs(wide.w - 400) < 1e-9 && wide.y > 0);
-  assert.deepEqual(fitRect(0, 0, 10, 10), { x: 0, y: 0, w: 0, h: 0 });
-});
-test('추적 결과: 놓친 곳은 null, 다시 눌러 고친 지점부터 새 결과로 바꿔 이어붙임', () => {
-  const a = trackFromNative([0, 100, 200, 300], [0.1, 0.2, -1, -1], [0.5, 0.5, -1, -1]);
-  assert.deepEqual(a.pts.map((p) => p === null), [false, false, true, true]);
-  assert.equal(lastSeenMs(a), 100);
-  assert.equal(validPoints(a).length, 2);
-  assert.equal(validPoints(a)[1].t, 0.1);
-  const b = trackFromNative([200, 300, 400], [0.3, 0.4, 0.5], [0.5, 0.5, 0.5]);
-  const m = mergeTrack(a, b);
-  assert.deepEqual(m.times, [0, 100, 200, 300, 400]);
-  assert.equal(m.pts[1]!.x, 0.2); // 앞부분 유지
-  assert.equal(m.pts[2]!.x, 0.3); // 뒷부분은 새 결과
-  assert.equal(mergeTrack(null, b), b);
-  const early = mergeTrack(a, trackFromNative([100, 200], [0.9, 0.9], [0.9, 0.9]));
-  assert.deepEqual(early.times, [0, 100, 200]); // 중간부터 고치면 그 뒤 옛 결과는 버림
-  assert.equal(pointAt(m, 210)!.x, 0.3);
-  assert.equal(pointAt(m, 1000), null);
-  assert.equal(pointAt(null, 0), null);
-});
-
-
 // ---- 운동 표 · 움직임 유형 판별 ----
 test('운동 표: 182개, 중복 이름 없음, 표의 모든 움직임 유형이 굵은 유형에 매핑되거나 명시적으로 제외', () => {
   assert.equal(EXERCISE_TABLE.length, 182);
@@ -1246,32 +1159,35 @@ test('좌표 기록: 최근 60초만, 소수 3자리, 센 시점 포함', () => 
   assert.equal(out.seconds, 60);
 });
 
-test('선·호 수치: 기울기·길이·휘어짐(현에서 벗어난 %)·호 중심각, 놓친 시각은 건너뜀', () => {
-  const T = (xs: number[], ys: number[]) => trackFromNative([0, 100, 200], xs, ys);
-  // 직선: 점 2개, 수직선 → 기울기 0, 길이 50%
-  const a = T([0.5, 0.5, 0.5], [0.2, 0.2, 0.2]), b = T([0.5, 0.6, -1], [0.7, 0.7, -1]);
-  const ss = lineSamples([a, b], 2);
-  assert.equal(ss.length, 2); // 세 번째 시각은 점 2를 놓쳐서 제외
-  assert.equal(ss[0].tilt, 0);
-  assert.equal(ss[0].length, 50);
-  assert.ok(ss[1].tilt > 10 && ss[1].tilt < 15);
-  assert.equal(ss[0].bend, undefined);
-  // 호: 곧은 3점은 휘어짐 0·중심각 0, 가운데가 옆으로 빠지면 커진다
-  const e = T([0.5, 0.5, 0.5], [0.8, 0.8, 0.8]);
-  const straight = lineSamples([a, T([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]), e], 3);
-  assert.equal(straight[0].bend, 0);
-  assert.equal(straight[0].arc, 0);
-  const bent = lineSamples([a, T([0.6, 0.6, 0.6], [0.5, 0.5, 0.5]), e], 3);
-  assert.ok(Math.abs(bent[0].bend! - 16.7) < 0.1, String(bent[0].bend)); // 0.1 ÷ 0.6
-  assert.ok(Math.abs(bent[0].arc! - 73.8) < 0.2, String(bent[0].arc)); // 현 0.6·휘어짐 0.1 → 반지름 0.5 → 중심각 약 73.7°
-  assert.ok(Math.abs(bendRatio({ x: 0, y: 0 }, { x: 0.1, y: 0.5 }, { x: 0, y: 1 }) - 0.1) < 1e-9);
-  assert.equal(bendRatio({ x: 0, y: 0 }, { x: 0.3, y: 0.3 }, { x: 0, y: 0 }), 0);
-  assert.deepEqual(rangeOf([3, 1, 2]), { min: 1, max: 3 });
-  assert.equal(rangeOf([]), null);
-  assert.equal(sampleAt(ss, 90)!.t, 100);
-  assert.equal(sampleAt(ss, 5000), null);
-  assert.equal(pathLengthPct([{ x: 0, y: 0 }, { x: 0, y: 0.3 }, { x: 0.4, y: 0.3 }]), 70);
-  assert.deepEqual(lineSamples([null, null], 2), []);
+// ---- 루틴 마법사 ----
+test('마법사: 주 2~6일 모두 요일과 날 수가 맞고, 날마다 종목이 있고, 같은 날에 같은 운동이 겹치지 않는다', () => {
+  for (const days of [2, 3, 4, 5, 6]) for (const gear of ['gym', 'dumbbell', 'bodyweight'] as Gear[]) for (const goal of ['size', 'strength', 'general'] as const) {
+    const p = buildPlan({ goal, days, gear, minutes: 60 });
+    assert.equal(p.days.length, days);
+    assert.equal(new Set(p.days.map((d) => d.weekday)).size, days);
+    for (const d of p.days) {
+      assert.ok(d.exercises.length >= 2, `${days}/${gear}/${d.title}: ${d.exercises.length}`);
+      assert.equal(new Set(d.exercises.map((e) => e.name)).size, d.exercises.length);
+      for (const e of d.exercises) assert.ok(e.sets >= 2 && (e.reps ?? 0) >= 3 && e.restSec! >= 60);
+    }
+  }
+});
+test('마법사: 장비 제한을 지킨다 (맨몸이면 맨몸 운동만, 덤벨이면 덤벨·맨몸만)', () => {
+  const names = (g: Gear) => buildPlan({ goal: 'size', days: 4, gear: g, minutes: 75 }).days.flatMap((d) => d.exercises.map((e) => e.name));
+  for (const n of names('bodyweight')) assert.equal(lookupExercise(n)![3], '맨몸', n);
+  for (const n of names('dumbbell')) assert.ok(['덤벨', '맨몸'].includes(lookupExercise(n)![3]), n);
+  assert.ok(names('gym').length > names('bodyweight').length);
+});
+test('마법사: 시간이 길수록 운동이 많아지고, 힘 세지기는 큰 운동을 5회 안팎으로', () => {
+  assert.ok(exercisesPerDay(30) < exercisesPerDay(60) && exercisesPerDay(60) < exercisesPerDay(90));
+  const p = buildPlan({ goal: 'strength', days: 3, gear: 'gym', minutes: 60 });
+  const first = p.days[0].exercises[0];
+  assert.equal(first.reps, 5);
+  assert.equal(first.sets, 4);
+  assert.ok(first.restSec! >= 150);
+  const a = buildPlan({ goal: 'size', days: 3, gear: 'gym', minutes: 45 }).days[0].exercises.length;
+  const b = buildPlan({ goal: 'size', days: 3, gear: 'gym', minutes: 90 }).days[0].exercises.length;
+  assert.ok(b > a);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

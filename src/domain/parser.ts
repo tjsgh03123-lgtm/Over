@@ -8,6 +8,8 @@ export interface ParsedExercise {
   weight: number | null;
   intensity: Intensity | null;
   restSec: number | null;
+  /** 앱 부위(가슴·등·어깨·하체·팔·복근). 새 종목을 만들 때만 쓴다 */
+  category?: string;
 }
 
 export interface ParsedDay {

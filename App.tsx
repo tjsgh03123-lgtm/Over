@@ -14,12 +14,12 @@ import { HomeScreen } from './src/screens/HomeScreen.tsx';
 import { RoutineDetailScreen } from './src/screens/RoutineDetailScreen.tsx';
 import { DayEditorScreen } from './src/screens/DayEditorScreen.tsx';
 import { RoutineScreen } from './src/screens/RoutineScreen.tsx';
+import { WizardScreen } from './src/screens/WizardScreen.tsx';
 import { ImportScreen } from './src/screens/ImportScreen.tsx';
 import { SessionScreen } from './src/screens/SessionScreen.tsx';
 import { SetupScreen } from './src/screens/SetupScreen.tsx';
 import { SettingsScreen } from './src/screens/SettingsScreen.tsx';
 import { ProfileScreen } from './src/screens/ProfileScreen.tsx';
-import { VideoTrackScreen } from './src/screens/VideoTrackScreen.tsx';
 import { Header } from './src/ui/components.tsx';
 import { findMissedRoutine, getActiveRoutine, getSetting, resolveMissed, setSetting, type MissedChoice, type MissedRoutine } from './src/db/repo.ts';
 import { MissedRoutineModal } from './src/ui/MissedRoutineModal.tsx';
@@ -30,11 +30,11 @@ import { applyTheme, C, GC } from './src/ui/theme.ts';
 type Overlay =
   | { name: 'session'; id: string }
   | { name: 'import' }
+  | { name: 'wizard' }
   | { name: 'body' }
   | { name: 'routine'; id: string }
   | { name: 'day'; routineId: string; dayId: string | null; slot?: number | null }
   | { name: 'exercises' }
-  | { name: 'track' }
   | { name: 'setup' }
   | { name: 'settings' };
 
@@ -113,11 +113,11 @@ export default function App() {
   const nav: Nav = useMemo(() => ({
     openSession: (id) => push({ name: 'session', id }),
     openImport: () => push({ name: 'import' }),
+    openWizard: () => push({ name: 'wizard' }),
     openBody: () => push({ name: 'body' }),
     openRoutine: (id) => push({ name: 'routine', id }),
     openDay: (routineId, dayId, slot) => push({ name: 'day', routineId, dayId, slot }),
     openExercises: () => push({ name: 'exercises' }),
-    openTrack: () => push({ name: 'track' }),
     openSetup: () => push({ name: 'setup' }),
     openSettings: () => push({ name: 'settings' }),
     goTab: (t) => { setStack([]); setTab(t); },
@@ -209,11 +209,11 @@ function Overlay({ o }: { o: Overlay }) {
   switch (o.name) {
     case 'session': return <SessionScreen sessionId={o.id} />;
     case 'import': return <ImportScreen />;
+    case 'wizard': return <WizardScreen />;
     case 'body': return <BodyEntryScreen />;
     case 'routine': return <RoutineDetailScreen routineId={o.id} />;
     case 'day': return <DayEditorScreen routineId={o.routineId} dayId={o.dayId} slot={o.slot ?? null} />;
     case 'exercises': return <ExercisesScreen />;
-    case 'track': return <VideoTrackScreen />;
     case 'setup': return <SetupScreen />;
     case 'settings': return <SettingsOverlay />;
   }

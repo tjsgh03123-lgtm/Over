@@ -15,6 +15,8 @@ export function usable(lm: ArrayLike<number>, i: number): boolean {
   return lm[i * 3 + 2] >= MIN_VIS && x >= EDGE && x <= 1 - EDGE && y >= EDGE && y <= 1 - EDGE;
 }
 
+import { DEFAULT_ROM, romPresetOf } from './romPreset.ts';
+
 export type JointId = 'elbow' | 'knee' | 'hip' | 'shoulder';
 
 export interface JointDef { id: JointId; label: string; l: [number, number, number]; r: [number, number, number] }
@@ -43,11 +45,25 @@ const FOCUS_IDS: Record<Exclude<Focus, 'auto'>, string[]> = {
 };
 
 export type Strictness = 'easy' | 'normal' | 'strict';
-export const STRICT_LABEL: Record<Strictness, string> = { easy: '강', normal: '중', strict: '약' };
-/** 강·중·약이 각각 몇 도 이상 움직여야 한 번으로 세는지(각도 동작 기준) */
-export const STRICT_RANGE: Record<Strictness, string> = { easy: '20°', normal: '35°', strict: '50°' };
-/** 한 번으로 세려면 각도가 이만큼(도) 이상 오르내려야 한다 */
-const MIN_AMP: Record<Strictness, number> = { easy: 20, normal: 35, strict: 50 };
+export const STRICT_LABEL: Record<Strictness, string> = { easy: '작은 동작도', normal: '보통', strict: '큰 동작만' };
+/** 한 번으로 세려면 그 운동의 표준 가동범위(romPreset)의 이만큼 이상 오르내려야 한다 */
+export const STRICT_RATIO: Record<Strictness, number> = { easy: 0.3, normal: 0.5, strict: 0.75 };
+
+/** 지금 운동에서 한 번으로 세는 최소 각도(도). 운동을 모르면 기본 표준 가동범위를 쓴다 */
+export function minAngleFor(s: Strictness, exerciseName?: string | null): number {
+  const p = romPresetOf(exerciseName);
+  return Math.round((p?.rom ?? DEFAULT_ROM) * STRICT_RATIO[s]);
+}
+
+/** 화면에 보여 줄 한 줄 설명: 어떤 관절이 몇 도 이상 움직여야 1회로 세는지 */
+export function rangeText(s: Strictness, exerciseName?: string | null): string {
+  const p = romPresetOf(exerciseName);
+  if (p && p.rom == null) {
+    const mult = POS_MULT[s] * p.posScale;
+    return `${p.what} 움직임이 ${mult < 0.8 ? '작아도' : mult > 1.2 ? '커야' : '어느 정도 있으면'} 1회로 셈`;
+  }
+  return `${p ? p.what : '관절'}이 ${minAngleFor(s, exerciseName)}° 이상 움직이면 1회로 셈`;
+}
 
 export function angleDeg(a: { x: number; y: number }, b: { x: number; y: number }, c: { x: number; y: number }): number {
   const v1x = a.x - b.x, v1y = a.y - b.y, v2x = c.x - b.x, v2y = c.y - b.y;
@@ -79,7 +95,7 @@ export function jointAngle(lm: ArrayLike<number>, def: JointDef, w: number, h: n
   return best ? best.ang : null;
 }
 
-export interface RepEvent { n: number; timeMs: number; minAngle: number; joint: string }
+export interface RepEvent { n: number; timeMs: number; minAngle: number; joint: string; amp?: number }
 
 /** 한 신호(각도 또는 위치)의 오르내림 추적. 단위는 신호마다 다르다(도 또는 어깨너비 배수). */
 class SignalTracker {
@@ -97,6 +113,9 @@ class SignalTracker {
   private lastHiT = 0;
   private minVal = 1e9;
   private lostSince: number | null = null;
+  /** 센 횟수들의 움직임 크기와, 거기서 배운 이 사람의 기준(처음 3번 센 뒤부터) */
+  private amps: number[] = [];
+  cal: number | null = null;
   /** 한 프레임에 이만큼 넘게 튀면 한 번은 잡음으로 보고 건너뛴다(다음 프레임도 그 자리면 진짜 움직임) */
   private spiked = false;
   /** 연속으로 값이 들어온 프레임 수. 화면 가장자리를 들락날락하는 관절의 띄엄띄엄한 값은 믿지 않는다 */
@@ -117,6 +136,14 @@ class SignalTracker {
   reset() {
     this.count = 0; this.reps = []; this.value = null; this.smooth = null; this.phase = 'unknown'; this.hi = 0; this.lo = 0;
     this.lostSince = null; this.minVal = 1e9; this.base = 0; this.lastRepT = -1e9; this.spiked = false; this.streak = 0;
+    this.amps = []; this.cal = null;
+  }
+
+  /** 배운 움직임 크기의 중앙값(없으면 null) */
+  get learned(): number | null {
+    if (this.amps.length < CAL_MIN_REPS) return null;
+    const s = this.amps.slice(-CAL_WINDOW).sort((x, y) => x - y);
+    return s[Math.floor((s.length - 1) / 2)];
   }
 
   /** minAmp: 한 번으로 인정할 최소 오르내림 크기 */
@@ -148,11 +175,15 @@ class SignalTracker {
       let ev: RepEvent | null = null;
       if (this.phase === 'down') {
         const timeMs = tMs - this.lastHiT;
-        if (amp >= minAmp && timeMs >= MIN_REP_MS) {
+        const need = this.cal == null ? minAmp : Math.max(minAmp * 0.7, Math.min(minAmp * 1.5, this.cal));
+        if (amp >= need && timeMs >= MIN_REP_MS) {
           this.count++;
           this.lastRepT = tMs;
-          ev = { n: this.count, timeMs, minAngle: this.minVal, joint: this.label };
+          ev = { n: this.count, timeMs, minAngle: this.minVal, joint: this.label, amp };
           this.reps.push(ev);
+          this.amps.push(amp);
+          const lr = this.learned;
+          this.cal = lr == null ? null : lr * CAL_FRACTION;
         }
         this.minVal = 1e9;
       }
@@ -167,6 +198,10 @@ class SignalTracker {
 }
 
 const MIN_REP_MS = 400;
+/** 처음 이만큼 센 뒤부터 그 사람의 실제 움직임 크기(최근 CAL_WINDOW번 중앙값)의 CAL_FRACTION배를 기준으로 쓴다(미리 정한 기준의 0.7~1.5배 안에서만) */
+const CAL_MIN_REPS = 3;
+const CAL_WINDOW = 5;
+const CAL_FRACTION = 0.6;
 const MIN_STREAK = 4; // 이만큼 연속으로 보여야 값을 쓴다
 const ANGLE_DECAY = 3; // 도/초
 const POS_DECAY = 0.04; // 어깨너비/초
@@ -239,8 +274,11 @@ export class AutoRepCounter {
     new SignalTracker('heelL', '뒤꿈치 들기', POS_MIN.heel, POS_DECAY, POS_SPIKE),
     new SignalTracker('heelR', '뒤꿈치 들기', POS_MIN.heel, POS_DECAY, POS_SPIKE),
   ];
-  private minAmp = MIN_AMP.normal;
+  private strict: Strictness = 'normal';
+  private exercise: string | null = null;
+  private minAmp = minAngleFor('normal');
   private mult = POS_MULT.normal;
+  private posScale = 1;
   private active: SignalTracker | null = null;
   private offset = 0; // 이전 동작들에서 쌓인 횟수
   private all: RepEvent[] = [];
@@ -254,7 +292,19 @@ export class AutoRepCounter {
   setFocus(f: Focus) { this.focus = f; }
   private allowed(id: string) { return this.focus === 'auto' || FOCUS_IDS[this.focus].includes(id); }
 
-  setStrictness(s: Strictness) { this.minAmp = MIN_AMP[s]; this.mult = POS_MULT[s]; }
+  private recalc() {
+    const p = romPresetOf(this.exercise);
+    this.minAmp = Math.round((p?.rom ?? DEFAULT_ROM) * STRICT_RATIO[this.strict]);
+    this.mult = POS_MULT[this.strict];
+    this.posScale = p?.posScale ?? 1;
+  }
+  setStrictness(s: Strictness) { this.strict = s; this.recalc(); }
+  /** 운동 이름을 알려 주면 그 운동의 표준 가동범위로 세는 기준을 정한다(모르면 기본값) */
+  setExercise(name: string | null) { this.exercise = name; this.recalc(); }
+  /** 지금 쓰는 최소 각도(도) */
+  get minAngle() { return this.minAmp; }
+  /** 이 사람의 실제 움직임 크기를 배웠으면 그 값(도, 중앙값). 아직이면 null */
+  get learnedRange(): number | null { return this.active ? this.active.learned : null; }
 
   reset() {
     [...this.angleT, ...this.posT].forEach((t) => t.reset());
@@ -282,7 +332,7 @@ export class AutoRepCounter {
     };
     for (const t of this.angleT) if (this.allowed(t.id)) run(t, angles[t.id as SignalKey] ?? null, this.minAmp);
     const pm = this.scale.partial ? PARTIAL_MULT : 1;
-    for (const t of this.posT) if (this.allowed(t.id)) run(t, pos[t.id] ?? null, t.baseMin * this.mult * pm);
+    for (const t of this.posT) if (this.allowed(t.id)) run(t, pos[t.id] ?? null, t.baseMin * this.mult * (t.id === 'shrug' || t.id.startsWith('heel') ? this.posScale : 1) * pm);
     if (!done.length) return null;
 
     const act = this.active;

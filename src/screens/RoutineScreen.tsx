@@ -29,12 +29,13 @@ export function RoutineScreen() {
     <ScrollView contentContainerStyle={{ padding: S.lg, paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
       <Row style={{ marginBottom: S.lg }}>
         <H style={{ fontSize: 22, flex: 1 }}>루틴</H>
+        <Btn label="도우미" kind="ghost" small onPress={nav.openWizard} />
         <Btn label="AI로 가져오기" kind="ghost" small onPress={nav.openImport} />
         <Btn label="+ 새 루틴" small onPress={create} />
       </Row>
 
       {st.routines.length === 0 && (
-        <Empty text={'아직 루틴이 없어요.\n‘+ 새 루틴’으로 직접 만들거나, ‘AI로 가져오기’로 다른 AI가 만든 루틴을 불러오세요.'} />
+        <Empty text={'아직 루틴이 없어요.\n‘도우미’로 질문에 답해 초안을 만들거나, ‘+ 새 루틴’으로 직접 만들거나, ‘AI로 가져오기’로 다른 AI가 만든 루틴을 불러오세요.'} />
       )}
 
       {st.routines.map((r) => {
