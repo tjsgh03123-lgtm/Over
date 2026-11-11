@@ -22,6 +22,7 @@ export function ImportScreen() {
   const [routineName, setRoutineName] = useState('가져온 루틴');
   const [mode, setMode] = useState<RoutineMode>('cycle');
   const [activate, setActivate] = useState(true);
+  const [showRaw, setShowRaw] = useState(false);
 
   const analyze = (text = raw) => {
     const r = parseRoutine(text);
@@ -66,16 +67,24 @@ export function ImportScreen() {
 
         <Card>
           <T bold style={{ marginBottom: 6 }}>2. AI가 만든 루틴 가져오기</T>
-          <T muted style={{ fontSize: 12, marginBottom: 6 }}>붙여넣기 또는 .txt 파일 · JSON(권장) · Markdown 표/목록 · 일반 텍스트 지원</T>
-          <TextField value={raw} onChangeText={setRaw} multiline placeholder="여기에 붙여넣기" style={{ minHeight: 140, textAlignVertical: 'top' }} />
-          <Row style={{ marginTop: S.sm }}>
-            <Btn label="붙여넣기" small kind="ghost" onPress={async () => { const t = await Clipboard.getStringAsync(); setRaw(t); if (t) analyze(t); }} />
+          <T muted style={{ fontSize: 12, marginBottom: 6 }}>AI가 만든 글을 복사한 뒤 아래 ‘붙여넣어 분석’을 누르세요. 글이 길어도 입력창을 열 필요가 없어요. JSON(권장)·Markdown 표/목록·일반 텍스트를 읽어요.</T>
+          <Row>
+            <Btn label="붙여넣어 분석" style={{ flex: 1 }} onPress={async () => { const t = await Clipboard.getStringAsync(); if (!t.trim()) return Alert.alert('복사한 글이 없어요', 'AI가 만든 루틴을 먼저 복사해 주세요.'); setRaw(t); analyze(t); setShowRaw(false); }} />
             <Btn
-              label="파일 불러오기" small kind="ghost"
-              onPress={async () => { try { const t = await pickTextFile(); if (t != null) { setRaw(t); analyze(t); } } catch (e) { Alert.alert('오류', (e as Error).message); } }}
+              label="파일 불러오기" kind="ghost"
+              onPress={async () => { try { const t = await pickTextFile(); if (t != null) { setRaw(t); analyze(t); setShowRaw(false); } } catch (e) { Alert.alert('오류', (e as Error).message); } }}
             />
-            <Btn label="분석하기" onPress={() => analyze()} style={{ flex: 1 }} />
           </Row>
+          {raw.length > 0 && !showRaw && <T muted style={{ fontSize: 12, marginTop: S.sm }}>불러온 글 {raw.length.toLocaleString()}자</T>}
+          <Row style={{ marginTop: S.sm }}>
+            <Chip label={showRaw ? '입력창 접기' : '글을 직접 붙여넣거나 고치기'} active={showRaw} onPress={() => setShowRaw((v) => !v)} />
+          </Row>
+          {showRaw && (
+            <>
+              <TextField value={raw} onChangeText={setRaw} multiline placeholder="여기에 붙여넣기" style={{ marginTop: S.sm, minHeight: 100, maxHeight: 160, textAlignVertical: 'top' }} />
+              <Btn label="분석하기" onPress={() => { analyze(); setShowRaw(false); }} style={{ marginTop: S.sm }} />
+            </>
+          )}
         </Card>
 
         {result && (
