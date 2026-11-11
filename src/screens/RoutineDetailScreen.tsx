@@ -30,6 +30,8 @@ const STEP_HINT: Record<StepKey, string> = {
 
 /** 화면을 다녀와도(날 편집 등) 보던 단계를 기억한다 */
 const lastStep = new Map<string, StepKey>();
+/** 방금 만든 새 루틴(완료하면 홈 화면으로 나간다). 운동 편집 화면을 다녀와도 기억한다 */
+const creatingIds = new Set<string>();
 
 const KIND_LABEL = { weights: '웨이트', cardio: '유산소', rest: '휴식' } as const;
 
@@ -53,6 +55,7 @@ export function RoutineDetailScreen({ routineId }: { routineId: string }) {
       setR(x);
       setActive(st.activeId === routineId);
       if (x) {
+        if (!lastStep.has(routineId) && x.days.length === 0) creatingIds.add(routineId); // 방금 만든 새 루틴
         setName((cur) => (cur === '' ? x.name : cur));
         // 처음 열 때: 아직 날이 없는 새 루틴이면 1단계부터, 이미 만든 루틴이면 확인 단계(거기서 원하는 단계로 이동)
         setStepState((cur) => cur ?? (x.days.length === 0 ? 'type' : 'done'));
@@ -303,7 +306,7 @@ export function RoutineDetailScreen({ routineId }: { routineId: string }) {
         <Row>
           <Btn label="이전" kind="ghost" style={{ flex: 1 }} disabled={idx === 0} onPress={prev} />
           {last
-            ? <Btn label="완료" style={{ flex: 2 }} onPress={async () => { await commitName(); lastStep.delete(r.id); nav.close(); }} />
+            ? <Btn label="완료" style={{ flex: 2 }} onPress={async () => { await commitName(); lastStep.delete(r.id); const fresh = creatingIds.delete(r.id); if (fresh) nav.goTab('home'); else nav.close(); }} />
             : <Btn label="다음" style={{ flex: 2 }} onPress={next} />}
         </Row>
       </View>

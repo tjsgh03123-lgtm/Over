@@ -23,6 +23,7 @@ import { VideoTrackScreen } from './src/screens/VideoTrackScreen.tsx';
 import { Header } from './src/ui/components.tsx';
 import { findMissedRoutine, getActiveRoutine, getSetting, resolveMissed, setSetting, type MissedChoice, type MissedRoutine } from './src/db/repo.ts';
 import { MissedRoutineModal } from './src/ui/MissedRoutineModal.tsx';
+import { WebAlertHost } from './src/ui/webAlert.tsx';
 import { sanitizeGraphColors, sanitizeMode, type GraphKey, type ThemeMode } from './src/domain/themeModel.ts';
 import { applyTheme, C, GC } from './src/ui/theme.ts';
 
@@ -197,6 +198,7 @@ export default function App() {
             </>
           )}
           <MissedRoutineModal missed={missed} cycle={cycleMode} onChoose={chooseMissed} />
+          <WebAlertHost />
         </SafeAreaView>
       </Ctx.Provider>
     </SafeAreaProvider>
