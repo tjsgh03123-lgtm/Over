@@ -51,10 +51,9 @@ export function ImportScreen() {
       <Header title="AI 루틴 가져오기" onBack={nav.close} />
       <ScrollView contentContainerStyle={{ padding: S.lg, paddingBottom: 80 }} keyboardShouldPersistTaps="handled">
         <Card>
-          <T bold>1. 다른 AI에 요청하기</T>
+          <T bold>① 프롬프트 복사 → AI에 붙여넣기</T>
           <T muted style={{ fontSize: 12, marginVertical: 6 }}>
-            ChatGPT·Claude·Gemini 등에 프롬프트를 붙여넣고, 맨 아래 구분선 밑에 원하는 루틴을 적으면 이 앱이 바로 읽을 수 있는 형식으로 만들어 줍니다.
-            이 앱은 AI를 호출하지 않으며 비용이 들지 않습니다.
+            ChatGPT·Claude·Gemini 등에 붙여넣고 맨 아래 구분선 밑에 원하는 루틴을 적으세요. 이 앱은 AI를 호출하지 않아 비용이 없어요.
           </T>
           <Row>
             <Btn label="프롬프트 복사" small style={{ flex: 1 }} onPress={async () => { await Clipboard.setStringAsync(AI_IMPORT_PROMPT); Alert.alert('복사됨', 'AI 채팅창에 붙여넣고, 맨 아래 구분선 밑에 원하는 루틴을 적으세요.'); }} />
@@ -63,11 +62,10 @@ export function ImportScreen() {
               onPress={async () => { try { await shareTextFile('overdrive-ai-prompt.txt', AI_IMPORT_PROMPT, 'text/plain'); } catch (e) { Alert.alert('오류', (e as Error).message); } }}
             />
           </Row>
-        </Card>
 
-        <Card>
-          <T bold style={{ marginBottom: 6 }}>2. AI가 만든 루틴 가져오기</T>
-          <T muted style={{ fontSize: 12, marginBottom: 6 }}>AI가 만든 글을 복사한 뒤 아래 ‘붙여넣어 분석’을 누르세요. 글이 길어도 입력창을 열 필요가 없어요. JSON(권장)·Markdown 표/목록·일반 텍스트를 읽어요.</T>
+          <View style={{ height: 1, backgroundColor: C.line, marginVertical: S.md }} />
+          <T bold>② AI의 답을 복사 → 붙여넣어 분석</T>
+          <T muted style={{ fontSize: 12, marginVertical: 6 }}>JSON(권장)·Markdown 표/목록·일반 텍스트를 읽어요. 글이 길어도 입력창을 열 필요가 없어요.</T>
           <Row>
             <Btn label="붙여넣어 분석" style={{ flex: 1 }} onPress={async () => { const t = await Clipboard.getStringAsync(); if (!t.trim()) return Alert.alert('복사한 글이 없어요', 'AI가 만든 루틴을 먼저 복사해 주세요.'); setRaw(t); analyze(t); setShowRaw(false); }} />
             <Btn
