@@ -5,7 +5,7 @@ import { useApp } from '../app/context.tsx';
 import { applyImportedRoutine } from '../db/repo.ts';
 import { AI_IMPORT_PROMPT } from '../domain/importSchema.ts';
 import { inferMode, type RoutineMode } from '../domain/routine.ts';
-import { pickTextFile, shareTextFile } from '../services/files.ts';
+import { pickTextFile } from '../services/files.ts';
 import { parseRoutine, type ParsedDay, type ParseResult } from '../domain/parser.ts';
 import { Btn, Card, Chip, Header, NumField, Row, T, TextField } from '../ui/components.tsx';
 import { C, S } from '../ui/theme.ts';
@@ -57,10 +57,6 @@ export function ImportScreen() {
           </T>
           <Row>
             <Btn label="프롬프트 복사" small style={{ flex: 1 }} onPress={async () => { await Clipboard.setStringAsync(AI_IMPORT_PROMPT); Alert.alert('복사됨', 'AI 채팅창에 붙여넣고, 맨 아래 구분선 밑에 원하는 루틴을 적으세요.'); }} />
-            <Btn
-              label="텍스트 파일로 저장" small kind="ghost" style={{ flex: 1 }}
-              onPress={async () => { try { await shareTextFile('overdrive-ai-prompt.txt', AI_IMPORT_PROMPT, 'text/plain'); } catch (e) { Alert.alert('오류', (e as Error).message); } }}
-            />
           </Row>
 
           <View style={{ height: 1, backgroundColor: C.line, marginVertical: S.md }} />
