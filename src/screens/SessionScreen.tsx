@@ -34,7 +34,7 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 export function SessionScreen({ sessionId }: { sessionId: string }) {
   const { db, today, nav, bump } = useApp();
   const [s, setS] = useState<SessionFull | null>(null);
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [openId, setOpenId] = useState<string | undefined>(undefined); // 펼친 종목 하나(''이면 모두 접음, 없으면 처음 안 끝난 종목)
   const [opts, setOpts] = useState<Record<string, boolean>>({}); // 종목별 '옵션'(메모·준비 세트·삭제) 펼침
   const [picker, setPicker] = useState(false);
   const [swapFor, setSwapFor] = useState<string | null>(null); // 대체 운동으로 바꿀 세션 종목 id
@@ -153,6 +153,10 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
   const guidedOn = editable && (guided ?? !!s.template_id);
   const cur = guidedOn ? currentOf(gex, deferred, skipped) : null;
   const shownExercises = cur ? s.exercises.filter((e) => cur.block.some((b) => b.id === e.id)) : s.exercises;
+  // 아코디언: 한 번에 한 종목만 펼친다. 처음엔 아직 안 끝난 첫 종목
+  const openEx = openId !== undefined ? (openId || null) : (s.exercises.find((e) => e.sets.some((x) => !x.done))?.id ?? null);
+  const targetEx = s.exercises.find((e) => e.id === (cur ? cur.exId : openEx)) ?? null;
+  const targetIdx = targetEx ? targetEx.sets.findIndex((x) => !x.done) : -1;
   const nameOf = (id: string) => s.exercises.find((e) => e.id === id)?.exercise_name ?? '';
 
   const openLive = (ex: SessionExRow, source: CountSource = runMode === 'tempo' ? 'tempo' : 'camera') => setLive({
@@ -165,6 +169,36 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
     tip: matchProfile(ex.exercise_name)?.tip,
     name: ex.exercise_name,
   });
+
+  /** 세트 ✓: 이미 완료면 되돌리고, 아니면 완료로 기록하며 휴식 카운트다운을 시작한다 */
+  const completeSet = (ex: SessionExRow, row: SetRow, sugW: number | null, sugR: number | null) => {
+    setFocus(null);
+    if (row.done) return patchSet(ex, row, { done: false });
+    // 세트를 끝내면 휴식 카운트다운 시작 (준비 세트·마지막 세트는 제외, 0이면 끔)
+    const allOthersDone = allSets.every((x) => x.id === row.id || x.done);
+    let sec = row.set_type === 'warmup' || allOthersDone ? 0 : restFor(rests[ex.id], restDefault);
+    let kind: 'set' | 'exercise' = 'set';
+    let nextExId: string | undefined;
+    if (guidedOn) {
+      const upd = gex.map((g) => (g.id !== ex.id ? g : { ...g, sets: g.sets.map((x) => (x.id === row.id ? { ...x, done: 1 } : x)) }));
+      const rk = row.set_type === 'warmup' ? 'none' : restAfter(upd, ex.id, skipped);
+      sec = rk === 'exercise' ? exRest : rk === 'set' ? restFor(rests[ex.id], restDefault) : 0;
+      if (rk === 'exercise') kind = 'exercise';
+      nextExId = currentOf(upd, deferred, skipped)?.exId;
+    }
+    if (sec > 0) {
+      const t = Date.now(); setNow(t); setRestMini(false);
+      const nx = nextExId ? nameOf(nextExId) : undefined;
+      setRest({ endAt: t + sec * 1000, total: sec, done: false, kind, exId: ex.id, next: nx, nextTip: nx ? matchProfile(nx)?.tip : undefined, nextExId });
+      if (kind === 'exercise' && nx) speakText(`종목 끝. ${sec}초 쉬세요. 다음은 ${nx}`);
+    }
+    // ✓: 칸에 들어 있는(또는 흐리게 보이던) 숫자를 그대로 이 세트의 기록으로 확정
+    patchSet(ex, row, {
+      done: true,
+      ...(row.weight == null && sugW != null ? { weight: sugW } : {}),
+      ...(row.reps == null && sugR != null ? { reps: sugR } : {}),
+    });
+  };
 
   /** 휴식 시간 조절: 세트 간은 10초, 종목 간은 30초 단위. 종목 간 휴식이면 그 값이 다음부터의 기본값이 된다 */
   const adjustRest = (d: number) => {
@@ -328,7 +362,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
           </Card>
         )}
         {shownExercises.map((ex) => {
-          const open = !collapsed[ex.id];
+          const open = !!cur || openEx === ex.id;
           const showOpts = !!opts[ex.id];
           const doneN = ex.sets.filter((x) => x.done).length;
           const last = lasts[ex.id] ?? null;
@@ -346,7 +380,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
             <View key={ex.id}>
               {ssFirst && <View style={{ alignSelf: 'flex-start', paddingHorizontal: 10, paddingVertical: 3, borderRadius: 999, backgroundColor: C.accent, marginBottom: 4 }}><Text style={{ color: C.onAccent, fontSize: 11, fontWeight: '800' }}>슈퍼 세트</Text></View>}
             <Card style={{ padding: 0, ...(inSs ? { borderLeftWidth: 4, borderLeftColor: C.accent } : {}) }}>
-              <Pressable onPress={() => setCollapsed((c) => ({ ...c, [ex.id]: open }))} style={{ padding: S.lg }}>
+              <Pressable onPress={() => setOpenId(open ? '' : ex.id)} style={{ padding: S.lg }}>
                 <Row>
                   <View style={{ flex: 1 }}>
                     <T bold style={{ fontSize: 16 }}>{ex.exercise_name}{cur && cur.block.length > 1 && cur.exId === ex.id ? '  ▶ 지금 차례' : ''}</T>
@@ -361,7 +395,22 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
                       </T>
                     )}
                   </View>
-                  <Text style={{ color: C.muted, fontSize: 18, marginLeft: 8 }}>{open ? '▾' : '▸'}</Text>
+                  {editable && (
+                    <Pressable hitSlop={10} style={{ paddingHorizontal: 10 }} onPress={() => Alert.alert(ex.exercise_name, undefined, [
+                      { text: '운동 정보 보기', onPress: () => Alert.alert(ex.exercise_name, matchProfile(ex.exercise_name)?.tip ?? '등록된 정보가 아직 없어요.') },
+                      { text: '종목 바꾸기', onPress: () => {
+                        if (ex.sets.some((x) => x.done)) return Alert.alert('바꿀 수 없어요', '이미 완료한 세트가 있는 종목은 바꿀 수 없어요.');
+                        setSwapFor(ex.id); setPicker(true);
+                      } },
+                      { text: '종목 삭제', style: 'destructive', onPress: () => Alert.alert('종목 삭제', `${ex.exercise_name} 기록을 이 운동에서 삭제할까요?`, [
+                        { text: '취소' }, { text: '삭제', style: 'destructive', onPress: async () => { await removeSessionExercise(db, ex.id); bump(); reload(); } },
+                      ]) },
+                      { text: '닫기', style: 'cancel' },
+                    ])}>
+                      <Text style={{ color: C.muted, fontSize: 20 }}>⋯</Text>
+                    </Pressable>
+                  )}
+                  <Text style={{ color: C.muted, fontSize: 18, marginLeft: 4 }}>{open ? '▾' : '▸'}</Text>
                 </Row>
               </Pressable>
 
@@ -421,32 +470,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
                           <Pressable
                             disabled={!editable}
                             onPress={() => {
-                              setFocus(null);
-                              if (row.done) return patchSet(ex, row, { done: false });
-                              // 세트를 끝내면 휴식 카운트다운 시작 (준비 세트·마지막 세트는 제외, 0이면 끔)
-                              const allOthersDone = allSets.every((x) => x.id === row.id || x.done);
-                              let sec = row.set_type === 'warmup' || allOthersDone ? 0 : restFor(rests[ex.id], restDefault);
-                              let kind: 'set' | 'exercise' = 'set';
-                              let nextExId: string | undefined;
-                              if (guidedOn) {
-                                const upd = gex.map((g) => (g.id !== ex.id ? g : { ...g, sets: g.sets.map((x) => (x.id === row.id ? { ...x, done: 1 } : x)) }));
-                                const rk = row.set_type === 'warmup' ? 'none' : restAfter(upd, ex.id, skipped);
-                                sec = rk === 'exercise' ? exRest : rk === 'set' ? restFor(rests[ex.id], restDefault) : 0;
-                                if (rk === 'exercise') kind = 'exercise';
-                                nextExId = currentOf(upd, deferred, skipped)?.exId;
-                              }
-                              if (sec > 0) {
-                                const t = Date.now(); setNow(t); setRestMini(false);
-                                const nx = nextExId ? nameOf(nextExId) : undefined;
-                                setRest({ endAt: t + sec * 1000, total: sec, done: false, kind, exId: ex.id, next: nx, nextTip: nx ? matchProfile(nx)?.tip : undefined, nextExId });
-                                if (kind === 'exercise' && nx) speakText(`종목 끝. ${sec}초 쉬세요. 다음은 ${nx}`);
-                              }
-                              // ✓: 칸에 들어 있는(또는 흐리게 보이던) 숫자를 그대로 이 세트의 기록으로 확정
-                              patchSet(ex, row, {
-                                done: true,
-                                ...(row.weight == null && sugW != null ? { weight: sugW } : {}),
-                                ...(row.reps == null && sugR != null ? { reps: sugR } : {}),
-                              });
+                              completeSet(ex, row, sugW, sugR);
                             }}
                             style={{
                               width: 48, height: 44, borderRadius: 10, alignItems: 'center', justifyContent: 'center',
@@ -627,6 +651,17 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
               <Btn label={rest.done ? '닫기' : '건너뛰기'} kind="ghost" small onPress={() => setRest(null)} />
             </Row>
           )}
+          <Btn
+            label={targetEx && targetIdx >= 0 ? `${targetEx.sets[targetIdx].set_no}세트 완료` : '이 종목 세트를 모두 마쳤어요'}
+            disabled={!targetEx || targetIdx < 0}
+            style={{ marginBottom: S.sm }}
+            onPress={() => {
+              if (!targetEx || targetIdx < 0) return;
+              const row = targetEx.sets[targetIdx];
+              const lastP = lasts[targetEx.id] ?? null;
+              completeSet(targetEx, row, suggestFor(targetEx.sets, targetIdx, (x) => x.weight, lastP?.weight ?? null), suggestFor(targetEx.sets, targetIdx, (x) => x.reps, lastP?.reps ?? null));
+            }}
+          />
           <Row style={{ justifyContent: 'space-between', marginBottom: S.sm }}>
             <T muted>시작 {fmtClock(s.started_at)}</T>
             <T bold style={{ fontSize: 22 }}>{fmtElapsed(elapsed)}</T>
