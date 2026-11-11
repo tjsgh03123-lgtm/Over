@@ -3,8 +3,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Alert, Modal, Pressable, ScrollView, Text, View } from 'react-native';
 import { useApp } from '../app/context.tsx';
 import {
-  autoFillRoutine, deleteDay, deleteRoutine, getRoutines, renameRoutine, setActiveRoutine, setRepeatDays, setRoutineMode,
-  setRoutineSlots, setRoutineStart, setSlot,
+  autoFillRoutine, deleteDay, deleteRoutine, getDayDetail, getRoutines, getTemplateBrief, renameRoutine, setActiveRoutine, setRepeatDays,
+  setRoutineMode, setRoutineSlots, setRoutineStart, setSlot, upsertDay, type TemplateBrief,
 } from '../db/repo.ts';
 import { startForDayNumber } from '../domain/cycle.ts';
 import { weekdayOf } from '../domain/stats.ts';
@@ -17,15 +17,14 @@ import { Btn, Card, Header, Row, T, TextField } from '../ui/components.tsx';
 import { ReorderList } from '../ui/ReorderList.tsx';
 import { C, S } from '../ui/theme.ts';
 
-type StepKey = 'type' | 'repeat' | 'days' | 'layout' | 'done';
+type StepKey = 'type' | 'repeat' | 'tiles' | 'done';
 const STEP_TITLE: Record<StepKey, string> = {
-  type: '방식과 이름', repeat: '반복 일수', days: '날 만들기', layout: '칸 배치', done: '확인',
+  type: '방식과 이름', repeat: '반복 일수', tiles: '운동 구성', done: '확인',
 };
 const STEP_HINT: Record<StepKey, string> = {
   type: '루틴 이름을 정하고, 어떤 방식으로 돌릴지 고릅니다.',
   repeat: '며칠 동안 하고 다시 처음(Day 1)부터 할지 정합니다.',
-  days: '운동할 날(Day)을 만들고 종목을 넣습니다. 쉬는 날은 만들 필요 없어요.',
-  layout: '만든 날을 칸에 놓습니다. 비워 둔 칸은 쉬는 날이에요.',
+  tiles: '칸을 눌러 그 날 할 종목을 넣고, 세트·횟수·무게를 정합니다. 비워 두면 쉬는 날이에요.',
   done: '정한 내용을 확인하고 저장합니다.',
 };
 
@@ -34,7 +33,7 @@ const lastStep = new Map<string, StepKey>();
 
 const KIND_LABEL = { weights: '웨이트', cardio: '유산소', rest: '휴식' } as const;
 
-/** 루틴 만들기·편집: 한 번에 한 단계씩 (방식·이름 → 반복 일수 → 날 만들기 → 칸 배치 → 확인) */
+/** 루틴 만들기·편집: 한 번에 한 단계씩 (방식·이름 → 반복 일수 → 운동 구성(칸마다 타일) → 확인) */
 export function RoutineDetailScreen({ routineId }: { routineId: string }) {
   const { db, today, version, nav, bump } = useApp();
   const insets = useSafeAreaInsets();
@@ -42,7 +41,8 @@ export function RoutineDetailScreen({ routineId }: { routineId: string }) {
   const [active, setActive] = useState(false);
   const [name, setName] = useState('');
   const [step, setStepState] = useState<StepKey | null>(lastStep.get(routineId) ?? null);
-  const [sheet, setSheet] = useState<number | null>(null); // 칸 고르기 시트가 열린 칸 번호
+  const [sheet, setSheet] = useState<number | null>(null); // 복사할 칸을 고르는 시트: 복사하려는 칸 번호
+  const [briefs, setBriefs] = useState<Record<string, TemplateBrief | null>>({});
   const [dragging, setDragging] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
   const scrollY = useRef(0);
@@ -60,11 +60,22 @@ export function RoutineDetailScreen({ routineId }: { routineId: string }) {
     });
   }, [db, today, version, routineId]);
 
+  useEffect(() => {
+    if (!r) return;
+    let off = false;
+    (async () => {
+      const out: Record<string, TemplateBrief | null> = {};
+      for (const d of r.days) out[d.id] = d.templateId ? await getTemplateBrief(db, d.templateId) : null;
+      if (!off) setBriefs(out);
+    })();
+    return () => { off = true; };
+  }, [db, r]);
+
   const setStep = (k: StepKey) => { lastStep.set(routineId, k); setStepState(k); };
 
   if (!r || !step) return <View style={{ flex: 1, backgroundColor: C.bg }}><Header title="루틴" onBack={nav.close} /></View>;
 
-  const steps: StepKey[] = r.mode === 'cycle' ? ['type', 'repeat', 'days', 'layout', 'done'] : ['type', 'days', 'layout', 'done'];
+  const steps: StepKey[] = r.mode === 'cycle' ? ['type', 'repeat', 'tiles', 'done'] : ['type', 'tiles', 'done'];
   const cur: StepKey = steps.includes(step) ? step : 'type';
   const idx = steps.indexOf(cur);
   const dayName = (id: string | null) => (id ? r.days.find((d) => d.id === id)?.name ?? null : null);
@@ -84,7 +95,7 @@ export function RoutineDetailScreen({ routineId }: { routineId: string }) {
     const { lost } = convertMode(r, m);
     const apply = async () => { await setRoutineMode(db, today, r.id, m); bump(); };
     if (lost > 0) {
-      Alert.alert('방식을 바꿀까요?', `요일 방식은 7칸이라 Day 8 이후에 놓은 날 ${lost}개는 칸에서 빠져요. 만든 날은 그대로 남습니다.`, [
+      Alert.alert('방식을 바꿀까요?', `요일 방식은 7칸이라 Day 8 이후에 놓은 운동 ${lost}개는 칸에서 빠져요. 운동 구성은 그대로 남습니다.`, [
         { text: '취소' }, { text: '바꾸기', onPress: apply },
       ]);
     } else apply();
@@ -95,7 +106,7 @@ export function RoutineDetailScreen({ routineId }: { routineId: string }) {
     if (v === len) return;
     const apply = async () => { await setRepeatDays(db, today, r.id, v); bump(); };
     if (v < len && r.slots.slice(v).some(Boolean)) {
-      Alert.alert('반복 일수를 줄일까요?', `Day ${v + 1} 이후 칸에 놓은 날은 칸에서 빠져요. 만든 날은 그대로 남습니다.`, [
+      Alert.alert('반복 일수를 줄일까요?', `Day ${v + 1} 이후 칸에 놓은 운동은 칸에서 빠져요. 운동 구성은 그대로 남습니다.`, [
         { text: '취소' }, { text: '줄이기', onPress: apply },
       ]);
     } else apply();
@@ -169,46 +180,26 @@ export function RoutineDetailScreen({ routineId }: { routineId: string }) {
         </>
       );
     }
-    if (cur === 'days') {
-      return (
-        <>
-          {r.days.length === 0 && <T muted style={{ marginBottom: S.md }}>아직 만든 날이 없어요. ‘+ 날 만들기’로 첫 운동 날을 만들어 보세요.</T>}
-          {r.days.map((d) => {
-            const where = r.slots.map((s, i) => (s === d.id ? slotName(r.mode, i) : null)).filter(Boolean) as string[];
-            return (
-              <Card key={d.id}>
-                <Row>
-                  <View style={{ flex: 1 }}>
-                    <T bold>{d.name}{d.kind === 'weights' ? '' : ` · ${KIND_LABEL[d.kind]}`}</T>
-                    <T muted style={{ fontSize: 12 }}>{where.length ? `놓인 칸: ${where.join(', ')}` : '아직 칸에 놓지 않았어요'}</T>
-                  </View>
-                  <Btn label="편집" kind="ghost" small onPress={() => nav.openDay(r.id, d.id)} />
-                  <Btn
-                    label="✕" kind="danger" small
-                    onPress={() => Alert.alert('날 삭제', `‘${d.name}’을(를) 삭제할까요? 놓인 칸은 비워지고, 이미 완료한 기록은 유지됩니다.`, [
-                      { text: '취소' }, { text: '삭제', style: 'destructive', onPress: async () => { await deleteDay(db, today, r.id, d.id); bump(); } },
-                    ])}
-                  />
-                </Row>
-              </Card>
-            );
-          })}
-          <Btn label="+ 날 만들기" onPress={() => nav.openDay(r.id, null)} />
-          <T muted style={{ fontSize: 12, marginTop: S.sm }}>새로 만든 날은 처음 비어 있는 칸에 자동으로 놓여요. 다음 단계에서 자유롭게 옮길 수 있어요.</T>
-        </>
-      );
-    }
-    if (cur === 'layout') {
+    if (cur === 'tiles') {
+      const label = (slotIdx: number) => (r.mode === 'cycle' ? `Day ${slotIdx + 1}` : `${WD_LABEL[slotIdx]}요일`);
+      const summary = (id: string | null) => {
+        if (!id) return '눌러서 운동 추가';
+        const d = r.days.find((x) => x.id === id);
+        if (!d) return '';
+        if (d.kind !== 'weights') return KIND_LABEL[d.kind];
+        const b = briefs[id];
+        if (!b || b.count === 0) return '종목 없음 · 눌러서 추가';
+        return `${b.count}종목 · ${b.names.join(', ')}${b.count > b.names.length ? ' …' : ''}`;
+      };
+      const emptySlots = order.filter((i) => r.slots[i] == null);
       return (
         <>
           <T muted style={{ fontSize: 12, marginBottom: S.sm }}>
-            {r.mode === 'cycle'
-              ? `Day 1~${len}가 한 바퀴예요. 칸을 눌러 날을 고르고, 오른쪽 ≡ 손잡이를 길게 누른 채 끌어서 옮기세요. 같은 날을 여러 칸에 놓아도 돼요.`
-              : '요일마다 날을 고르세요. 같은 날을 여러 요일에 놓아도 되고, 비워 두면 쉬는 날이에요.'}
+            칸을 누르면 그 날의 종목을 추가하고 종목마다 세트·횟수·무게·휴식을 정할 수 있어요. 오른쪽 ≡ 손잡이를 길게 누른 채 끌면 칸의 순서를 바꿔요.
           </T>
           {unplaced.length > 0 && (
             <Card>
-              <T style={{ fontSize: 13 }}>아직 놓지 않은 날: {unplaced.map((d) => d.name).join(', ')}</T>
+              <T style={{ fontSize: 13 }}>칸에 놓이지 않은 운동: {unplaced.map((d) => d.name).join(', ')}</T>
               <Btn label="빈 칸에 차례로 채우기" kind="ghost" small style={{ marginTop: S.sm }} onPress={async () => { await autoFillRoutine(db, today, r.id); bump(); }} />
             </Card>
           )}
@@ -221,22 +212,30 @@ export function RoutineDetailScreen({ routineId }: { routineId: string }) {
             renderItem={({ slotIdx, id }, _pos, handle) => {
               const nm = dayName(id);
               const isToday = active && (r.mode === 'cycle' ? slotIdx + 1 === todayNo : slotIdx === weekdayOf(today));
+              const shared = id ? r.slots.filter((x) => x === id).length > 1 : false;
               return (
-                <Card style={isToday ? { borderColor: C.accent } : undefined}>
+                <Card style={isToday ? { borderColor: C.accent, borderWidth: 2 } : undefined}>
                   <Row>
-                    <Pressable
-                      onPress={async () => { if (id) { await setSlot(db, today, r.id, slotIdx, null); bump(); } else setSheet(slotIdx); }}
-                      style={{ width: 28, height: 28, borderRadius: 6, borderWidth: 2, borderColor: C.accent, alignItems: 'center', justifyContent: 'center', backgroundColor: id ? C.accent : 'transparent', marginRight: S.md }}
-                    >
-                      {id ? <Text style={{ color: C.onAccent, fontWeight: '800' }}>✓</Text> : null}
+                    <Pressable style={{ flex: 1, minHeight: 64, justifyContent: 'center' }} onPress={() => nav.openDay(r.id, id, id ? null : slotIdx)}>
+                      <T muted style={{ fontSize: 12 }}>{label(slotIdx)}{isToday ? ' · 오늘' : ''}</T>
+                      <T bold style={{ fontSize: 17, opacity: nm ? 1 : 0.45 }}>{nm ?? '비어 있음 · 휴식'}</T>
+                      <T muted style={{ fontSize: 12 }} numberOfLines={1}>{summary(id)}</T>
                     </Pressable>
-                    <Pressable style={{ flex: 1 }} onPress={() => setSheet(slotIdx)}>
-                      <T muted style={{ fontSize: 12 }}>{r.mode === 'cycle' ? `Day ${slotIdx + 1}` : `${WD_LABEL[slotIdx]}요일`}{isToday ? ' · 오늘' : ''}</T>
-                      <T bold style={{ opacity: nm ? 1 : 0.5 }}>{nm ?? '휴식'}</T>
-                    </Pressable>
-                    {id && <Btn label="편집" kind="ghost" small onPress={() => nav.openDay(r.id, id)} />}
+                    <Text style={{ color: C.muted, fontSize: 24, marginHorizontal: S.sm }}>›</Text>
                     {handle}
                   </Row>
+                  {id && (
+                    <Row style={{ marginTop: S.sm, gap: 6 }}>
+                      <Btn label="다른 칸에 복사" kind="ghost" small onPress={() => { if (emptySlots.length === 0) Alert.alert('빈 칸이 없어요', '복사하려면 먼저 비어 있는 칸이 필요해요. 반복 일수를 늘리거나 다른 칸을 비워 주세요.'); else setSheet(slotIdx); }} />
+                      <Btn
+                        label="비우기" kind="ghost" small
+                        onPress={() => Alert.alert('이 칸을 비울까요?', shared ? `‘${nm}’은(는) 다른 칸에도 놓여 있어서 이 칸만 비워져요.` : `‘${nm}’의 종목 구성이 삭제됩니다. 이미 완료한 기록은 유지돼요.`, [
+                          { text: '취소' },
+                          { text: '비우기', style: 'destructive', onPress: async () => { if (shared) await setSlot(db, today, r.id, slotIdx, null); else await deleteDay(db, today, r.id, id); bump(); } },
+                        ])}
+                      />
+                    </Row>
+                  )}
                 </Card>
               );
             }}
@@ -252,7 +251,7 @@ export function RoutineDetailScreen({ routineId }: { routineId: string }) {
           <T muted style={{ marginTop: 4 }}>
             {r.mode === 'cycle' ? `${len}일 반복 · 오늘은 Day ${todayNo}` : '요일 고정 · 매주 같은 요일'}
           </T>
-          <T muted>운동하는 칸 {placed}개 · 쉬는 칸 {len - placed}개 · 만든 날 {r.days.length}개</T>
+          <T muted>운동하는 칸 {placed}개 · 쉬는 칸 {len - placed}개</T>
         </Card>
         <Card>
           {order.map((slotIdx) => (
@@ -262,7 +261,7 @@ export function RoutineDetailScreen({ routineId }: { routineId: string }) {
             </Row>
           ))}
         </Card>
-        {placed === 0 && <T style={{ marginBottom: S.md }}>아직 칸에 놓은 날이 없어요. ‘3 날 만들기’, ‘4 칸 배치’ 단계에서 정해 주세요.</T>}
+        {placed === 0 && <T style={{ marginBottom: S.md }}>아직 운동을 넣은 칸이 없어요. ‘운동 구성’ 단계에서 칸을 눌러 추가하세요.</T>}
         <T muted style={{ fontSize: 12, marginBottom: 6 }}>고치고 싶은 단계를 눌러 이동하세요.</T>
         <Row style={{ flexWrap: 'wrap', gap: 6, marginBottom: S.md }}>
           {steps.slice(0, -1).map((k, i) => <Btn key={k} label={`${i + 1} ${STEP_TITLE[k]}`} kind="ghost" small onPress={() => go(k)} />)}
@@ -271,7 +270,7 @@ export function RoutineDetailScreen({ routineId }: { routineId: string }) {
         {active && <T bold style={{ textAlign: 'center', marginBottom: S.sm }}>지금 사용 중인 루틴</T>}
         <Btn
           label="루틴 삭제" kind="danger"
-          onPress={() => Alert.alert('루틴 삭제', `‘${r.name}’ 루틴과 날별 종목이 삭제됩니다. 이미 완료한 운동 기록과 성장 그래프는 그대로 유지됩니다.`, [
+          onPress={() => Alert.alert('루틴 삭제', `‘${r.name}’ 루틴과 칸별 종목이 삭제됩니다. 이미 완료한 운동 기록과 성장 그래프는 그대로 유지됩니다.`, [
             { text: '취소' }, { text: '삭제', style: 'destructive', onPress: async () => { await deleteRoutine(db, today, r.id); lastStep.delete(r.id); bump(); nav.close(); } },
           ])}
         />
@@ -314,30 +313,34 @@ export function RoutineDetailScreen({ routineId }: { routineId: string }) {
         <View style={{ backgroundColor: C.bg, borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: S.lg, paddingBottom: S.lg + insets.bottom, maxHeight: '75%' }}>
           {sheet != null && (
             <>
-              <T bold style={{ fontSize: 17, textAlign: 'center', marginBottom: S.sm }}>
-                {r.mode === 'cycle' ? `Day ${sheet + 1}` : `${WD_LABEL[sheet]}요일`}에 놓을 날
-              </T>
+              <T bold style={{ fontSize: 17, textAlign: 'center', marginBottom: 2 }}>어느 칸에 복사할까요?</T>
+              <T muted style={{ fontSize: 12, textAlign: 'center', marginBottom: S.sm }}>비어 있는 칸만 보여요. 복사하면 따로 고칠 수 있는 사본이 만들어져요.</T>
               <ScrollView style={{ marginBottom: S.sm }}>
-                <Pressable
-                  onPress={async () => { await setSlot(db, today, r.id, sheet, null); setSheet(null); bump(); }}
-                  style={{ paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: C.line, flexDirection: 'row' }}
-                >
-                  <Text style={{ color: C.text, flex: 1, fontWeight: r.slots[sheet] == null ? '800' : '400' }}>휴식 (비워 두기)</Text>
-                  {r.slots[sheet] == null ? <Text style={{ color: C.text }}>✓</Text> : null}
-                </Pressable>
-                {r.days.map((d) => (
+                {order.filter((i) => r.slots[i] == null).map((i) => (
                   <Pressable
-                    key={d.id}
-                    onPress={async () => { await setSlot(db, today, r.id, sheet, d.id); setSheet(null); bump(); }}
-                    style={{ paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: C.line, flexDirection: 'row' }}
+                    key={i}
+                    onPress={async () => {
+                      const from = r.slots[sheet];
+                      setSheet(null);
+                      if (!from) return;
+                      const det = await getDayDetail(db, today, r.id, from);
+                      if (!det) return;
+                      await upsertDay(db, today, r.id, {
+                        name: det.day.name, kind: det.day.kind, slot: i, postCardioMin: det.postCardioMin,
+                        exercises: det.exercises.map((e) => ({
+                          exerciseId: e.exercise_id, targetSets: e.target_sets, targetReps: e.target_reps, targetWeight: e.target_weight,
+                          intensity: e.intensity, restSec: e.rest_sec, note: e.note, ss: e.ss,
+                        })),
+                      });
+                      bump();
+                    }}
+                    style={{ paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: C.line }}
                   >
-                    <Text style={{ color: C.text, flex: 1, fontWeight: r.slots[sheet] === d.id ? '800' : '400' }}>{d.name}{d.kind === 'weights' ? '' : ` · ${KIND_LABEL[d.kind]}`}</Text>
-                    {r.slots[sheet] === d.id ? <Text style={{ color: C.text }}>✓</Text> : null}
+                    <Text style={{ color: C.text, fontWeight: '700' }}>{r.mode === 'cycle' ? `Day ${i + 1}` : `${WD_LABEL[i]}요일`}</Text>
                   </Pressable>
                 ))}
               </ScrollView>
-              <Btn label="+ 새 날 만들어서 놓기" kind="ghost" onPress={() => { const s = sheet; setSheet(null); nav.openDay(r.id, null, s); }} />
-              <Btn label="닫기" kind="ghost" style={{ marginTop: S.sm }} onPress={() => setSheet(null)} />
+              <Btn label="닫기" kind="ghost" onPress={() => setSheet(null)} />
             </>
           )}
         </View>

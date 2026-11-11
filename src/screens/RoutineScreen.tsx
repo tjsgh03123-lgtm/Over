@@ -47,7 +47,7 @@ export function RoutineScreen() {
                   <T bold style={{ fontSize: 16 }}>{r.name}{active ? '  · 사용 중' : ''}</T>
                   <T muted style={{ fontSize: 12 }}>
                     {r.mode === 'cycle' ? `${r.slots.length}일 반복` : '요일 고정'}
-                    {r.days.length ? ` · ${r.days.slice(0, 3).map((d) => d.name).join(', ')}${r.days.length > 3 ? ' …' : ''}` : ' · 아직 날이 없어요'}
+                    {r.days.length ? ` · ${r.days.slice(0, 3).map((d) => d.name).join(', ')}${r.days.length > 3 ? ' …' : ''}` : ' · 아직 운동이 없어요'}
                   </T>
                 </View>
                 {!active && (

@@ -9,7 +9,7 @@ import { ExercisePicker } from '../ui/ExercisePicker.tsx';
 import { ReorderList } from '../ui/ReorderList.tsx';
 import { C, S } from '../ui/theme.ts';
 
-/** 휴식은 '날'이 아니라 비어 있는 칸이다. 예전에 만든 휴식 날만 종류에 남겨 둔다. */
+/** 휴식은 운동이 아니라 비어 있는 칸이다. 예전에 만든 휴식 날만 종류에 남겨 둔다. */
 const KINDS: { key: DayKind; label: string }[] = [
   { key: 'weights', label: '웨이트' }, { key: 'cardio', label: '유산소' },
 ];
@@ -18,7 +18,7 @@ interface EditEx extends TemplateExerciseInput { name: string; key: string }
 let keySeq = 0;
 const newKey = () => `ex${++keySeq}`;
 
-/** 루틴의 '날' 한 개 편집: 이름·종류·종목. 새 날은 slot 칸에(없으면 첫 빈 칸에) 놓인다. */
+/** 루틴의 칸(운동) 한 개 편집: 이름·종류·종목. 새 운동은 slot 칸에(없으면 첫 빈 칸에) 놓인다. */
 export function DayEditorScreen({ routineId, dayId, slot }: { routineId: string; dayId: string | null; slot: number | null }) {
   const { db, today, nav, bump } = useApp();
   const [name, setName] = useState('');
@@ -50,7 +50,7 @@ export function DayEditorScreen({ routineId, dayId, slot }: { routineId: string;
   const patchEx = (i: number, p: Partial<EditEx>) => setExercises((l) => l.map((e, k) => (k === i ? { ...e, ...p } : e)));
 
   const save = async () => {
-    if (kind === 'weights' && !name.trim()) return Alert.alert('날 이름을 입력하세요', '예: 가슴·삼두');
+    if (kind === 'weights' && !name.trim()) return Alert.alert('운동 이름을 입력하세요', '예: 가슴·삼두');
     try {
       await upsertDay(db, today, routineId, {
         id: dayId ?? undefined, name, kind, slot,
@@ -67,14 +67,14 @@ export function DayEditorScreen({ routineId, dayId, slot }: { routineId: string;
 
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
-      <Header title={dayId ? '날 편집' : '날 추가'} onBack={nav.close} />
+      <Header title={dayId ? '운동 편집' : '운동 추가'} onBack={nav.close} />
       <ScrollView
         ref={scrollRef} scrollEnabled={!dragging} scrollEventThrottle={16}
         onScroll={(e) => { scrollY.current = e.nativeEvent.contentOffset.y; }}
         contentContainerStyle={{ padding: S.lg, paddingBottom: 100 }} keyboardShouldPersistTaps="handled"
       >
         <Card>
-          <TextField value={name} onChangeText={setName} placeholder={kind === 'rest' ? '휴식' : kind === 'cardio' ? '유산소' : '날 이름 (예: 가슴·삼두)'} />
+          <TextField value={name} onChangeText={setName} placeholder={kind === 'rest' ? '휴식' : kind === 'cardio' ? '유산소' : '운동 이름 (예: 가슴·삼두)'} />
           <Row style={{ marginTop: S.md }}>
             {(kind === 'rest' ? [...KINDS, { key: 'rest' as DayKind, label: '휴식' }] : KINDS).map((k) => <Chip key={k.key} label={k.label} active={kind === k.key} onPress={() => setKind(k.key)} />)}
           </Row>

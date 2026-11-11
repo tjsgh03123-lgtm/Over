@@ -580,10 +580,10 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
         {s.is_free === 1 && (
           <Card>
             {saveTplName == null ? (
-              <Btn label="이 운동을 루틴의 새 날로 저장" kind="ghost" onPress={() => setSaveTplName(s.title === '자유 운동' ? `자유 루틴 ${s.date}` : s.title)} />
+              <Btn label="이 운동을 루틴에 추가" kind="ghost" onPress={() => setSaveTplName(s.title === '자유 운동' ? `자유 루틴 ${s.date}` : s.title)} />
             ) : (
               <>
-                <TextField value={saveTplName} onChangeText={setSaveTplName} placeholder="날 이름" />
+                <TextField value={saveTplName} onChangeText={setSaveTplName} placeholder="운동 이름" />
                 <Row style={{ marginTop: S.sm }}>
                   <Btn
                     label="저장" small
@@ -592,7 +592,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
                       await saveSessionAsDay(db, today, s.id, saveTplName.trim());
                       setSaveTplName(null);
                       bump();
-                      Alert.alert('저장됨', '사용 중인 루틴에 새 날로 추가했어요. 루틴 탭에서 확인할 수 있습니다.');
+                      Alert.alert('저장됨', '사용 중인 루틴에 운동으로 추가했어요. 루틴 탭에서 확인할 수 있습니다.');
                     }}
                   />
                   <Btn label="취소" kind="ghost" small onPress={() => setSaveTplName(null)} />
