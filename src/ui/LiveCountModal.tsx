@@ -44,10 +44,11 @@ export type LiveDefaults = FlowConfig & { focus?: Focus; tip?: string; source?: 
 export function LiveCountModal({
   visible, onClose, onUse, defaults,
 }: { visible: boolean; defaults?: LiveDefaults; onClose: () => void; onUse: (counts: number[]) => void }) {
+  const leave = useRef<() => void>(() => {});
   if (!visible) return null;
   return (
-    <Modal visible animationType="slide" onRequestClose={onClose}>
-      <LiveBody onClose={onClose} onUse={onUse} defaults={defaults ?? { targetReps: 10, totalSets: 3, restSec: 60 }} />
+    <Modal visible animationType="slide" onRequestClose={() => leave.current()}>
+      <LiveBody leave={leave} onClose={onClose} onUse={onUse} defaults={defaults ?? { targetReps: 10, totalSets: 3, restSec: 60 }} />
     </Modal>
   );
 }
@@ -82,7 +83,7 @@ function FlipIcon({ size = 26 }: { size?: number }) {
   );
 }
 
-function LiveBody({ onClose, onUse, defaults }: { onClose: () => void; onUse: (counts: number[]) => void; defaults: LiveDefaults }) {
+function LiveBody({ onClose, onUse, defaults, leave }: { leave: React.MutableRefObject<() => void>; onClose: () => void; onUse: (counts: number[]) => void; defaults: LiveDefaults }) {
   useKeepAwake();
   const { db } = useApp();
   const { width: winW, height: winH } = useWindowDimensions();
@@ -305,14 +306,19 @@ function LiveBody({ onClose, onUse, defaults }: { onClose: () => void; onUse: (c
   const boxH = boxW / ar;
   const cnt = counter.current;
 
+  // 센 횟수는 화면을 나갈 때 자동으로 기록에 담긴다 (따로 '사용' 버튼 없음)
+  const finalCounts = () => (mode === 'sets' && flow.current ? flow.current.finish(count) : count > 0 ? [count] : []);
+  const leaveNow = () => { const c = finalCounts(); if (c.length) onUse(c); else onClose(); };
+  leave.current = leaveNow;
+
   return (
     <View style={{ flex: 1, backgroundColor: C.bg, paddingTop: insets.top }}>
-      <Header title={source === 'tempo' ? '박자로 세기' : '실시간 횟수 세기'} onBack={onClose} />
+      <Header title={source === 'tempo' ? '보이스코칭' : '실시간 횟수 세기'} onBack={leaveNow} />
       <ScrollView contentContainerStyle={{ padding: S.lg, paddingBottom: insets.bottom + 40 }}>
         {source === 'tempo' ? (
           <View style={{ padding: S.md, borderRadius: 12, backgroundColor: C.card2, alignItems: 'center' }}>
-            <T bold>박자 카운트 · 한 회당 {tempoSec}초</T>
-            <T muted style={{ fontSize: 12, marginTop: 2, textAlign: 'center' }}>카메라를 쓰지 않아요. 앱이 소리 내어 세는 박자에 맞춰 동작하세요.</T>
+            <T bold>보이스코칭 · 한 회당 {tempoSec}초</T>
+            <T muted style={{ fontSize: 12, marginTop: 2, textAlign: 'center' }}>카메라를 쓰지 않아요. 앱이 소리로 박자를 불러 주는 대로 동작하세요.</T>
           </View>
         ) : (
         <View style={{ width: boxW, height: boxH, alignSelf: 'center', backgroundColor: '#000', borderRadius: 10, overflow: 'hidden' }}>
@@ -410,7 +416,7 @@ function LiveBody({ onClose, onUse, defaults }: { onClose: () => void; onUse: (c
         </Row>
         <T muted style={{ textAlign: 'center' }}>
           {source === 'tempo'
-            ? (count === 0 ? '준비가 끝나면 박자에 맞춰 세기 시작해요' : `박자 ${tempoSec}초 · 소리에 맞춰 동작하세요`)
+            ? (count === 0 ? '준비가 끝나면 음성으로 세기 시작해요' : `${tempoSec}초 간격 · 음성에 맞춰 동작하세요`)
             : count === 0
             ? '폰을 세워 두고 운동을 시작하면 자동으로 셉니다'
             : `${cnt.jointLabel ?? ''} 움직임 감지${lastMs != null ? ` · 마지막 ${fmtRep(lastMs)}` : ''}${cnt.avgRepMs != null ? ` · 평균 ${fmtRep(cnt.avgRepMs)}` : ''}`}
@@ -429,15 +435,7 @@ function LiveBody({ onClose, onUse, defaults }: { onClose: () => void; onUse: (c
           </View>
         )}
 
-        {(() => {
-          const counts = mode === 'sets' && flow.current ? flow.current.finish(count) : count > 0 ? [count] : [];
-          return (
-            <Btn
-              label={counts.length > 1 ? `이 기록 사용 (${counts.join(' / ')}회)` : `이 횟수 사용 (${count}회)`}
-              disabled={counts.length === 0} style={{ marginTop: S.lg }} onPress={() => onUse(counts)}
-            />
-          );
-        })()}
+        <T muted style={{ marginTop: S.lg, textAlign: 'center', fontSize: 12 }}>끝나면 뒤로 가기를 누르세요. 센 횟수가 자동으로 기록돼요.</T>
         <Row style={{ marginTop: S.sm }}>
           <Btn label="처음부터" kind="ghost" style={{ flex: 1 }} onPress={reset} />
           <Btn label={showSettings ? '설정 닫기' : '설정'} kind="ghost" style={{ flex: 1 }} onPress={() => setShowSettings((v) => !v)} />
@@ -447,7 +445,7 @@ function LiveBody({ onClose, onUse, defaults }: { onClose: () => void; onUse: (c
         {showSettings && (
           <Card style={{ marginTop: S.md }}>
             <Label>방식</Label>
-            <Segmented<CountSource> options={[{ key: 'camera', label: '카메라로' }, { key: 'tempo', label: '박자로' }]} value={source} onChange={(v) => { setSource(v); setSetting(db, 'run_mode', v); }} />
+            <Segmented<CountSource> options={[{ key: 'camera', label: '카메라로' }, { key: 'tempo', label: '보이스코칭' }]} value={source} onChange={(v) => { setSource(v); setSetting(db, 'run_mode', v); }} />
             {source === 'camera' && (
               <View style={{ marginTop: S.sm }}>
                 <Segmented<'free' | 'sets'> options={[{ key: 'sets', label: '세트 자동 진행' }, { key: 'free', label: '자유 카운트' }]} value={mode} onChange={setMode} />
@@ -461,7 +459,7 @@ function LiveBody({ onClose, onUse, defaults }: { onClose: () => void; onUse: (c
                 <Stepper label="쉬는 시간" value={cfg.restSec} unit="초" step={15} min={5} max={600} onChange={(v) => setCfg((c) => ({ ...c, restSec: v }))} />
                 <Stepper label="준비 시간 (0이면 없음)" value={cfg.prepSec ?? 0} unit="초" step={5} min={0} max={30} onChange={(v) => { setCfg((c) => ({ ...c, prepSec: v })); setSetting(db, 'prep_sec', String(v)); }} />
                 {source === 'tempo' && (
-                  <Stepper label="박자 (한 회당)" value={tempoSec} unit="초" step={0.5} min={1} max={10} onChange={(v) => { setTempoSec(v); setSetting(db, 'tempo_sec', String(v)); }} />
+                  <Stepper label="음성 간격 (한 회당)" value={tempoSec} unit="초" step={0.5} min={1} max={10} onChange={(v) => { setTempoSec(v); setSetting(db, 'tempo_sec', String(v)); }} />
                 )}
                 <T muted style={{ fontSize: 12, marginTop: 4 }}>준비 시간이 끝나기 전 3·2·1로 알려 주고 “시작”이라고 말합니다. 목표 횟수를 채우면 쉬는 시간을 알려 주고, 쉬고 나면 다시 준비 → 시작으로 이어져요.</T>
               </>

@@ -57,7 +57,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
   const [skipped, setSkipped] = useState<string[]>([]); // 건너뛴 종목 id
   const [exRest, setExRest] = useState(180);
   const [live, setLive] = useState<{ exId: string; target: number; sets: number; restSec: number; focus: LiveFocus; tip?: string; source: CountSource; name?: string } | null>(null); // 실시간 횟수 세기 중인 종목
-  const [runMode, setRunMode] = useState<RunMode>('manual'); // 진행 방식: 직접 기록 / 카메라 / 박자
+  const [runMode, setRunMode] = useState<RunMode>('manual'); // 진행 방식: 직접 기록 / 카메라 / 보이스코칭
   const [prepSec, setPrepSec] = useState(10);
   const [tempoSec, setTempoSec] = useState(3);
   const [restMini, setRestMini] = useState(false); // 휴식 화면을 작게(아래 줄) 보기
@@ -297,14 +297,10 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
       )}
       <ScrollView contentContainerStyle={{ padding: S.lg, paddingBottom: 240 }} keyboardShouldPersistTaps="handled">
         {editable && s.exercises.length > 0 && (
-          <Row style={{ marginBottom: S.sm }}>
+          <Row style={{ marginBottom: S.sm, flexWrap: 'wrap' }}>
             <Chip label="한 종목씩" active={guidedOn} onPress={() => { setGuided(true); }} />
             <Chip label="전체 목록" active={!guidedOn} onPress={() => setGuided(false)} />
-          </Row>
-        )}
-        {editable && s.exercises.length > 0 && (
-          <Row style={{ marginBottom: S.sm }}>
-            <T muted style={{ fontSize: 12, marginRight: 4 }}>진행</T>
+            <View style={{ width: 8 }} />
             {(['manual', 'camera', 'tempo'] as RunMode[]).map((m) => (
               <Chip key={m} label={RUN_LABEL[m]} active={runMode === m} onPress={() => { setRunMode(m); setSetting(db, 'run_mode', m); }} />
             ))}
@@ -321,7 +317,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
             ) : <T muted style={{ fontSize: 13, marginTop: 4 }}>마지막 종목이에요</T>}
             {runMode !== 'manual' && (
               <Btn
-                label={runMode === 'camera' ? '📷 카메라로 시작' : '⏱ 박자로 시작'} style={{ marginTop: S.sm }}
+                label={runMode === 'camera' ? '📷 카메라로 시작' : '🔊 보이스코칭 시작'} style={{ marginTop: S.sm }}
                 onPress={() => { const ex = s.exercises.find((e) => e.id === cur.exId); if (ex) openLive(ex, runMode === 'tempo' ? 'tempo' : 'camera'); }}
               />
             )}
@@ -359,7 +355,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
                       {` · 휴식 ${fmtElapsed(restFor(rests[ex.id], restDefault))}`}
                       {best != null ? ` · e1RM ${best}kg` : ''}
                     </T>
-                    {(vol > 0 || prevVol > 0) && (
+                    {!cur && (vol > 0 || prevVol > 0) && (
                       <T muted style={{ fontSize: 12 }}>
                         볼륨 {Math.round(vol).toLocaleString()}kg{prevVol > 0 ? ` (${vol - prevVol >= 0 ? '+' : '−'}${Math.round(Math.abs(vol - prevVol)).toLocaleString()} 지난번 대비)` : ''}
                       </T>
@@ -380,8 +376,8 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
                   )}
                   {editable && (
                     <Row style={{ marginBottom: S.sm }}>
-                      <Btn label="📷 카메라로 세기" kind="ghost" small style={{ flex: 1 }} onPress={() => openLive(ex, 'camera')} />
-                      <Btn label="⏱ 박자로 세기" kind="ghost" small style={{ flex: 1 }} onPress={() => openLive(ex, 'tempo')} />
+                      {!cur && <Btn label="📷 카메라로 세기" kind="ghost" small style={{ flex: 1 }} onPress={() => openLive(ex, 'camera')} />}
+                      {!cur && <Btn label="🔊 보이스코칭" kind="ghost" small style={{ flex: 1 }} onPress={() => openLive(ex, 'tempo')} />}
                       {prevSets.length > 0 && (
                         <Btn label="불러오기" kind="ghost" small onPress={async () => {
                           const free = ex.sets.filter((x) => !x.done && x.set_type !== 'warmup');
@@ -489,14 +485,16 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
 
                   {showOpts && (
                     <View style={{ marginTop: S.md, paddingTop: S.md, borderTopWidth: 1, borderTopColor: C.line }}>
-                      <TextField
-                        defaultValue={ex.note ?? ''}
-                        placeholder="종목 메모"
-                        editable={editable}
-                        onEndEditing={(e) => setExerciseNote(db, ex.id, e.nativeEvent.text)}
-                      />
+                      {!cur && (
+                        <TextField
+                          defaultValue={ex.note ?? ''}
+                          placeholder="종목 메모"
+                          editable={editable}
+                          onEndEditing={(e) => setExerciseNote(db, ex.id, e.nativeEvent.text)}
+                        />
+                      )}
                       {editable && (
-                        <Row style={{ marginTop: S.md, flexWrap: 'wrap' }}>
+                        <Row style={{ marginTop: cur ? 0 : S.md, flexWrap: 'wrap' }}>
                           <Btn label="+ 준비 세트" kind="ghost" small onPress={async () => { await addSet(db, ex.id, 'warmup'); reload(); }} />
                           <Btn
                             label="연습 세트 추천" kind="ghost" small
@@ -529,6 +527,18 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
                 </View>
               )}
             </Card>
+            {cur && (
+              <Card>
+                <T muted style={{ marginBottom: 6 }}>종목 메모</T>
+                <TextField
+                  key={ex.id}
+                  defaultValue={ex.note ?? ''}
+                  placeholder="이 종목 메모"
+                  editable={editable}
+                  onEndEditing={(e) => setExerciseNote(db, ex.id, e.nativeEvent.text)}
+                />
+              </Card>
+            )}
             </View>
           );
         })}
@@ -687,7 +697,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
             {!rest.done && rest.kind === 'set' && <Btn label="이 시간 저장" kind="ghost" style={{ flex: 1 }} onPress={saveSetRest} />}
             {rest.kind === 'exercise' && rest.nextExId && runMode !== 'manual' && (
               <Btn
-                label={runMode === 'camera' ? '📷 카메라로 시작' : '⏱ 박자로 시작'} kind="ghost" style={{ flex: 1 }}
+                label={runMode === 'camera' ? '📷 카메라로 시작' : '🔊 보이스코칭 시작'} kind="ghost" style={{ flex: 1 }}
                 onPress={() => { const ex = s.exercises.find((e) => e.id === rest.nextExId); if (ex) { setRest(null); openLive(ex, runMode === 'tempo' ? 'tempo' : 'camera'); } }}
               />
             )}

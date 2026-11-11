@@ -102,7 +102,7 @@ export function RoutinePreview({ templateId, title, onClose, onStart }: { templa
           {(['manual', 'camera', 'tempo'] as RunMode[]).map((m) => <Chip key={m} label={RUN_LABEL[m]} active={runMode === m} onPress={() => setRun(m)} />)}
         </Row>
         <T muted style={{ fontSize: 12, marginBottom: S.sm }}>
-          {runMode === 'manual' ? '세트마다 직접 ✓ 체크해 기록해요.' : runMode === 'camera' ? '종목마다 카메라가 횟수를 세요. 카메라를 못 쓰면 직접 기록으로 바꿀 수 있어요.' : '정해 둔 박자로 앱이 횟수를 소리 내어 세요. 카메라 없이 따라 하면 돼요.'}
+          {runMode === 'manual' ? '세트마다 직접 ✓ 체크해 기록해요.' : runMode === 'camera' ? '종목마다 카메라가 횟수를 세요. 카메라를 못 쓰면 직접 기록으로 바꿀 수 있어요.' : '보이스코칭: 앱이 음성으로 횟수를 불러 줘요. 카메라 없이 따라 하면 돼요.'}
         </T>
 
         <Row style={{ marginBottom: S.sm }}>

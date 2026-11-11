@@ -30,7 +30,7 @@ export function adjustForCondition(sets: number, weight: number | null, cond: Co
 
 /** 진행 방식: 직접 기록 / 카메라로 횟수 세기 / 박자에 맞춰 센 횟수를 따라가기 */
 export type RunMode = 'manual' | 'camera' | 'tempo';
-export const RUN_LABEL: Record<RunMode, string> = { manual: '직접 기록', camera: '카메라', tempo: '박자' };
+export const RUN_LABEL: Record<RunMode, string> = { manual: '직접 기록', camera: '카메라', tempo: '보이스코칭' };
 export function sanitizeRunMode(v: string | null | undefined): RunMode {
   return v === 'camera' || v === 'tempo' ? v : 'manual';
 }
