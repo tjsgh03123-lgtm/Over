@@ -20,7 +20,7 @@ import { SetFlow } from '../src/domain/setFlow.ts';
 import { adjustForCondition, sanitizeRunMode } from '../src/domain/condition.ts';
 import { buildPickGroups, equipOf } from '../src/domain/exerciseList.ts';
 import { decodeOverride, encodeOverride, fmtDaysAgo, parseIds, partSummary, weekDays } from '../src/domain/homeCards.ts';
-import { CATALOG, matchProfile, partOf } from '../src/domain/exerciseCatalog.ts';
+import { ALL_ITEMS, CATALOG, matchProfile, partOf } from '../src/domain/exerciseCatalog.ts';
 import { barbellTotal, bestE1rm, estimateMinutes, monthDays, monthWeeks, partTotals, recommendNext, streakWeeks, volumeOf } from '../src/domain/workoutStats.ts';
 import { COARSE_OF, coarseOfExercise, EXERCISE_TABLE, lookupExercise } from '../src/domain/exerciseTable.ts';
 import { classifyFeatures, classifyPose, extractFeatures, verifyAgainst } from '../src/domain/patternClassify.ts';
@@ -1215,6 +1215,15 @@ test('마법사: 시간이 길수록 운동이 많아지고, 힘 세지기는 �
   const b = buildPlan({ goal: 'size', days: 3, gear: 'gym', minutes: 90 }).days[0].exercises.length;
   assert.ok(b > a);
 });
+test('기본 종목 목록: 이름이 겹치지 않고, 새로 넣은 종목이 이름 그대로 맞는다', () => {
+  const names = ALL_ITEMS.map((c) => c.name.replace(/\s+/g, ''));
+  assert.equal(new Set(names).size, names.length);
+  assert.equal(matchProfile('케이블 벤치프레스')?.name, '케이블 벤치프레스');
+  assert.equal(matchProfile('무릎 푸시업')?.focus, 'body');
+  assert.equal(matchProfile('덤벨 크로스 바디 루마니안 데드리프트')?.focus, 'hinge');
+});
+
+
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

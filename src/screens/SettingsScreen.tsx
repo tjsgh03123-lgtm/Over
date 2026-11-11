@@ -12,6 +12,10 @@ const STEPS = [1, 2.5, 5];
 const RESTS = [0, 60, 90, 120, 180];
 const EX_RESTS = [90, 120, 180, 240, 300];
 const GOALS = [8, 12, 16, 20];
+const PREPS = [0, 5, 10, 15, 20, 30];
+const EX_PREPS = [5, 10, 20, 30, 45, 60];
+const TEMPOS = [1.5, 2, 3, 4, 5];
+const IDLES = [3, 5, 7, 10];
 const BARS = [15, 20];
 const restLabel = (v: number) => (v === 0 ? '끄기' : v % 60 === 0 ? `${v / 60}분` : `${v}초`);
 
@@ -23,12 +27,18 @@ export function SettingsScreen() {
   const [exRest, setExRest] = useState(180);
   const [goal, setGoal] = useState(12);
   const [bar, setBar] = useState(20);
+  const [prep, setPrep] = useState(10);
+  const [exPrep, setExPrep] = useState(20);
+  const [tempo, setTempo] = useState(3);
+  const [idle, setIdle] = useState(5);
 
   useEffect(() => {
     getWeightStep(db).then(setStep);
     getRestDefault(db).then(setRest);
     getExerciseRest(db).then(setExRest);
     getSetting(db, 'month_goal').then((v) => setGoal(Number(v) > 0 ? Number(v) : 12));
+    const num = (k: string, d: number, set: (n: number) => void) => getSetting(db, k).then((v) => { const n = v == null ? NaN : Number(v); set(Number.isFinite(n) && n >= 0 ? n : d); });
+    num('prep_sec', 10, setPrep); num('ex_prep_sec', 20, setExPrep); num('tempo_sec', 3, setTempo); num('idle_end_sec', 5, setIdle);
     getSetting(db, 'bar_kg').then((v) => setBar(Number(v) > 0 ? Number(v) : 20));
   }, [db, version]);
 
@@ -69,6 +79,18 @@ export function SettingsScreen() {
           value={String(bar)}
           onChange={(k) => { setBar(Number(k)); setSetting(db, 'bar_kg', k); }}
         />
+      </Card>
+
+      <Card>
+        <H style={{ fontSize: 16, marginBottom: 4 }}>보이스코칭 · 카메라 시간</H>
+        <T muted style={{ fontSize: 12, marginBottom: S.sm }}>세트 준비 — 세트를 시작하기 전 카운트다운 (코칭·카메라 화면에서도 바꿀 수 있어요)</T>
+        <Segmented options={PREPS.map((v) => ({ key: String(v), label: v === 0 ? '없음' : `${v}초` }))} value={String(prep)} onChange={(k) => { setPrep(Number(k)); setSetting(db, 'prep_sec', k); }} />
+        <T muted style={{ fontSize: 12, marginTop: S.md, marginBottom: S.sm }}>종목 준비 — 다음 종목으로 넘어갈 때 준비 시간 (‘준비 끝’을 누르면 5초 뒤 시작)</T>
+        <Segmented options={EX_PREPS.map((v) => ({ key: String(v), label: `${v}초` }))} value={String(exPrep)} onChange={(k) => { setExPrep(Number(k)); setSetting(db, 'ex_prep_sec', k); }} />
+        <T muted style={{ fontSize: 12, marginTop: S.md, marginBottom: S.sm }}>박자 — 보이스코칭이 한 회를 세는 간격</T>
+        <Segmented options={TEMPOS.map((v) => ({ key: String(v), label: `${v}초` }))} value={String(tempo)} onChange={(k) => { setTempo(Number(k)); setSetting(db, 'tempo_sec', k); }} />
+        <T muted style={{ fontSize: 12, marginTop: S.md, marginBottom: S.sm }}>카메라 — 동작이 이만큼 멈추면 세트 끝 (센 횟수 그대로 기록)</T>
+        <Segmented options={IDLES.map((v) => ({ key: String(v), label: `${v}초` }))} value={String(idle)} onChange={(k) => { setIdle(Number(k)); setSetting(db, 'idle_end_sec', k); }} />
       </Card>
 
       <Card>

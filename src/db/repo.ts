@@ -706,6 +706,20 @@ export async function replaceSessionExercise(db: Db, seId: string, newExerciseId
   return true;
 }
 
+/** 운동 중 종목 순서를 한 칸 위(-1)/아래(+1)로 옮긴다. 옮길 수 없으면 false */
+export async function moveSessionExercise(db: Db, sessionId: string, seId: string, dir: -1 | 1): Promise<boolean> {
+  const rows = await db.all<{ id: string }>('SELECT id FROM workout_session_exercises WHERE session_id = ? ORDER BY position, rowid', [sessionId]);
+  const i = rows.findIndex((x) => x.id === seId);
+  const j = i + dir;
+  if (i < 0 || j < 0 || j >= rows.length) return false;
+  const order = rows.map((x) => x.id);
+  [order[i], order[j]] = [order[j], order[i]];
+  await db.transaction(async () => {
+    for (let k = 0; k < order.length; k++) await db.run('UPDATE workout_session_exercises SET position = ? WHERE id = ?', [k, order[k]]);
+  });
+  return true;
+}
+
 export async function removeSessionExercise(db: Db, seId: string): Promise<void> {
   await db.run('DELETE FROM workout_session_exercises WHERE id = ?', [seId]);
 }

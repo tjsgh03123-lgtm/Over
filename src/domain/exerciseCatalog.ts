@@ -91,7 +91,62 @@ export const EXTRA_CATALOG: CatalogItem[] = [
   { name: '크런치', part: '복근', equip: '맨몸', focus: 'hinge', aliases: ['크런치', '싯업'], tip: SIDE },
   { name: '케이블 크런치', part: '복근', equip: '케이블', focus: 'hinge', aliases: ['케이블크런치'], tip: SIDE },
 ];
-export const ALL_ITEMS: CatalogItem[] = [...CATALOG, ...EXTRA_CATALOG];
+const BENCH = '벤치 옆에서 상체와 팔이 보이게 두세요.';
+const mk = (name: string, part: Part, equip: Equip, focus: Focus, tip: string): CatalogItem => ({ name, part, equip, focus, aliases: [], tip });
+/** 카메라 인식이 되는 종목을 더 늘린 목록 (이름이 정확히 같을 때만 맞춘다. 케틀벨은 덤벨과 같은 무게 방식) */
+export const MORE_CATALOG: CatalogItem[] = [
+  // 가슴 — 팔 움직임으로 세기
+  mk('덤벨 디클라인 벤치프레스', '가슴', '덤벨', 'arm', BENCH),
+  mk('덤벨 한팔 체스트 프레스', '가슴', '덤벨', 'arm', BENCH),
+  mk('바벨 하이 인클라인 벤치프레스', '가슴', '바벨', 'arm', BENCH),
+  mk('스미스 머신 인클라인 벤치프레스', '가슴', '머신', 'arm', BENCH),
+  mk('케이블 벤치프레스', '가슴', '케이블', 'arm', BENCH),
+  mk('케이블 인클라인 벤치프레스', '가슴', '케이블', 'arm', BENCH),
+  mk('케이블 디클라인 벤치프레스', '가슴', '케이블', 'arm', BENCH),
+  mk('케이블 스탠딩 한팔 체스트 프레스', '가슴', '케이블', 'arm', FRONT),
+  mk('케틀벨 벤치프레스', '가슴', '덤벨', 'arm', BENCH),
+  mk('케틀벨 인클라인 벤치프레스', '가슴', '덤벨', 'arm', BENCH),
+  // 가슴 — 팔 벌리고 모으기
+  mk('덤벨 인클라인 체스트 플라이', '가슴', '덤벨', 'raise', '머리 쪽 정면에서 양팔이 보이게 두세요.'),
+  mk('덤벨 디클라인 체스트 플라이', '가슴', '덤벨', 'raise', '머리 쪽 정면에서 양팔이 보이게 두세요.'),
+  mk('케이블 벤치 체스트 플라이', '가슴', '케이블', 'raise', FRONT),
+  mk('케이블 펙 플라이', '가슴', '케이블', 'raise', FRONT),
+  // 가슴 — 몸 전체
+  mk('무릎 푸시업', '가슴', '맨몸', 'body', SIDE),
+  mk('인클라인 푸시업', '가슴', '맨몸', 'body', SIDE),
+  mk('디클라인 푸시업', '가슴', '맨몸', 'body', SIDE),
+  mk('평행봉 딥스', '가슴', '맨몸', 'body', SIDE),
+  // 하체 — 스쿼트·런지
+  mk('덤벨 고블릿 리버스 런지', '하체', '덤벨', 'leg', SIDE),
+  mk('덤벨 고블릿 포워드 런지', '하체', '덤벨', 'leg', SIDE),
+  mk('덤벨 얼터네이팅 포워드 런지', '하체', '덤벨', 'leg', SIDE),
+  mk('덤벨 고블릿 스플릿 스쿼트', '하체', '덤벨', 'leg', SIDE),
+  mk('덤벨 스모 스쿼트', '하체', '덤벨', 'leg', FRONT),
+  mk('덤벨 고블릿 얼터네이팅 커시 런지', '하체', '덤벨', 'leg', SIDE),
+  mk('케틀벨 얼터네이팅 커시 런지', '하체', '덤벨', 'leg', SIDE),
+  mk('케틀벨 어시스티드 불가리안 스플릿 스쿼트', '하체', '덤벨', 'leg', SIDE),
+  mk('맨몸 리버스 런지', '하체', '맨몸', 'leg', SIDE),
+  mk('맨몸 얼터네이팅 리버스 런지', '하체', '맨몸', 'leg', SIDE),
+  mk('맨몸 얼터네이팅 래터럴 런지', '하체', '맨몸', 'leg', FRONT),
+  mk('맨몸 박스 스쿼트', '하체', '맨몸', 'leg', SIDE),
+  mk('포워드 런지', '하체', '맨몸', 'leg', SIDE),
+  mk('플레이트 포워드 런지', '하체', '바벨', 'leg', SIDE),
+  mk('바벨 스플릿 스쿼트', '하체', '바벨', 'leg', SIDE),
+  mk('바벨 스텝업 니 드라이브', '하체', '바벨', 'leg', SIDE),
+  mk('바벨 프론트 랙 스텝업 니 드라이브', '하체', '바벨', 'leg', SIDE),
+  mk('머신 플레이트 로디드 레그 익스텐션', '하체', '머신', 'leg', SIDE),
+  // 하체·둔근 — 엉덩이 접기
+  mk('덤벨 크로스 바디 루마니안 데드리프트', '하체', '덤벨', 'hinge', SIDE),
+  mk('케틀벨 루마니안 데드리프트', '하체', '덤벨', 'hinge', SIDE),
+  mk('바벨 스티프 레그 데드리프트', '하체', '바벨', 'hinge', SIDE),
+  mk('케틀벨 스모 데드리프트', '하체', '덤벨', 'hinge', SIDE),
+  mk('스미스 머신 스모 루마니안 데드리프트', '하체', '머신', 'hinge', SIDE),
+  mk('덤벨 발 높인 글루트 브릿지', '하체', '덤벨', 'hinge', SIDE),
+  mk('덤벨 힐 엘리베이티드 힙 쓰러스트', '하체', '덤벨', 'hinge', SIDE),
+  mk('덤벨 피겨 포 발뒤꿈치 높인 힙 쓰러스트', '하체', '덤벨', 'hinge', SIDE),
+  mk('케틀벨 힙 쓰러스트', '하체', '덤벨', 'hinge', SIDE),
+];
+export const ALL_ITEMS: CatalogItem[] = [...CATALOG, ...EXTRA_CATALOG, ...MORE_CATALOG];
 
 /** 부위 이름: 종목에 지정된 부위가 있으면 그것(내가 바꾼 값 포함), 없으면 이름이 맞는 기본 종목의 부위, 그것도 없으면 '기타' */
 export function partOf(name: string, category?: string | null): string {

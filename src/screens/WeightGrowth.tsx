@@ -197,6 +197,9 @@ function Detail({ ex, flat, today, onBack }: { ex: TrackedExercise; flat: FlatSe
   const prev = rows.length > 1 ? rows[rows.length - 2].value : null;
   const delta = (a: number | null, b: number | null): Change | null =>
     a == null || b == null ? null : { kg: Math.round((a - b) * 100) / 100, pct: b === 0 ? null : Math.round(((a - b) / b) * 10000) / 100 };
+  const volPts = useMemo(() => dailyPoints(filterSets(flat, { exerciseId: ex.id, range }), mode), [flat, ex.id, mode, range]);
+  const lastVol = volPts.length ? Math.round(volPts[volPts.length - 1].volume) : null;
+  const prevVol = volPts.length > 1 ? Math.round(volPts[volPts.length - 2].volume) : null;
   const best = rows.reduce<number | null>((b, r) => (b == null || (mode === 'assisted' ? r.value < b : r.value > b) ? r.value : b), null);
 
   return (
@@ -253,6 +256,9 @@ function Detail({ ex, flat, today, onBack }: { ex: TrackedExercise; flat: FlatSe
           <Kv k={tab === 'rm' ? '최고 1RM' : '기간 내 최고'} v={best != null ? `${best}kg` : '—'} />
           {tab === 'rm' && rmAll.length > 0 && <Kv k="전체 기간 최고 1RM" v={`${rmAll.reduce((b, p) => Math.max(b, p.best), 0)}kg`} />}
           <Kv k="직전 대비" v={fmtChange(delta(last, prev))} color={changeColor(delta(last, prev), mode)} />
+          {tab === 'normal' && lastVol != null && lastVol > 0 && (
+            <Kv k="최근 볼륨" v={`${lastVol.toLocaleString()}kg${prevVol != null && prevVol > 0 ? ` (지난번 대비 ${lastVol - prevVol >= 0 ? '+' : '−'}${Math.abs(lastVol - prevVol).toLocaleString()}kg)` : ''}`} />
+          )}
           <Kv k="처음 대비" v={fmtChange(rows.length > 1 ? delta(last, first) : null)} color={changeColor(rows.length > 1 ? delta(last, first) : null, mode)} />
           {mode === 'assisted' && <T muted style={{ marginTop: 6, fontSize: 12 }}>보조 중량은 낮을수록 좋은 기록입니다.</T>}
         </Card>

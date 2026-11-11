@@ -470,7 +470,7 @@ function LiveBody({ onClose, onUse, defaults, leave }: { leave: React.MutableRef
                 <Stepper label="쉬는 시간" value={cfg.restSec} unit="초" step={15} min={5} max={600} onChange={(v) => setCfg((c) => ({ ...c, restSec: v }))} />
                 <Stepper label="준비 시간 (0이면 없음)" value={cfg.prepSec ?? 0} unit="초" step={5} min={0} max={30} onChange={(v) => { setCfg((c) => ({ ...c, prepSec: v })); setSetting(db, 'prep_sec', String(v)); }} />
                 {source === 'camera' && (
-                  <Stepper label="동작이 멈추면 세트 끝 (초)" value={cfg.idleEndSec ?? 5} unit="초" step={1} min={2} max={20} onChange={(v) => setCfg((c) => ({ ...c, idleEndSec: v }))} />
+                  <Stepper label="동작이 멈추면 세트 끝 (초)" value={cfg.idleEndSec ?? 5} unit="초" step={1} min={2} max={20} onChange={(v) => { setCfg((c) => ({ ...c, idleEndSec: v })); setSetting(db, 'idle_end_sec', String(v)); }} />
                 )}
                 {source === 'tempo' && (
                   <Stepper label="음성 간격 (한 회당)" value={tempoSec} unit="초" step={0.5} min={1} max={10} onChange={(v) => { setTempoSec(v); setSetting(db, 'tempo_sec', String(v)); }} />

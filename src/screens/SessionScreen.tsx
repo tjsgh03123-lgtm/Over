@@ -3,7 +3,7 @@ import { Alert, Modal, Pressable, ScrollView, Switch, Text, Vibration, View } fr
 import { useApp } from '../app/context.tsx';
 import {
   addCardio, addSessionExercise, addSet, addWarmupSets, deleteSet, deleteSession, finishSession, getExerciseRest, getLastSets, getRestDefault, getSessionRests, getSetting, setSetting, listDoneDates, setExerciseRestFor, setRestDefault, getWeightStep, lastPerformance, loadCategoryMap,
-  loadSession, removeSessionExercise, replaceSessionExercise, reopenSession, saveSessionAsDay, setExerciseNote, setExerciseRest,
+  loadSession, moveSessionExercise, removeSessionExercise, replaceSessionExercise, reopenSession, saveSessionAsDay, setExerciseNote, setExerciseRest,
   setSessionExerciseMode, setSessionNote, updateSet, type SessionExRow, type SessionFull, type SetRow,
 } from '../db/repo.ts';
 import { matchProfile, partOf, WEIGHT_LABEL, type Equip } from '../domain/exerciseCatalog.ts';
@@ -64,6 +64,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
   const [tempoSec, setTempoSec] = useState(3);
   const [voice, setVoice] = useState(false); // 보이스코칭 켬/끔 (직접 기록·카메라 공통)
   const [exPrepSec, setExPrepSec] = useState(20); // 새 종목 시작 전 준비 시간
+  const [idleEndSec, setIdleEndSec] = useState(5);
   const [coach, setCoach] = useState<Coach>(null); // 보이스코칭 진행(직접 기록)
   const autoRun = useRef(false); // 직접 기록 보이스코칭이 세트를 이어서 자동 진행 중
   const camAuto = useRef(false); // 카메라가 종목을 이어서 자동 진행 중
@@ -116,6 +117,8 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
       const rawPrep = await getSetting(db, 'prep_sec');
       const ps = rawPrep == null ? 10 : Number(rawPrep);
       setPrepSec(Number.isFinite(ps) && ps >= 0 ? ps : 10);
+      const ie = Number(await getSetting(db, 'idle_end_sec'));
+      setIdleEndSec(Number.isFinite(ie) && ie >= 2 ? ie : 5);
       const ts = Number(await getSetting(db, 'tempo_sec'));
       setTempoSec(Number.isFinite(ts) && ts >= 1 ? ts : 3);
       if (full.template_id) {
@@ -502,8 +505,6 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
           const last = lasts[ex.id] ?? null;
           const equip: Equip | null = ex.weight_mode === 'bodyweight' ? '맨몸' : (matchProfile(ex.exercise_name)?.equip ?? null);
           const prevSets = lastSets[ex.id] ?? [];
-          const prevVol = prevSets.reduce((n, x) => n + (x.weight && x.reps ? x.weight * x.reps : 0), 0);
-          const vol = volumeOf(ex.sets);
           const best = bestE1rm(ex.sets) ?? (last ? e1rm(last.weight, last.reps) : null);
           const idxAll = s.exercises.findIndex((e) => e.id === ex.id);
           const prevEx = s.exercises[idxAll - 1];
@@ -523,11 +524,6 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
                       {` · 휴식 ${fmtElapsed(restFor(rests[ex.id], restDefault))}`}
                       {best != null ? ` · e1RM ${best}kg` : ''}
                     </T>
-                    {!cur && (vol > 0 || prevVol > 0) && (
-                      <T muted style={{ fontSize: 12 }}>
-                        볼륨 {Math.round(vol).toLocaleString()}kg{prevVol > 0 ? ` (${vol - prevVol >= 0 ? '+' : '−'}${Math.round(Math.abs(vol - prevVol)).toLocaleString()} 지난번 대비)` : ''}
-                      </T>
-                    )}
                   </View>
                   {editable && (
                     <Pressable hitSlop={10} style={{ paddingHorizontal: 10 }} onPress={() => Alert.alert(ex.exercise_name, undefined, [
@@ -536,6 +532,8 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
                         if (ex.sets.some((x) => x.done)) return Alert.alert('바꿀 수 없어요', '이미 완료한 세트가 있는 종목은 바꿀 수 없어요.');
                         setSwapFor(ex.id); setPicker(true);
                       } },
+                      ...(idxAll > 0 ? [{ text: '위로 이동', onPress: async () => { await moveSessionExercise(db, s.id, ex.id, -1); bump(); reload(); } }] : []),
+                      ...(idxAll < s.exercises.length - 1 ? [{ text: '아래로 이동', onPress: async () => { await moveSessionExercise(db, s.id, ex.id, 1); bump(); reload(); } }] : []),
                       { text: '종목 삭제', style: 'destructive', onPress: () => Alert.alert('종목 삭제', `${ex.exercise_name} 기록을 이 운동에서 삭제할까요?`, [
                         { text: '취소' }, { text: '삭제', style: 'destructive', onPress: async () => { await removeSessionExercise(db, ex.id); bump(); reload(); } },
                       ]) },
@@ -904,7 +902,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
       <SummaryModal data={summary} onClose={() => setSummary(null)} />
       <LiveCountModal
         visible={!!live}
-                defaults={live ? { targetReps: live.target, totalSets: live.sets, restSec: live.restSec, focus: live.focus, tip: live.tip, source: live.source, exerciseName: live.name, prepSec, tempoSec, sound: voice } : undefined}
+                defaults={live ? { targetReps: live.target, totalSets: live.sets, restSec: live.restSec, focus: live.focus, tip: live.tip, source: live.source, exerciseName: live.name, prepSec, tempoSec, sound: voice, idleEndSec } : undefined}
         onClose={() => setLive(null)}
         onUse={(counts) => { const l = live; setLive(null); if (l) applyLiveCount(l.exId, counts); }}
       />
