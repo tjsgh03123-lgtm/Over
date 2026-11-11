@@ -5,7 +5,6 @@ import { useApp } from '../app/context.tsx';
 import { applyImportedRoutine } from '../db/repo.ts';
 import { AI_IMPORT_PROMPT } from '../domain/importSchema.ts';
 import { inferMode, type RoutineMode } from '../domain/routine.ts';
-import { pickTextFile } from '../services/files.ts';
 import { parseRoutine, type ParsedDay, type ParseResult } from '../domain/parser.ts';
 import { Btn, Card, Chip, Header, NumField, Row, T, TextField } from '../ui/components.tsx';
 import { C, S } from '../ui/theme.ts';
@@ -64,10 +63,6 @@ export function ImportScreen() {
           <T muted style={{ fontSize: 12, marginVertical: 6 }}>JSON(권장)·Markdown 표/목록·일반 텍스트를 읽어요. 글이 길어도 입력창을 열 필요가 없어요.</T>
           <Row>
             <Btn label="붙여넣어 분석" style={{ flex: 1 }} onPress={async () => { const t = await Clipboard.getStringAsync(); if (!t.trim()) return Alert.alert('복사한 글이 없어요', 'AI가 만든 루틴을 먼저 복사해 주세요.'); setRaw(t); analyze(t); setShowRaw(false); }} />
-            <Btn
-              label="파일 불러오기" kind="ghost"
-              onPress={async () => { try { const t = await pickTextFile(); if (t != null) { setRaw(t); analyze(t); setShowRaw(false); } } catch (e) { Alert.alert('오류', (e as Error).message); } }}
-            />
           </Row>
           {raw.length > 0 && !showRaw && <T muted style={{ fontSize: 12, marginTop: S.sm }}>불러온 글 {raw.length.toLocaleString()}자</T>}
           <Row style={{ marginTop: S.sm }}>
