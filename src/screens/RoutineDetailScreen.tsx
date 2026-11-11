@@ -195,7 +195,7 @@ export function RoutineDetailScreen({ routineId }: { routineId: string }) {
       return (
         <>
           <T muted style={{ fontSize: 12, marginBottom: S.sm }}>
-            칸을 누르면 그 날의 종목을 추가하고 종목마다 세트·횟수·무게·휴식을 정할 수 있어요. 오른쪽 ≡ 손잡이를 길게 누른 채 끌면 칸의 순서를 바꿔요.
+            오른쪽 ≡ 손잡이를 길게 누른 채 끌면 칸의 순서를 바꿔요.
           </T>
           {unplaced.length > 0 && (
             <Card>
