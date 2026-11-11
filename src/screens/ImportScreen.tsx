@@ -7,7 +7,7 @@ import { AI_IMPORT_PROMPT } from '../domain/importSchema.ts';
 import { inferMode, type RoutineMode } from '../domain/routine.ts';
 import { pickTextFile, shareTextFile } from '../services/files.ts';
 import { parseRoutine, type ParsedDay, type ParseResult } from '../domain/parser.ts';
-import { Btn, Card, Chip, Header, NumInput, Row, T, TextField } from '../ui/components.tsx';
+import { Btn, Card, Chip, Header, NumField, Row, T, TextField } from '../ui/components.tsx';
 import { C, S } from '../ui/theme.ts';
 
 const WD = ['일', '월', '화', '수', '목', '금', '토'];
@@ -127,13 +127,13 @@ export function ImportScreen() {
                         onPress={() => patchDay(i, { exercises: d.exercises.filter((_, m) => m !== j) })}
                       />
                     </Row>
-                    <Row style={{ marginTop: 6, flexWrap: 'wrap' }}>
-                      <T muted>세트</T><NumInput value={e.sets} decimal={false} width={52} onCommit={(v) => patchEx(i, j, { sets: v ?? 3 })} />
-                      <T muted>횟수</T><NumInput value={e.reps} decimal={false} width={52} onCommit={(v) => patchEx(i, j, { reps: v })} />
-                      <T muted>kg</T><NumInput value={e.weight} width={64} onCommit={(v) => patchEx(i, j, { weight: v })} />
-                      <T muted>휴식(초)</T><NumInput value={e.restSec} decimal={false} width={60} onCommit={(v) => patchEx(i, j, { restSec: v })} />
+                    <Row style={{ marginTop: 6, alignItems: 'stretch' }}>
+                      <NumField label="세트" value={e.sets} decimal={false} placeholder="3" onCommit={(v) => patchEx(i, j, { sets: v ?? 3 })} />
+                      <NumField label="횟수" value={e.reps} decimal={false} placeholder="없음" onCommit={(v) => patchEx(i, j, { reps: v })} />
+                      <NumField label="무게" unit="kg" value={e.weight} placeholder="없음" onCommit={(v) => patchEx(i, j, { weight: v })} />
+                      <NumField label="휴식" unit="초" value={e.restSec} decimal={false} placeholder="기본" onCommit={(v) => patchEx(i, j, { restSec: v })} />
                     </Row>
-                    {e.repsMax != null && <T muted style={{ fontSize: 11, marginTop: 4 }}>목표 범위 {e.reps}-{e.repsMax}회 (저장 시 {e.reps}회로 기록)</T>}
+                    {e.repsMax != null && <T muted style={{ fontSize: 11, marginTop: 4 }}>원문은 {e.reps}-{e.repsMax}회였고, 앱에는 앞 숫자({e.reps}회)만 저장돼요.</T>}
                   </View>
                 ))}
               </Card>

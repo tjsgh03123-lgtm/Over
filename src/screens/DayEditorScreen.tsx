@@ -4,7 +4,7 @@ import { useApp } from '../app/context.tsx';
 import { getDayDetail, upsertDay, type TemplateExerciseInput } from '../db/repo.ts';
 import type { DayKind } from '../domain/routine.ts';
 import { moveItem } from '../domain/reorder.ts';
-import { Btn, Card, Chip, Header, NumInput, Row, T, TextField } from '../ui/components.tsx';
+import { Btn, Card, Chip, Header, NumField, NumInput, Row, T, TextField } from '../ui/components.tsx';
 import { ExercisePicker } from '../ui/ExercisePicker.tsx';
 import { ReorderList } from '../ui/ReorderList.tsx';
 import { C, S } from '../ui/theme.ts';
@@ -115,11 +115,11 @@ export function DayEditorScreen({ routineId, dayId, slot }: { routineId: string;
                       />
                     </Row>
                   )}
-                  <Row style={{ marginTop: 6, flexWrap: 'wrap' }}>
-                    <T muted>세트</T><NumInput value={e.targetSets ?? 3} decimal={false} width={52} onCommit={(v) => patchEx(i, { targetSets: Math.max(1, v ?? 3) })} />
-                    <T muted>횟수</T><NumInput value={e.targetReps ?? null} decimal={false} width={52} onCommit={(v) => patchEx(i, { targetReps: v })} />
-                    <T muted>kg</T><NumInput value={e.targetWeight ?? null} width={64} onCommit={(v) => patchEx(i, { targetWeight: v })} />
-                    <T muted>휴식(초)</T><NumInput value={e.restSec ?? null} decimal={false} width={60} placeholder="기본" onCommit={(v) => patchEx(i, { restSec: v })} />
+                  <Row style={{ marginTop: 6, alignItems: 'stretch' }}>
+                    <NumField label="세트" value={e.targetSets ?? 3} decimal={false} placeholder="3" onCommit={(v) => patchEx(i, { targetSets: Math.max(1, v ?? 3) })} />
+                    <NumField label="횟수" value={e.targetReps ?? null} decimal={false} placeholder="없음" onCommit={(v) => patchEx(i, { targetReps: v })} />
+                    <NumField label="무게" unit="kg" value={e.targetWeight ?? null} placeholder="없음" onCommit={(v) => patchEx(i, { targetWeight: v })} />
+                    <NumField label="휴식" unit="초" value={e.restSec ?? null} decimal={false} placeholder="기본" onCommit={(v) => patchEx(i, { restSec: v })} />
                   </Row>
                 </Card>
               )}

@@ -88,6 +88,18 @@ export function NumInput({
   );
 }
 
+/** 항목 이름을 입력칸 위에 두는 숫자칸: 한 줄에 여러 칸을 놓아도 글자가 줄바꿈·잘림 없이 항목별로 또렷하게 보인다 */
+export function NumField({
+  label, value, onCommit, placeholder, decimal = true, unit,
+}: { label: string; value: number | null; onCommit: (v: number | null) => void; placeholder?: string; decimal?: boolean; unit?: string }) {
+  return (
+    <View style={{ flex: 1, minWidth: 0, padding: 8, borderRadius: 10, borderWidth: 1, borderColor: C.line, backgroundColor: C.card2 }}>
+      <Text numberOfLines={1} style={{ color: C.muted, fontSize: 12, fontWeight: '600', marginBottom: 4 }}>{label}{unit ? ` (${unit})` : ''}</Text>
+      <NumInput value={value} onCommit={onCommit} placeholder={placeholder} decimal={decimal} style={{ width: '100%', backgroundColor: C.card, textAlign: 'center' }} />
+    </View>
+  );
+}
+
 export function parseNum(s: string): number | null {
   if (!s.trim()) return null;
   const n = Number(s);
