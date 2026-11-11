@@ -13,20 +13,22 @@ import { SetSheet } from '../ui/SetSheet.tsx';
 import { SummaryModal, type SummaryData } from '../ui/SummaryModal.tsx';
 import { currentOf, restAfter, type GEx } from '../domain/guided.ts';
 import type { Focus as LiveFocus } from '../domain/liveCount.ts';
-import { speakText } from '../services/speak.ts';
+import { speakCount, speakText, stopSpeaking } from '../services/speak.ts';
 import { fmtClock, fmtDuration, fmtElapsed, restFor, suggestFor } from '../domain/format.ts';
 import { LiveCountModal, type CountSource } from '../ui/LiveCountModal.tsx';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { RUN_LABEL, sanitizeRunMode, type RunMode } from '../domain/condition.ts';
+import { RUN_LABEL, type RunMode } from '../domain/condition.ts';
 import { countWord } from '../domain/liveCount.ts';
 import { Btn, Card, Chip, Header, NumInput, Row, T, TextField } from '../ui/components.tsx';
 import { ExercisePicker } from '../ui/ExercisePicker.tsx';
 import { RestSheet } from '../ui/RestSheet.tsx';
+import { CoachSheet } from '../ui/CoachSheet.tsx';
 import { C, S } from '../ui/theme.ts';
 import { useElapsed } from '../ui/useElapsed.ts';
 
 type Last = { weight: number | null; reps: number | null };
 type Focus = { setId: string; field: 'weight' | 'reps' } | null;
+type Coach = { exId: string; setId: string; phase: 'prep' | 'count'; fresh: boolean; endAt: number; total: number; count: number; target: number; nextAt: number } | null;
 type Rest = { endAt: number; total: number; done: boolean; kind: 'set' | 'exercise'; exId?: string; next?: string; nextTip?: string; nextExId?: string } | null;
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -60,6 +62,12 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
   const [runMode, setRunMode] = useState<RunMode>('manual'); // 진행 방식: 직접 기록 / 카메라 / 보이스코칭
   const [prepSec, setPrepSec] = useState(10);
   const [tempoSec, setTempoSec] = useState(3);
+  const [voice, setVoice] = useState(false); // 보이스코칭 켬/끔 (직접 기록·카메라 공통)
+  const [exPrepSec, setExPrepSec] = useState(20); // 새 종목 시작 전 준비 시간
+  const [coach, setCoach] = useState<Coach>(null); // 보이스코칭 진행(직접 기록)
+  const autoRun = useRef(false); // 직접 기록 보이스코칭이 세트를 이어서 자동 진행 중
+  const camAuto = useRef(false); // 카메라가 종목을 이어서 자동 진행 중
+  const coachTick = useRef(-1);
   const [restMini, setRestMini] = useState(false); // 휴식 화면을 작게(아래 줄) 보기
   const insets = useSafeAreaInsets();
 
@@ -99,7 +107,12 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
       setRests(await getSessionRests(db, sessionId));
       setRestDefault(await getRestDefault(db));
       setExRest(await getExerciseRest(db));
-      setRunMode(sanitizeRunMode(await getSetting(db, 'run_mode')));
+      const rm = await getSetting(db, 'run_mode');
+      const vc = await getSetting(db, 'voice_coach');
+      setRunMode(rm === 'camera' ? 'camera' : 'manual');
+      setVoice(vc != null ? vc === '1' : rm === 'tempo'); // 예전 '보이스코칭' 진행 방식은 스위치 켬으로 옮긴다
+      const xp = await getSetting(db, 'ex_prep_sec');
+      setExPrepSec(xp != null && Number.isFinite(Number(xp)) && Number(xp) >= 0 ? Number(xp) : 20);
       const rawPrep = await getSetting(db, 'prep_sec');
       const ps = rawPrep == null ? 10 : Number(rawPrep);
       setPrepSec(Number.isFinite(ps) && ps >= 0 ? ps : 10);
@@ -142,6 +155,42 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
     return () => clearTimeout(t);
   }, [rest?.done, rest?.endAt]);
 
+  // 보이스코칭 시계: 준비 카운트다운 → 박자마다 횟수 (훅 순서를 지키려고 s가 없어도 일단 등록)
+  useEffect(() => {
+    if (!coach) return;
+    const id = setInterval(() => setNow(Date.now()), 200);
+    return () => clearInterval(id);
+  }, [!!coach]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!coach || !s) return;
+    if (coach.phase === 'prep') {
+      const left = Math.max(0, Math.ceil((coach.endAt - now) / 1000));
+      if (left === 0) { setCoach({ ...coach, phase: 'count', count: 0, nextAt: now + tempoSec * 1000 }); speakText('시작'); return; }
+      if (left <= 3 && left !== coachTick.current) { coachTick.current = left; speakText(countWord(left)); }
+    } else if (now >= coach.nextAt) {
+      const n = coach.count + 1;
+      speakCount(n);
+      if (n >= coach.target) { finishCoach(n); return; }
+      setCoach({ ...coach, count: n, nextAt: coach.nextAt + tempoSec * 1000 });
+    }
+  }, [now]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 휴식이 끝나면 다음 준비/세트로 자동 이어 간다
+  useEffect(() => {
+    if (!rest?.done || !s) return;
+    if (autoRun.current && voice && runMode === 'manual') {
+      const r = rest;
+      setRest(null);
+      const nx = nextUndone(r.kind === 'exercise' ? r.nextExId : r.exId);
+      if (nx) startCoach(nx.ex, nx.row); else autoRun.current = false;
+    } else if (camAuto.current && runMode === 'camera') {
+      camAuto.current = false;
+      const r = rest;
+      setRest(null);
+      const nx = r.nextExId ? s.exercises.find((e) => e.id === r.nextExId) : undefined;
+      if (nx) openLive(nx, 'camera');
+    }
+  }, [rest?.done]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (!s) return <View style={{ flex: 1, backgroundColor: C.bg }}><Header title="불러오는 중" onBack={nav.close} /></View>;
 
   const editable = s.status === 'active';
@@ -159,7 +208,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
   const targetIdx = targetEx ? targetEx.sets.findIndex((x) => !x.done) : -1;
   const nameOf = (id: string) => s.exercises.find((e) => e.id === id)?.exercise_name ?? '';
 
-  const openLive = (ex: SessionExRow, source: CountSource = runMode === 'tempo' ? 'tempo' : 'camera') => setLive({
+  const openLive = (ex: SessionExRow, source: CountSource = 'camera') => setLive({
     source,
     exId: ex.id,
     target: ex.sets.find((x) => x.set_type !== 'warmup' && x.reps)?.reps ?? lasts[ex.id]?.reps ?? 10,
@@ -171,9 +220,9 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
   });
 
   /** 세트 ✓: 이미 완료면 되돌리고, 아니면 완료로 기록하며 휴식 카운트다운을 시작한다 */
-  const completeSet = (ex: SessionExRow, row: SetRow, sugW: number | null, sugR: number | null) => {
+  const completeSet = (ex: SessionExRow, row: SetRow, sugW: number | null, sugR: number | null, repsOverride?: number): boolean => {
     setFocus(null);
-    if (row.done) return patchSet(ex, row, { done: false });
+    if (row.done) { patchSet(ex, row, { done: false }); return false; }
     // 세트를 끝내면 휴식 카운트다운 시작 (준비 세트·마지막 세트는 제외, 0이면 끔)
     const allOthersDone = allSets.every((x) => x.id === row.id || x.done);
     let sec = row.set_type === 'warmup' || allOthersDone ? 0 : restFor(rests[ex.id], restDefault);
@@ -185,6 +234,10 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
       sec = rk === 'exercise' ? exRest : rk === 'set' ? restFor(rests[ex.id], restDefault) : 0;
       if (rk === 'exercise') kind = 'exercise';
       nextExId = currentOf(upd, deferred, skipped)?.exId;
+    } else if (autoRun.current && row.set_type !== 'warmup' && !ex.sets.some((x) => x.id !== row.id && !x.done && x.set_type !== 'warmup')) {
+      // 보이스코칭 자동 진행: 이 종목의 마지막 본 세트면 종목 간 휴식 → 다음 종목
+      const nx = s.exercises.find((e) => e.id !== ex.id && e.sets.some((x) => !x.done));
+      if (nx) { kind = 'exercise'; sec = exRest; nextExId = nx.id; }
     }
     if (sec > 0) {
       const t = Date.now(); setNow(t); setRestMini(false);
@@ -196,8 +249,72 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
     patchSet(ex, row, {
       done: true,
       ...(row.weight == null && sugW != null ? { weight: sugW } : {}),
-      ...(row.reps == null && sugR != null ? { reps: sugR } : {}),
+      ...(repsOverride != null ? { reps: repsOverride } : row.reps == null && sugR != null ? { reps: sugR } : {}),
     });
+    return sec > 0;
+  };
+
+  // ───── 보이스코칭(직접 기록): 준비 → 박자에 맞춰 횟수 → 세트 자동 체크 → 휴식 → 준비 → 다음 세트 ─────
+  const setInfo = (ex: SessionExRow, row: SetRow) => {
+    const idx = ex.sets.findIndex((x) => x.id === row.id);
+    const lp = lasts[ex.id] ?? null;
+    const sugW = suggestFor(ex.sets, idx, (x) => x.weight, lp?.weight ?? null);
+    const sugR = suggestFor(ex.sets, idx, (x) => x.reps, lp?.reps ?? null);
+    return { sugW, sugR, target: row.reps ?? sugR ?? 10, weight: row.weight ?? sugW };
+  };
+  const nextUndone = (preferExId?: string, exceptSetId?: string): { ex: SessionExRow; row: SetRow } | null => {
+    const first = preferExId ? s.exercises.find((e) => e.id === preferExId) : undefined;
+    for (const e of [...(first ? [first] : []), ...s.exercises]) {
+      const r = e.sets.find((x) => !x.done && x.id !== exceptSetId);
+      if (r) return { ex: e, row: r };
+    }
+    return null;
+  };
+  const startCoach = (ex: SessionExRow, row: SetRow, justDoneExId?: string) => {
+    const info = setInfo(ex, row);
+    const fresh = ex.sets.every((x) => !x.done) && ex.id !== justDoneExId;
+    const secs = fresh ? exPrepSec : prepSec;
+    const t = Date.now();
+    setNow(t); setFocus(null); setRest(null); setRestMini(false);
+    autoRun.current = true;
+    coachTick.current = -1;
+    setCoach({ exId: ex.id, setId: row.id, phase: secs > 0 ? 'prep' : 'count', fresh, endAt: t + secs * 1000, total: secs, count: 0, target: info.target, nextAt: t + tempoSec * 1000 });
+    speakText(secs > 0 ? (fresh ? `${ex.exercise_name}. 준비하세요` : `${row.set_no}세트 준비하세요`) : `${row.set_no}세트 시작`);
+  };
+  const finishCoach = (count: number) => {
+    if (!coach) return;
+    const ex = s.exercises.find((e) => e.id === coach.exId);
+    const row = ex?.sets.find((x) => x.id === coach.setId);
+    setCoach(null);
+    if (!ex || !row) return;
+    const info = setInfo(ex, row);
+    const started = completeSet(ex, row, info.sugW, info.sugR, count);
+    speakText(`${row.set_no}세트 완료`, true);
+    if (!started && autoRun.current) {
+      const nx = nextUndone(ex.id, row.id);
+      if (nx) startCoach(nx.ex, nx.row, ex.id);
+      else { autoRun.current = false; speakText('운동 끝, 수고했어요', true); }
+    }
+  };
+  const stopCoach = () => { autoRun.current = false; setCoach(null); stopSpeaking(); };
+  const adjustPrep = (d: number) => {
+    if (!coach || coach.phase !== 'prep') return;
+    const total = Math.max(5, coach.total + d);
+    setCoach({ ...coach, total, endAt: coach.endAt + (total - coach.total) * 1000 });
+    if (coach.fresh) { setExPrepSec(total); setSetting(db, 'ex_prep_sec', String(total)); }
+    else { setPrepSec(total); setSetting(db, 'prep_sec', String(total)); }
+  };
+  const adjustTempo = (d: number) => {
+    const t = Math.max(1, Math.min(10, Math.round((tempoSec + d) * 2) / 2));
+    if (coach && coach.phase === 'count') setCoach({ ...coach, nextAt: coach.nextAt + (t - tempoSec) * 1000 });
+    setTempoSec(t); setSetting(db, 'tempo_sec', String(t));
+  };
+  const readyCoach = () => {
+    if (!coach || coach.phase !== 'prep') return;
+    const t = Date.now();
+    if (coach.fresh) setCoach({ ...coach, total: 5, endAt: Math.min(coach.endAt, t + 5000) });
+    else setCoach({ ...coach, endAt: t });
+    setNow(t);
   };
 
   /** 휴식 시간 조절: 세트 간은 10초, 종목 간은 30초 단위. 종목 간 휴식이면 그 값이 다음부터의 기본값이 된다 */
@@ -272,9 +389,18 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
       const full = await loadSession(db, sessionId);
       free = (full?.exercises.find((e) => e.id === exId)?.sets ?? []).filter((x) => !x.done && x.set_type !== 'warmup');
     }
-    for (let i = 0; i < counts.length && i < free.length; i++) await updateSet(db, free[i].id, { reps: counts[i] });
+    for (let i = 0; i < counts.length && i < free.length; i++) await updateSet(db, free[i].id, { reps: counts[i], done: true });
     bump();
     await reload();
+    // 카메라: 종목이 끝나면 종목 간 휴식 → 다음 종목 카메라를 자동으로 이어서 연다
+    if (runMode === 'camera') {
+      const nx = s.exercises.find((e) => e.id !== exId && e.sets.some((x) => !x.done));
+      if (nx && exRest > 0) {
+        const t = Date.now(); setNow(t); setRestMini(false); camAuto.current = true;
+        setRest({ endAt: t + exRest * 1000, total: exRest, done: false, kind: 'exercise', exId, next: nx.exercise_name, nextTip: matchProfile(nx.exercise_name)?.tip, nextExId: nx.id });
+        speakText(`종목 끝. ${exRest}초 쉬세요. 다음은 ${nx.exercise_name}`);
+      }
+    }
   };
 
   const finish = async () => {
@@ -335,9 +461,11 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
             <Chip label="한 종목씩" active={guidedOn} onPress={() => { setGuided(true); }} />
             <Chip label="전체 목록" active={!guidedOn} onPress={() => setGuided(false)} />
             <View style={{ width: 8 }} />
-            {(['manual', 'camera', 'tempo'] as RunMode[]).map((m) => (
+            {(['manual', 'camera'] as RunMode[]).map((m) => (
               <Chip key={m} label={RUN_LABEL[m]} active={runMode === m} onPress={() => { setRunMode(m); setSetting(db, 'run_mode', m); }} />
             ))}
+            <View style={{ width: 8 }} />
+            <Chip label={voice ? '🔊 보이스코칭 켬' : '🔇 보이스코칭 끔'} active={voice} onPress={() => { const v = !voice; setVoice(v); setSetting(db, 'voice_coach', v ? '1' : '0'); if (!v) { autoRun.current = false; setCoach(null); stopSpeaking(); } }} />
           </Row>
         )}
         {cur && (
@@ -349,10 +477,16 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
                 다음: {cur.next.map((b) => b.name).join(' ↔ ')}{matchProfile(cur.next[0].name)?.tip ? `\n📍 ${matchProfile(cur.next[0].name)!.tip}` : ''}
               </T>
             ) : <T muted style={{ fontSize: 13, marginTop: 4 }}>마지막 종목이에요</T>}
-            {runMode !== 'manual' && (
+            {(runMode === 'camera' || voice) && (
               <Btn
                 label={runMode === 'camera' ? '📷 카메라로 시작' : '🔊 보이스코칭 시작'} style={{ marginTop: S.sm }}
-                onPress={() => { const ex = s.exercises.find((e) => e.id === cur.exId); if (ex) openLive(ex, runMode === 'tempo' ? 'tempo' : 'camera'); }}
+                onPress={() => {
+                  const ex = s.exercises.find((e) => e.id === cur.exId);
+                  if (!ex) return;
+                  if (runMode === 'camera') return openLive(ex, 'camera');
+                  const row = ex.sets.find((x) => !x.done);
+                  if (row) startCoach(ex, row);
+                }}
               />
             )}
             <Row style={{ marginTop: S.sm }}>
@@ -652,14 +786,18 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
             </Row>
           )}
           <Btn
-            label={targetEx && targetIdx >= 0 ? `${targetEx.sets[targetIdx].set_no}세트 완료` : '이 종목 세트를 모두 마쳤어요'}
+            label={targetEx && targetIdx >= 0
+              ? (runMode === 'camera' ? `📷 ${targetEx.sets[targetIdx].set_no}세트 카메라로 시작` : voice ? `🔊 ${targetEx.sets[targetIdx].set_no}세트 보이스코칭 시작` : `${targetEx.sets[targetIdx].set_no}세트 완료`)
+              : '이 종목 세트를 모두 마쳤어요'}
             disabled={!targetEx || targetIdx < 0}
             style={{ marginBottom: S.sm }}
             onPress={() => {
               if (!targetEx || targetIdx < 0) return;
               const row = targetEx.sets[targetIdx];
-              const lastP = lasts[targetEx.id] ?? null;
-              completeSet(targetEx, row, suggestFor(targetEx.sets, targetIdx, (x) => x.weight, lastP?.weight ?? null), suggestFor(targetEx.sets, targetIdx, (x) => x.reps, lastP?.reps ?? null));
+              if (runMode === 'camera') return openLive(targetEx, 'camera');
+              if (voice) return startCoach(targetEx, row);
+              const inf = setInfo(targetEx, row);
+              completeSet(targetEx, row, inf.sugW, inf.sugR);
             }}
           />
           <Row style={{ justifyContent: 'space-between', marginBottom: S.sm }}>
@@ -730,19 +868,43 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
         extra={rest ? (
           <Row>
             {!rest.done && rest.kind === 'set' && <Btn label="이 시간 저장" kind="ghost" style={{ flex: 1 }} onPress={saveSetRest} />}
-            {rest.kind === 'exercise' && rest.nextExId && runMode !== 'manual' && (
+            {rest.kind === 'exercise' && rest.nextExId && (runMode === 'camera' || voice) && (
               <Btn
                 label={runMode === 'camera' ? '📷 카메라로 시작' : '🔊 보이스코칭 시작'} kind="ghost" style={{ flex: 1 }}
-                onPress={() => { const ex = s.exercises.find((e) => e.id === rest.nextExId); if (ex) { setRest(null); openLive(ex, runMode === 'tempo' ? 'tempo' : 'camera'); } }}
+                onPress={() => {
+                  const ex = s.exercises.find((e) => e.id === rest.nextExId);
+                  if (!ex) return;
+                  setRest(null);
+                  if (runMode === 'camera') return openLive(ex, 'camera');
+                  const row = ex.sets.find((x) => !x.done);
+                  if (row) startCoach(ex, row);
+                }}
               />
             )}
           </Row>
         ) : null}
       />
+      {coach && (() => {
+        const cex = s.exercises.find((e) => e.id === coach.exId);
+        const crow = cex?.sets.find((x) => x.id === coach.setId);
+        if (!cex || !crow) return null;
+        const inf = setInfo(cex, crow);
+        return (
+          <CoachSheet
+            visible
+            phase={coach.phase} title={cex.exercise_name}
+            sub={`${crow.set_no}세트 · ${inf.weight != null && inf.weight > 0 ? `${inf.weight}kg × ` : ''}${coach.target}회`}
+            left={Math.max(0, Math.ceil((coach.endAt - now) / 1000))} total={coach.total}
+            count={coach.count} target={coach.target} tempoSec={tempoSec} exercisePrep={coach.fresh}
+            onPrepAdjust={adjustPrep} onTempoAdjust={adjustTempo} onReady={readyCoach}
+            onFinish={() => finishCoach(coach.count)} onStop={stopCoach}
+          />
+        );
+      })()}
       <SummaryModal data={summary} onClose={() => setSummary(null)} />
       <LiveCountModal
         visible={!!live}
-                defaults={live ? { targetReps: live.target, totalSets: live.sets, restSec: live.restSec, focus: live.focus, tip: live.tip, source: live.source, exerciseName: live.name, prepSec, tempoSec } : undefined}
+                defaults={live ? { targetReps: live.target, totalSets: live.sets, restSec: live.restSec, focus: live.focus, tip: live.tip, source: live.source, exerciseName: live.name, prepSec, tempoSec, sound: voice } : undefined}
         onClose={() => setLive(null)}
         onUse={(counts) => { const l = live; setLive(null); if (l) applyLiveCount(l.exId, counts); }}
       />

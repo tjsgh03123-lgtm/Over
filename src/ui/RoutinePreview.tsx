@@ -32,6 +32,7 @@ export function RoutinePreview({ templateId, title, onClose, onStart }: { templa
   const [step, setStep] = useState(2.5);
   const [cond, setCond] = useState<Cond>(100);
   const [runMode, setRunModeState] = useState<RunMode>('manual');
+  const [voice, setVoice] = useState(false);
   const [dragging, setDragging] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
   const scrollY = useRef(0);
@@ -45,7 +46,10 @@ export function RoutinePreview({ templateId, title, onClose, onStart }: { templa
       setRestDef(await getRestDefault(db));
       setExRest(await getExerciseRest(db));
       setStep(await getWeightStep(db));
-      setRunModeState(sanitizeRunMode(await getSetting(db, 'run_mode')));
+      const rm = sanitizeRunMode(await getSetting(db, 'run_mode'));
+      const vc = await getSetting(db, 'voice_coach');
+      setRunModeState(rm === 'camera' ? 'camera' : 'manual');
+      setVoice(vc != null ? vc === '1' : rm === 'tempo');
     })();
   }, [db, templateId]);
   useEffect(() => {
@@ -99,10 +103,11 @@ export function RoutinePreview({ templateId, title, onClose, onStart }: { templa
 
         <T muted style={{ fontSize: 12, marginBottom: 4 }}>진행 방식</T>
         <Row style={{ marginBottom: 2 }}>
-          {(['manual', 'camera', 'tempo'] as RunMode[]).map((m) => <Chip key={m} label={RUN_LABEL[m]} active={runMode === m} onPress={() => setRun(m)} />)}
+          {(['manual', 'camera'] as RunMode[]).map((m) => <Chip key={m} label={RUN_LABEL[m]} active={runMode === m} onPress={() => setRun(m)} />)}
+          <Chip label={voice ? '🔊 보이스코칭 켬' : '🔇 보이스코칭 끔'} active={voice} onPress={() => { const v = !voice; setVoice(v); setSetting(db, 'voice_coach', v ? '1' : '0'); }} />
         </Row>
         <T muted style={{ fontSize: 12, marginBottom: S.sm }}>
-          {runMode === 'manual' ? '세트마다 직접 ✓ 체크해 기록해요.' : runMode === 'camera' ? '종목마다 카메라가 횟수를 세요. 카메라를 못 쓰면 직접 기록으로 바꿀 수 있어요.' : '보이스코칭: 앱이 음성으로 횟수를 불러 줘요. 카메라 없이 따라 하면 돼요.'}
+          {(runMode === 'camera' ? '종목마다 카메라가 횟수를 세고 세트가 자동으로 체크돼요.' : voice ? '앱이 음성으로 박자를 불러 주고, 세트 체크·휴식·준비가 자동으로 이어져요.' : '세트마다 직접 ✓ 체크해 기록해요.') + (runMode === 'camera' && voice ? ' 횟수와 안내를 음성으로도 알려 줘요.' : '')}
         </T>
 
         <Row style={{ marginBottom: S.sm }}>

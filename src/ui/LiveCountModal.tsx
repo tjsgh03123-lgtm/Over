@@ -39,7 +39,7 @@ function fmtRep(ms: number) { return `${(ms / 1000).toFixed(1)}초`; }
  * ‘이 횟수 사용’을 누르면 onUse(횟수)로 돌려준다.
  */
 export type CountSource = 'camera' | 'tempo';
-export type LiveDefaults = FlowConfig & { focus?: Focus; tip?: string; source?: CountSource; tempoSec?: number; exerciseName?: string };
+export type LiveDefaults = FlowConfig & { focus?: Focus; tip?: string; source?: CountSource; tempoSec?: number; exerciseName?: string; sound?: boolean };
 
 export function LiveCountModal({
   visible, onClose, onUse, defaults,
@@ -89,7 +89,7 @@ function LiveBody({ onClose, onUse, defaults, leave }: { leave: React.MutableRef
   const { width: winW, height: winH } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const [strict, setStrict] = useState<Strictness>('normal');
-  const [sound, setSound] = useState(true); // 횟수를 소리로 읽기
+  const [sound, setSound] = useState(defaults.sound ?? true); // 횟수를 소리로 읽기
   const [focus, setFocus] = useState<Focus>(defaults.focus ?? 'auto');
   const [mode, setMode] = useState<'free' | 'sets'>('sets'); // 세트 자동 진행 / 자유 카운트
   const [cfg, setCfg] = useState<FlowConfig>({ targetReps: defaults.targetReps, totalSets: defaults.totalSets, restSec: defaults.restSec, prepSec: defaults.prepSec ?? 10 });
