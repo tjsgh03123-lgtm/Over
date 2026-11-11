@@ -21,6 +21,7 @@ import { RUN_LABEL, sanitizeRunMode, type RunMode } from '../domain/condition.ts
 import { countWord } from '../domain/liveCount.ts';
 import { Btn, Card, Chip, Header, NumInput, Row, T, TextField } from '../ui/components.tsx';
 import { ExercisePicker } from '../ui/ExercisePicker.tsx';
+import { RestSheet } from '../ui/RestSheet.tsx';
 import { C, S } from '../ui/theme.ts';
 import { useElapsed } from '../ui/useElapsed.ts';
 
@@ -663,46 +664,37 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
           />
         );
       })()}
-      <Modal visible={!!rest && !restMini} animationType="fade" onRequestClose={() => setRestMini(true)}>
-        {rest && (
-          <View style={{ flex: 1, backgroundColor: C.bg, paddingTop: insets.top + S.lg, paddingBottom: insets.bottom + S.lg, paddingHorizontal: S.lg }}>
-            <Row>
-              <T muted style={{ flex: 1 }}>{rest.kind === 'exercise' ? '종목 간 휴식' : '세트 간 휴식'}</T>
-              <Btn label="작게 보기" kind="ghost" small onPress={() => setRestMini(true)} />
-            </Row>
-            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-              {rest.done ? (
-                <T bold style={{ fontSize: 44 }}>휴식 끝</T>
-              ) : (
-                <>
-                  <T bold style={{ fontSize: 84, lineHeight: 96 }}>{fmtElapsed(restLeft)}</T>
-                  <T muted style={{ marginBottom: S.sm }}>휴식 시간 설정</T>
-                  <Row>
-                    <Btn label={rest.kind === 'exercise' ? '−30초' : '−10초'} kind="ghost" onPress={() => adjustRest(rest.kind === 'exercise' ? -30 : -10)} />
-                    <Btn label={rest.kind === 'exercise' ? '+30초' : '+10초'} kind="ghost" onPress={() => adjustRest(rest.kind === 'exercise' ? 30 : 10)} />
-                  </Row>
-                </>
-              )}
-              {restNext && (
-                <View style={{ marginTop: S.xl, padding: S.lg, borderRadius: 14, backgroundColor: C.card2, alignSelf: 'stretch' }}>
-                  <T bold style={{ fontSize: 18, textAlign: 'center' }}>{restNext.title}</T>
-                  {restNext.tip ? <T muted style={{ fontSize: 12, marginTop: 6, textAlign: 'center' }}>📍 {restNext.tip}</T> : null}
-                </View>
-              )}
-            </View>
-            <Row>
-              {!rest.done && rest.kind === 'set' && <Btn label="저장" kind="ghost" onPress={saveSetRest} />}
-              {rest.kind === 'exercise' && rest.nextExId && runMode !== 'manual' && (
-                <Btn
-                  label={runMode === 'camera' ? '📷 카메라로 시작' : '⏱ 박자로 시작'} kind="ghost"
-                  onPress={() => { const ex = s.exercises.find((e) => e.id === rest.nextExId); if (ex) { setRest(null); openLive(ex, runMode === 'tempo' ? 'tempo' : 'camera'); } }}
-                />
-              )}
-              <Btn label={rest.done ? '닫기' : '건너뛰기'} style={{ flex: 1 }} onPress={() => setRest(null)} />
-            </Row>
-          </View>
-        )}
-      </Modal>
+      <RestSheet
+        visible={!!rest && !restMini}
+        kind={rest?.kind ?? 'set'}
+        left={restLeft}
+        total={rest?.total ?? 0}
+        done={!!rest?.done}
+        presets={[30, 60, 90, 120, 180]}
+        defaultSec={rest?.kind === 'exercise' ? exRest : restFor(rest?.exId ? rests[rest.exId] : null, restDefault) || restDefault}
+        next={restNext?.title ?? null}
+        nextTip={restNext?.tip ?? null}
+        stepSec={rest?.kind === 'exercise' ? 30 : 10}
+        onPreset={(sec) => {
+          if (!rest || rest.done) return;
+          setRest({ ...rest, total: sec, endAt: Date.now() + sec * 1000 });
+          if (rest.kind === 'exercise') { setExRest(sec); setExerciseRest(db, sec); }
+        }}
+        onAdjust={adjustRest}
+        onStop={() => setRest(null)}
+        onMini={() => setRestMini(true)}
+        extra={rest ? (
+          <Row>
+            {!rest.done && rest.kind === 'set' && <Btn label="이 시간 저장" kind="ghost" style={{ flex: 1 }} onPress={saveSetRest} />}
+            {rest.kind === 'exercise' && rest.nextExId && runMode !== 'manual' && (
+              <Btn
+                label={runMode === 'camera' ? '📷 카메라로 시작' : '⏱ 박자로 시작'} kind="ghost" style={{ flex: 1 }}
+                onPress={() => { const ex = s.exercises.find((e) => e.id === rest.nextExId); if (ex) { setRest(null); openLive(ex, runMode === 'tempo' ? 'tempo' : 'camera'); } }}
+              />
+            )}
+          </Row>
+        ) : null}
+      />
       <SummaryModal data={summary} onClose={() => setSummary(null)} />
       <LiveCountModal
         visible={!!live}
