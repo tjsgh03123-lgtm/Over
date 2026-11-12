@@ -350,8 +350,8 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
     setCoach({ exId: ex.id, setId: row.id, phase: secs > 0 ? 'prep' : 'count', fresh, endAt: t + secs * 1000, total: secs, count: 0, target: info.target, nextAt: t + tp * 1000 });
     const vt = voiceTexts(ex, row);
     speakText(secs > 0
-      ? (fresh ? `${ex.exercise_name}. ${vt.exIntro} ${cheerOn ? pickCheer('start') : ''} ${vt.setIntro} 준비하세요` : `${row.set_no}세트. ${vt.setIntro} ${cheerOn && vt.lastSet ? pickCheer('lastSet') : ''} 준비하세요`)
-      : `${row.set_no}세트 시작. ${vt.setIntro} ${cheerOn && vt.lastSet ? pickCheer('lastSet') : ''}`);
+      ? (fresh ? `${ex.exercise_name}. ${vt.exIntro} ${cheerOn ? pickCheer('start') : ''} ${vt.setIntro} 준비하세요` : `${vinfo.nativeNum(row.set_no)} 세트. ${vt.setIntro} ${cheerOn && vt.lastSet ? pickCheer('lastSet') : ''} 준비하세요`)
+      : `${vinfo.nativeNum(row.set_no)} 세트 시작. ${vt.setIntro} ${cheerOn && vt.lastSet ? pickCheer('lastSet') : ''}`);
   };
   const beginCoach = (ex: SessionExRow, row: SetRow) => { setCoachMini(false); startCoach(ex, row); };
   const beginLive = (ex: SessionExRow, source: CountSource = 'camera') => { setLiveMini(false); openLive(ex, source); };
@@ -362,7 +362,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
     setCoach(null);
     if (!ex || !row) return;
     const info = setInfo(ex, row);
-    speakText(voiceTexts(ex, row).setOutro || `${row.set_no}세트 완료`, true); // 세트 완료 안내가 먼저, 그다음 휴식 안내
+    speakText(voiceTexts(ex, row).setOutro || `${vinfo.nativeNum(row.set_no)} 세트 완료`, true); // 세트 완료 안내가 먼저, 그다음 휴식 안내
     const started = completeSet(ex, row, info.sugW, info.sugR, count, false); // 무게는 사용자가 정한 값 그대로(비어 있으면 비워 둠)
     if (!started && autoRun.current) {
       const nx = nextUndone(ex.id, row.id);

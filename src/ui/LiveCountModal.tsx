@@ -168,12 +168,12 @@ function LiveBody({ onClose, onUse, onSetDone, onTempo, defaults, leave, onList,
       if (ev?.kind === 'prep') {
         counter.current.reset(); setCount(0); setLastMs(null);
         Vibration.vibrate(120);
-        if (sound) speakText(`${setProg(ev.setNo).no}세트. ${vinfo.setIntro(setProg(ev.setNo))} ${defaults.cheer && setProg(ev.setNo).isLast ? pickCheer('lastSet') : ''} 준비하세요`);
+        if (sound) speakText(`${vinfo.nativeNum(setProg(ev.setNo).no)} 세트. ${vinfo.setIntro(setProg(ev.setNo))} ${defaults.cheer && setProg(ev.setNo).isLast ? pickCheer('lastSet') : ''} 준비하세요`);
       }
       if (ev?.kind === 'start') {
         counter.current.reset(); setCount(0); setLastMs(null); nextAt.current = 0;
         Vibration.vibrate([0, 200, 100, 200]);
-        if (sound) speakText(`${setProg(ev.setNo).no}세트 시작`);
+        if (sound) speakText(`${vinfo.nativeNum(setProg(ev.setNo).no)} 세트 시작`);
       }
       flowRender((n) => n + 1);
     }, 250);
@@ -466,14 +466,14 @@ function LiveBody({ onClose, onUse, onSetDone, onTempo, defaults, leave, onList,
                 ) : ph === 'preparing' ? (
                   <Pill label="바로 시작" onPress={() => {
                     const e = flow.current?.skipPrep();
-                    if (e) { counter.current.reset(); setCount(0); setLastMs(null); nextAt.current = 0; if (sound) speakText(`${e.setNo}세트 시작`); flowRender((n) => n + 1); }
+                    if (e) { counter.current.reset(); setCount(0); setLastMs(null); nextAt.current = 0; if (sound) speakText(`${vinfo.nativeNum(e.setNo)} 세트 시작`); flowRender((n) => n + 1); }
                   }} />
                 ) : ph === 'resting' ? (
                   <Pill label="쉬기 건너뛰기" onPress={() => {
                     const e = flow.current?.skipRest(Date.now());
                     if (e) {
                       counter.current.reset(); setCount(0); setLastMs(null); nextAt.current = 0;
-                      if (sound) speakText(e.kind === 'prep' ? `${e.setNo}세트 준비하세요` : `${e.setNo}세트 시작`);
+                      if (sound) speakText(e.kind === 'prep' ? `${vinfo.nativeNum(e.setNo)} 세트 준비하세요` : `${vinfo.nativeNum(e.setNo)} 세트 시작`);
                       flowRender((n) => n + 1);
                     }
                   }} />

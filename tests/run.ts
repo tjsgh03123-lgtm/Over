@@ -1245,16 +1245,18 @@ test('보이스 안내: 종목·세트 진행과 마지막 안내', () => {
   const exs = [{ sets: [w(true), w(true)] }, { sets: [w(false), w(false), w(false)] }, { sets: [w(false)] }];
   const p = vi.exerciseProgress(exs, 1);
   assert(p.total === 3 && p.done === 1 && p.remaining === 2 && !p.isLast, 'progress');
-  assert(vi.exerciseIntro(p) === '오늘 3종목 중 1종목 끝났어요. 2종목 남았어요.', vi.exerciseIntro(p));
+  assert(vi.exerciseIntro(p) === '오늘 세 종목 중 한 종목 끝났어요. 두 종목 남았어요.', vi.exerciseIntro(p));
   const last = vi.exerciseProgress([{ sets: [w(true)] }, { sets: [w(false)] }], 1);
   assert(last.isLast && vi.exerciseIntro(last).includes('마지막 운동'), 'last ex');
-  assert(vi.exerciseIntro(vi.exerciseProgress([{ sets: [w(false)] }, { sets: [w(false)] }], 0)).startsWith('오늘 운동은 2종목'), 'first');
-  assert(vi.setIntro(vi.setProgress(3, 2)) === '3세트 중 2번째예요.', 'set intro');
+  assert(vi.exerciseIntro(vi.exerciseProgress([{ sets: [w(false)] }, { sets: [w(false)] }], 0)).startsWith('오늘 운동은 두 종목'), 'first');
+  assert(vi.setIntro(vi.setProgress(3, 2)) === '세 세트 중 두 번째예요.', 'set intro');
   assert(vi.setIntro(vi.setProgress(3, 3)) === '마지막 세트예요.', 'set last');
   assert(vi.setIntro(vi.setProgress(1, 1)) === '', 'single set');
-  assert(vi.setOutro(vi.setProgress(3, 1)) === '1세트 완료. 2세트 남았어요.', 'outro');
+  assert(vi.nativeNum(3) === '세' && vi.nativeNum(11) === '열한' && vi.nativeNum(20) === '스무' && vi.nativeNum(24) === '스물네', 'native');
+  assert(vi.setIntro(vi.setProgress(5, 1)) === '다섯 세트 중 첫 번째예요.', 'first ord');
+  assert(vi.setOutro(vi.setProgress(3, 1)) === '한 세트 완료. 두 세트 남았어요.', 'outro');
   assert(vi.setOutro(vi.setProgress(3, 3)).includes('마지막 세트였어요'), 'outro last');
-  assert(vi.exerciseOutro(p).includes('2종목 남았어요'), 'ex outro');
+  assert(vi.exerciseOutro(p).includes('두 종목 남았어요'), 'ex outro');
   assert(vi.exDone({ sets: [{ done: true, set_type: 'warmup' }, w(true)] }) && !vi.exDone({ sets: [w(true), w(false)] }), 'exDone');
 });
 

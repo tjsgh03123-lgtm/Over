@@ -198,11 +198,11 @@ export function SetupScreen() {
             <Card>
               <T bold style={{ marginBottom: 2 }}>이렇게 말해요 (눌러서 듣기)</T>
               <Sample title="횟수 세기 · 지금 속도" text="하나, 둘, 셋, 넷, 다섯 …" onPlay={playCount} />
-              <Sample title="종목 시작" text={`벤치프레스. 오늘 운동은 3종목이에요.${cheerOn ? ' ' + pickCheer('start') : ''} 3세트 중 1번째예요. 준비하세요`} onPlay={() => say(`벤치프레스. 오늘 운동은 3종목이에요.${cheerOn ? ' ' + pickCheer('start') : ''} 3세트 중 1번째예요. 준비하세요`)} />
-              <Sample title="세트가 끝났을 때" text="1세트 완료. 2세트 남았어요." onPlay={() => say('1세트 완료. 2세트 남았어요.')} />
-              <Sample title="종목의 마지막 세트" text={`3세트. 마지막 세트예요.${cheerOn ? ' ' + pickCheer('lastSet') : ''} 준비하세요`} onPlay={() => say(`3세트. 마지막 세트예요.${cheerOn ? ' ' + pickCheer('lastSet') : ''} 준비하세요`)} />
-              <Sample title="종목이 끝났을 때" text="종목 끝. 오늘 3종목 중 1종목 끝났어요. 2종목 남았어요. 90초 쉬세요." onPlay={() => say('종목 끝. 오늘 3종목 중 1종목 끝났어요. 2종목 남았어요. 90초 쉬세요.')} />
-              <Sample title="마지막 운동" text="오늘 3종목 중 2종목 끝났어요. 마지막 운동이에요." onPlay={() => say('오늘 3종목 중 2종목 끝났어요. 마지막 운동이에요.')} />
+              <Sample title="종목 시작" text={`벤치프레스. 오늘 운동은 세 종목이에요.${cheerOn ? ' ' + pickCheer('start') : ''} 세 세트 중 첫 번째예요. 준비하세요`} onPlay={() => say(`벤치프레스. 오늘 운동은 세 종목이에요.${cheerOn ? ' ' + pickCheer('start') : ''} 세 세트 중 첫 번째예요. 준비하세요`)} />
+              <Sample title="세트가 끝났을 때" text="한 세트 완료. 두 세트 남았어요." onPlay={() => say('한 세트 완료. 두 세트 남았어요.')} />
+              <Sample title="종목의 마지막 세트" text={`세 세트. 마지막 세트예요.${cheerOn ? ' ' + pickCheer('lastSet') : ''} 준비하세요`} onPlay={() => say(`세 세트. 마지막 세트예요.${cheerOn ? ' ' + pickCheer('lastSet') : ''} 준비하세요`)} />
+              <Sample title="종목이 끝났을 때" text="종목 끝. 오늘 세 종목 중 한 종목 끝났어요. 두 종목 남았어요. 90초 쉬세요." onPlay={() => say('종목 끝. 오늘 세 종목 중 한 종목 끝났어요. 두 종목 남았어요. 90초 쉬세요.')} />
+              <Sample title="마지막 운동" text="오늘 세 종목 중 두 종목 끝났어요. 마지막 운동이에요." onPlay={() => say('오늘 세 종목 중 두 종목 끝났어요. 마지막 운동이에요.')} />
             </Card>
           </>
         )}
