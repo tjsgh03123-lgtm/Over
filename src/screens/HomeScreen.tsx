@@ -14,7 +14,8 @@ import { addDays, dailyPoints, filterSets, summarize, weekdayOf, weekStart } fro
 import { partTotals, streakWeeks } from '../domain/workoutStats.ts';
 import { Btn, Card, Chip, H, NumInput, Row, T } from '../ui/components.tsx';
 import { RoutinePreview, type StartOpts } from '../ui/RoutinePreview.tsx';
-import { C, GC, S } from '../ui/theme.ts';
+import { Icon } from '../ui/icons.tsx';
+import { C, FS, GC, NUM, R, S } from '../ui/theme.ts';
 import { useElapsed } from '../ui/useElapsed.ts';
 
 const DAY = ['일', '월', '화', '수', '목', '금', '토'];
@@ -121,9 +122,16 @@ export function HomeScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
       <ScrollView contentContainerStyle={{ padding: S.lg, paddingBottom: 110 }}>
-        <H style={{ fontSize: 24, marginBottom: 2 }}>OVERDRIVE</H>
-        <T muted>{today} ({DAY[weekdayOf(today)]})</T>
-        <T muted style={{ marginBottom: S.md }}>이번 주 {week?.workouts ?? 0}회{streak > 0 ? ` · ${streak}주 연속` : ''}</T>
+        <T muted style={{ fontSize: FS.label, fontWeight: '800', letterSpacing: 3 }}>OVERDRIVE</T>
+        <Row style={{ alignItems: 'flex-end', marginTop: 4, marginBottom: S.lg }}>
+          <View style={{ flex: 1 }}>
+            <T bold style={{ fontSize: FS.title, lineHeight: 34 }}>{Number(today.slice(5, 7))}월 {Number(today.slice(8))}일 {DAY[weekdayOf(today)]}요일</T>
+          </View>
+          <View style={{ alignItems: 'flex-end' }}>
+            <T bold style={{ fontSize: FS.heading, ...NUM }}>{week?.workouts ?? 0}회</T>
+            <T muted style={{ fontSize: FS.caption }}>{streak > 0 ? `이번 주 · ${streak}주 연속` : '이번 주'}</T>
+          </View>
+        </Row>
 
         <Row style={{ justifyContent: 'space-between', marginBottom: S.lg }}>
           {week7.map((d, i) => {
@@ -133,8 +141,8 @@ export function HomeScreen() {
               <Pressable key={d} onPress={() => nav.openCalendar(d)} accessibilityRole="button" accessibilityLabel={`${d} 캘린더 열기`} style={{ alignItems: 'center', flex: 1 }}>
                 <T muted style={{ fontSize: 11, marginBottom: 4 }}>{WEEK_HEAD[i]}</T>
                 <View style={{
-                  width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center',
-                  backgroundColor: done ? C.accent : C.card2, borderWidth: isToday ? 2 : 0, borderColor: C.text, opacity: d > today && !done ? 0.5 : 1,
+                  width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center',
+                  backgroundColor: done ? C.accent : C.card, borderWidth: isToday ? 2 : 1, borderColor: isToday ? C.text : C.line, opacity: d > today && !done ? 0.5 : 1,
                 }}>
                   <Text style={{ color: done ? C.onAccent : C.muted, fontWeight: '800', fontSize: 13 }}>{Number(d.slice(8))}</Text>
                 </View>
@@ -152,13 +160,13 @@ export function HomeScreen() {
             </Row>
           </Card>
         ) : (
-          <Card>
+          <Card style={{ borderRadius: R.xl, padding: S.xl }}>
             <Row style={{ marginBottom: 6 }}>
               <T muted style={{ flex: 1 }}>오늘의 운동{slot && !override ? ` · ${slot.routineName}` : ''}</T>
               {cards.length > 0 && (
                 <Pressable onPress={() => setDaySheet(true)} hitSlop={10} style={{ flexDirection: 'row', alignItems: 'center' }}>
                   <T bold style={{ fontSize: 22 }}>{dayTag}</T>
-                  <Text style={{ color: C.muted, fontSize: 22, marginLeft: 8 }}>›</Text>
+                  <View style={{ marginLeft: 6 }}><Icon name="forward" size={20} color={C.muted} /></View>
                 </Pressable>
               )}
             </Row>
@@ -171,7 +179,7 @@ export function HomeScreen() {
 
             {todayCard ? (
               <>
-                <H>{override ? todayCard.name : slot?.label ?? todayCard.name}</H>
+                <H style={{ fontSize: FS.title }}>{override ? todayCard.name : slot?.label ?? todayCard.name}</H>
                 {override && <T muted style={{ fontSize: 12 }}>오늘만 바꾼 운동이에요</T>}
                 <Row style={{ flexWrap: 'wrap', marginTop: S.sm }}>
                   {todayCard.parts.map((p) => <Chip key={p.part} label={`${p.part} ${p.sets}세트`} />)}
@@ -234,7 +242,7 @@ export function HomeScreen() {
                     ])}
                     style={{ paddingHorizontal: S.lg, paddingVertical: S.lg }}
                   >
-                    <Text style={{ color: C.muted, fontSize: 18 }}>⋯</Text>
+                    <Icon name="more" size={20} color={C.muted} />
                   </Pressable>
                 </Row>
               </Card>
@@ -242,7 +250,7 @@ export function HomeScreen() {
             {hidden.length > 0 && (
               <>
                 <Pressable onPress={() => setShowArchive((v) => !v)} style={{ paddingVertical: S.sm }}>
-                  <T muted>보관함 {hidden.length}개 {showArchive ? '▴' : '▾'}</T>
+                  <Row style={{ gap: 4 }}><T muted>보관함 {hidden.length}개</T><Icon name={showArchive ? 'up' : 'down'} size={14} color={C.muted} /></Row>
                 </Pressable>
                 {showArchive && hidden.map((c) => (
                   <Row key={c.id} style={{ paddingVertical: 6, borderTopWidth: 1, borderTopColor: C.line }}>
@@ -260,7 +268,7 @@ export function HomeScreen() {
             <H style={{ fontSize: 16, flex: 1 }}>이번 주 운동</H>
             <T muted style={{ fontSize: 12 }}>월~일</T>
           </Row>
-          <Row style={{ justifyContent: 'space-between' }}>
+          <Row style={{ gap: 8 }}>
             <Stat label="운동 횟수" value={`${week?.workouts ?? 0}회`} />
             <Stat label="완료 세트" value={`${week?.sets ?? 0}`} />
             <Stat label="유산소" value={`${Math.round(week?.cardioMin ?? 0)}분`} />
@@ -338,7 +346,7 @@ export function HomeScreen() {
                   <T bold>{c.name}</T>
                   <T muted style={{ fontSize: 12 }}>{[partsText(c), `${c.count}종목`, fmtDaysAgo(c.lastDate, today)].filter(Boolean).join(' · ')}</T>
                 </View>
-                {c.id === todayId ? <T bold>✓</T> : null}
+                {c.id === todayId ? <Icon name="check" size={20} color={C.text} /> : null}
               </Pressable>
             ))}
           </ScrollView>
@@ -353,9 +361,9 @@ export function HomeScreen() {
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <View style={{ alignItems: 'center', flex: 1 }}>
-      <T bold style={{ fontSize: 16 }}>{value}</T>
-      <T muted style={{ fontSize: 11 }}>{label}</T>
+    <View style={{ alignItems: 'center', flex: 1, paddingVertical: S.md, borderRadius: R.md, backgroundColor: C.card2 }}>
+      <T bold style={{ fontSize: FS.heading, ...NUM }}>{value}</T>
+      <T muted style={{ fontSize: 11, marginTop: 2 }}>{label}</T>
     </View>
   );
 }
