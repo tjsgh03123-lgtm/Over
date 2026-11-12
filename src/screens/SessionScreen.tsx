@@ -54,7 +54,6 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
   const [restDefault, setRestDefault] = useState(90);
   const [rest, setRest] = useState<Rest>(null); // 세트 사이 휴식 카운트다운
   const [now, setNow] = useState(Date.now());
-  const [guided, setGuided] = useState<boolean | null>(null); // null이면 루틴으로 시작한 운동만 '한 종목씩 보기'
   const [deferred, setDeferred] = useState<string[]>([]); // 나중에 하기로 미룬 종목(덩어리의 첫 종목 id)
   const [skipped, setSkipped] = useState<string[]>([]); // 건너뛴 종목 id
   const [exRest, setExRest] = useState(180);
@@ -180,7 +179,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
   // 휴식이 끝나면 다음 준비/세트로 자동 이어 간다
   useEffect(() => {
     if (!rest?.done || !s) return;
-    if (autoRun.current && voice && runMode === 'manual') {
+    if (autoRun.current && runMode === 'manual') {
       const r = rest;
       setRest(null);
       const nx = nextUndone(r.kind === 'exercise' ? r.nextExId : r.exId);
@@ -202,7 +201,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
 
   // 한 종목씩 보기: 지금 할 덩어리(슈퍼세트면 묶인 종목들)만 보여 준다. 다 끝나면 전체 목록으로
   const gex: GEx[] = s.exercises.map((e) => ({ id: e.id, name: e.exercise_name, ss: e.ss, sets: e.sets.map((x) => ({ id: x.id, done: x.done, set_type: x.set_type })) }));
-  const guidedOn = editable && (guided ?? !!s.template_id);
+  const guidedOn = false; // '한 종목씩 보기'는 없앴다 — 운동은 전체 목록에서 '운동 시작'으로 이어서 진행
   const cur = guidedOn ? currentOf(gex, deferred, skipped) : null;
   const shownExercises = cur ? s.exercises.filter((e) => cur.block.some((b) => b.id === e.id)) : s.exercises;
   // 아코디언: 한 번에 한 종목만 펼친다. 처음엔 아직 안 끝난 첫 종목
@@ -468,9 +467,6 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
       <ScrollView contentContainerStyle={{ padding: S.lg, paddingBottom: 240 }} keyboardShouldPersistTaps="handled">
         {editable && s.exercises.length > 0 && (
           <Row style={{ marginBottom: S.sm, flexWrap: 'wrap' }}>
-            <Chip label="한 종목씩" active={guidedOn} onPress={() => { setGuided(true); }} />
-            <Chip label="전체 목록" active={!guidedOn} onPress={() => setGuided(false)} />
-            <View style={{ width: 8 }} />
             {(['manual', 'camera'] as RunMode[]).map((m) => (
               <Chip key={m} label={RUN_LABEL[m]} active={runMode === m} onPress={() => { setRunMode(m); setSetting(db, 'run_mode', m); }} />
             ))}
@@ -478,6 +474,21 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
             <Chip label={voice ? '🔊 보이스코칭 켬' : '🔇 보이스코칭 끔'} active={voice} onPress={() => { const v = !voice; setVoice(v); setSetting(db, 'voice_coach', v ? '1' : '0'); if (!v) { autoRun.current = false; setCoach(null); stopSpeaking(); } }} />
           </Row>
         )}
+        {editable && !coach && !live && (() => {
+          const nx = nextUndone();
+          if (!nx) return null;
+          const started = s.exercises.some((e) => e.sets.some((x) => x.done));
+          return (
+            <Btn
+              label={`${runMode === 'camera' ? '📷 ' : ''}${started ? '이어서 운동하기' : '운동 시작'}`}
+              style={{ marginBottom: S.md, height: 56 }}
+              onPress={() => {
+                if (runMode === 'camera') { camAuto.current = true; return openLive(nx.ex, 'camera'); }
+                startCoach(nx.ex, nx.row);
+              }}
+            />
+          );
+        })()}
         {cur && (
           <Card>
             <T muted style={{ fontSize: 12 }}>종목 {cur.index} / {cur.total}{cur.block.length > 1 ? ' · 슈퍼세트' : ''}</T>
