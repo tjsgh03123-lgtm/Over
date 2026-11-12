@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { SessionExRow } from '../db/repo.ts';
 import { FlowGlyph } from './FlowShell.tsx';
 import { NumInput, T } from './components.tsx';
+import { Icon } from './icons.tsx';
 import { C, S } from './theme.ts';
 
 /** 보이스코칭·카메라 진행 중에 여는 전체 목록: 모든 종목의 세트를 보고 무게·횟수를 바로 입력한다 */
@@ -35,14 +36,29 @@ export function WorkoutListSheet({
             const cur = e.id === currentExId;
             return (
               <View key={e.id} style={{ marginBottom: S.lg, borderLeftWidth: cur ? 4 : 0, borderLeftColor: C.text, paddingLeft: cur ? S.md : 0 }}>
-                <T bold style={{ fontSize: 18 }}>{e.exercise_name}</T>
+                {(() => {
+                  const n = e.sets.filter((x) => x.done).length;
+                  const all = e.sets.length > 0 && n === e.sets.length;
+                  return (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                      <View style={{ width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: all ? C.accent : 'transparent', borderWidth: all ? 0 : 1, borderColor: C.line }}>
+                        {all && <Icon name="check" size={14} color={C.onAccent} strokeWidth={3} />}
+                      </View>
+                      <T bold style={{ fontSize: 18, flex: 1, opacity: all ? 0.6 : 1 }}>{e.exercise_name}</T>
+                      <T muted style={{ fontSize: 12 }}>{n}/{e.sets.length}</T>
+                    </View>
+                  );
+                })()}
                 {e.sets.map((x) => (
                   <View key={x.id} style={{ flexDirection: 'row', alignItems: 'center', marginTop: S.sm, opacity: x.done ? 0.55 : 1 }}>
+                    <View style={{ width: 22, height: 22, borderRadius: 11, marginRight: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: x.done ? C.accent : 'transparent', borderWidth: x.done ? 0 : 1, borderColor: C.line }}>
+                      {x.done ? <Icon name="check" size={14} color={C.onAccent} strokeWidth={3} /> : null}
+                    </View>
                     <T bold style={{ width: 52 }}>{x.set_no}세트</T>
                     <NumInput value={x.weight} placeholder="kg" width={84} onCommit={(v) => onWeight(x.id, v)} />
                     <T muted style={{ marginHorizontal: 8 }}>kg ×</T>
                     <NumInput value={x.reps} placeholder="회" width={64} decimal={false} onCommit={(v) => onReps(x.id, v)} />
-                    <T muted style={{ marginLeft: 8, flex: 1 }}>{x.done ? '완료 ✓' : '회'}</T>
+                    <T muted style={{ marginLeft: 8, flex: 1 }}>{x.done ? '완료' : '회'}</T>
                   </View>
                 ))}
               </View>

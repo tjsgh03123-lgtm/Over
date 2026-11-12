@@ -25,6 +25,7 @@ import { Btn, Card, Chip, Header, NumInput, Row, T, TextField } from '../ui/comp
 import { ExercisePicker } from '../ui/ExercisePicker.tsx';
 import { RestSheet } from '../ui/RestSheet.tsx';
 import { CoachSheet } from '../ui/CoachSheet.tsx';
+import { Icon } from '../ui/icons.tsx';
 import { WorkoutListSheet } from '../ui/WorkoutListSheet.tsx';
 import { C, S } from '../ui/theme.ts';
 import { useElapsed } from '../ui/useElapsed.ts';
@@ -493,7 +494,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
         const txt = coach.phase === 'prep' ? `${crow?.set_no ?? ''}세트 준비 ${left}초` : `${crow?.set_no ?? ''}세트 · ${coach.count}/${coach.target}회`;
         return (
           <Row style={{ margin: S.md, marginBottom: 0, padding: S.md, borderRadius: 16, backgroundColor: C.card2, borderWidth: 1, borderColor: C.line }}>
-            <T bold style={{ flex: 1, fontSize: 15 }} numberOfLines={1}>{'🔊 '}{cex?.exercise_name} · {coach.pausedAt ? '일시정지' : txt}</T>
+            <T bold style={{ flex: 1, fontSize: 15 }} numberOfLines={1}>{cex?.exercise_name} · {coach.pausedAt ? '일시정지' : txt}</T>
             <Btn label={coach.pausedAt ? '재개' : '일시정지'} kind="ghost" small onPress={toggleCoachPause} />
             <Btn label="열기" kind="ghost" small onPress={() => setCoachMini(false)} />
             <Btn label="종료" kind="ghost" small onPress={stopCoach} />
@@ -507,7 +508,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
               <Chip key={m} label={RUN_LABEL[m]} active={runMode === m} onPress={() => { setRunMode(m); setSetting(db, 'run_mode', m); }} />
             ))}
             <View style={{ width: 8 }} />
-            <Chip label={voice ? '🔊 보이스코칭 켬' : '🔇 보이스코칭 끔'} active={voice} onPress={toggleVoice} />
+            <Chip label={voice ? '보이스코칭 켬' : '보이스코칭 끔'} active={voice} onPress={toggleVoice} />
           </Row>
         )}
         {editable && !coach && !live && (runMode === 'camera' || voice) && (() => {
@@ -516,7 +517,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
           const started = s.exercises.some((e) => e.sets.some((x) => x.done));
           return (
             <Btn
-              label={`${runMode === 'camera' ? '📷 ' : ''}${started ? '이어서 운동하기' : '운동 시작'}`}
+              label={started ? '이어서 운동하기' : '운동 시작'}
               style={{ marginBottom: S.md, height: 56 }}
               onPress={() => {
                 if (runMode === 'camera') { camAuto.current = true; return beginLive(nx.ex, 'camera'); }
@@ -536,7 +537,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
             ) : <T muted style={{ fontSize: 13, marginTop: 4 }}>마지막 종목이에요</T>}
             {(runMode === 'camera' || voice) && (
               <Btn
-                label={runMode === 'camera' ? '📷 카메라로 시작' : '🔊 보이스코칭 시작'} style={{ marginTop: S.sm }}
+                label="이 종목 시작" style={{ marginTop: S.sm }}
                 onPress={() => {
                   const ex = s.exercises.find((e) => e.id === cur.exId);
                   if (!ex) return;
@@ -572,7 +573,14 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
               <Pressable onPress={() => setOpenId(open ? '' : ex.id)} style={{ padding: S.lg }}>
                 <Row>
                   <View style={{ flex: 1 }}>
-                    <T bold style={{ fontSize: 16 }}>{ex.exercise_name}{cur && cur.block.length > 1 && cur.exId === ex.id ? '  ▶ 지금 차례' : ''}</T>
+                    <Row style={{ gap: 8 }}>
+                      {ex.sets.length > 0 && doneN === ex.sets.length && (
+                        <View style={{ width: 22, height: 22, borderRadius: 11, backgroundColor: C.accent, alignItems: 'center', justifyContent: 'center' }}>
+                          <Icon name="check" size={14} color={C.onAccent} strokeWidth={3} />
+                        </View>
+                      )}
+                      <T bold style={{ fontSize: 16, flexShrink: 1, opacity: ex.sets.length > 0 && doneN === ex.sets.length ? 0.6 : 1 }}>{ex.exercise_name}{cur && cur.block.length > 1 && cur.exId === ex.id ? '  ▶ 지금 차례' : ''}</T>
+                    </Row>
                     <T muted style={{ fontSize: 12 }}>
                       {doneN}/{ex.sets.length}{equip ? ` · ${equip}` : ''}{ex.weight_mode === 'assisted' ? ' · 보조 중량' : ex.weight_mode === 'bodyweight' ? ' · 체중' : ''}
                       {` · 휴식 ${fmtElapsed(restFor(rests[ex.id], restDefault))}`}
@@ -611,8 +619,17 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
                   )}
                   {editable && (
                     <Row style={{ marginBottom: S.sm }}>
-                      {!cur && <Btn label="📷 카메라로 세기" kind="ghost" small style={{ flex: 1 }} onPress={() => beginLive(ex, 'camera')} />}
-                      {!cur && <Btn label="🔊 보이스코칭" kind="ghost" small style={{ flex: 1 }} onPress={() => beginLive(ex, 'tempo')} />}
+                      {!cur && (
+                        <Btn
+                          label="이 종목 시작" kind="ghost" small style={{ flex: 1 }}
+                          onPress={() => {
+                            if (runMode === 'camera') return beginLive(ex, 'camera');
+                            const row = ex.sets.find((x) => !x.done && x.set_type !== 'warmup') ?? ex.sets.find((x) => !x.done);
+                            if (voice && row) return beginCoach(ex, row);
+                            beginLive(ex, 'tempo');
+                          }}
+                        />
+                      )}
                       {prevSets.length > 0 && (
                         <Btn label="불러오기" kind="ghost" small onPress={async () => {
                           const free = ex.sets.filter((x) => !x.done && x.set_type !== 'warmup');
@@ -659,11 +676,11 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
                               completeSet(ex, row, sugW, sugR);
                             }}
                             style={{
-                              width: 48, height: 44, borderRadius: 10, alignItems: 'center', justifyContent: 'center',
+                              width: 48, height: 48, borderRadius: 12, alignItems: 'center', justifyContent: 'center',
                               backgroundColor: row.done ? C.accent : C.card2, borderWidth: 1, borderColor: row.done ? C.accent : C.line,
                             }}
                           >
-                            <Text style={{ color: row.done ? C.onAccent : C.muted, fontWeight: '800', fontSize: 18 }}>✓</Text>
+                            <Icon name="check" size={20} color={row.done ? C.onAccent : C.muted} strokeWidth={2.5} />
                           </Pressable>
                         </Row>
                         {editable && focused && (
@@ -839,7 +856,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
           )}
           <Btn
             label={targetEx && targetIdx >= 0
-              ? (runMode === 'camera' ? `📷 ${targetEx.sets[targetIdx].set_no}세트 카메라로 시작` : voice ? `🔊 ${targetEx.sets[targetIdx].set_no}세트 보이스코칭 시작` : `${targetEx.sets[targetIdx].set_no}세트 완료`)
+              ? (runMode === 'camera' || voice ? `${targetEx.sets[targetIdx].set_no}세트 시작` : `${targetEx.sets[targetIdx].set_no}세트 완료`)
               : '이 종목 세트를 모두 마쳤어요'}
             disabled={!targetEx || targetIdx < 0}
             style={{ marginBottom: S.sm }}
@@ -927,7 +944,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
           <Row>
             {rest.kind === 'exercise' && rest.nextExId && (runMode === 'camera' || voice) && (
               <Btn
-                label={runMode === 'camera' ? '📷 카메라로 시작' : '🔊 보이스코칭 시작'} kind="ghost" style={{ flex: 1 }}
+                label="이 종목 시작" kind="ghost" style={{ flex: 1 }}
                 onPress={() => {
                   const ex = s.exercises.find((e) => e.id === rest.nextExId);
                   if (!ex) return;

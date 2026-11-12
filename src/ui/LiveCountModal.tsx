@@ -545,7 +545,7 @@ function LiveBody({ onClose, onUse, defaults, leave, onList, overlay, minimized,
             )}
             <Label>소리</Label>
             <Row>
-              <Chip label={sound ? '🔊 횟수 소리 켜짐' : '🔇 횟수 소리 꺼짐'} active={sound} onPress={() => { if (sound) stopSpeaking(); setSound((v) => !v); }} />
+              <Chip label={sound ? '횟수 소리 켬' : '횟수 소리 끔'} active={sound} onPress={() => { if (sound) stopSpeaking(); setSound((v) => !v); }} />
             </Row>
             {source === 'camera' && (
               <>
@@ -595,7 +595,7 @@ function LiveBody({ onClose, onUse, defaults, leave, onList, overlay, minimized,
       </View>
       {minimized ? (
         <View style={{ position: 'absolute', left: 12, right: 12, top: insets.top + 60, flexDirection: 'row', alignItems: 'center', gap: 8, padding: S.md, borderRadius: 16, backgroundColor: C.card2, borderWidth: 1, borderColor: C.line }}>
-          <T bold style={{ flex: 1, fontSize: 15 }} numberOfLines={1}>{source === 'camera' ? '📷 ' : '🔊 '}{miniText}</T>
+          <T bold style={{ flex: 1, fontSize: 15 }} numberOfLines={1}>{miniText}</T>
           <Btn label="열기" kind="ghost" small onPress={onExpand} />
           <Btn label="종료" kind="ghost" small onPress={leaveNow} />
         </View>
