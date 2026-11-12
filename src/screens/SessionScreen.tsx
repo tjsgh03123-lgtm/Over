@@ -228,7 +228,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
   const targetIdx = targetEx ? targetEx.sets.findIndex((x) => !x.done) : -1;
   const nameOf = (id: string) => s.exercises.find((e) => e.id === id)?.exercise_name ?? '';
 
-  const openLive = (ex: SessionExRow, source: CountSource = 'camera') => setLive({
+  const openLive = (ex: SessionExRow, source: CountSource = 'camera') => { liveRecorded.current = 0; setLive({
     source,
     exId: ex.id,
     target: ex.sets.find((x) => x.set_type !== 'warmup' && x.reps)?.reps ?? lasts[ex.id]?.reps ?? 10,
@@ -237,7 +237,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
     focus: matchProfile(ex.exercise_name)?.focus ?? (ex.weight_mode === 'bodyweight' ? 'body' : 'auto'),
     tip: matchProfile(ex.exercise_name)?.tip,
     name: ex.exercise_name,
-  });
+  }); };
 
   /** 세트 ✓: 이미 완료면 되돌리고, 아니면 완료로 기록하며 휴식 카운트다운을 시작한다 */
   const completeSet = (ex: SessionExRow, row: SetRow, sugW: number | null, sugR: number | null, repsOverride?: number, fillWeight = true): boolean => {
@@ -410,10 +410,31 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
     updateSet(db, row.id, patch).then(bump);
   };
 
+  /** 보이스·카메라 진행 중 세트가 끝나는 즉시 목록에 ✓로 기록한다 (마지막에 ‘종료하고 기록’을 기다리지 않는다) */
+  const liveRecorded = useRef(0);
+  const recordLiveSet = async (exId: string, count: number) => {
+    let full = await loadSession(db, sessionId);
+    let ex = full?.exercises.find((e) => e.id === exId);
+    if (!ex) return;
+    let row = ex.sets.find((x) => !x.done && x.set_type !== 'warmup');
+    if (!row) {
+      await addSet(db, ex.id, 'working');
+      full = await loadSession(db, sessionId);
+      ex = full?.exercises.find((e) => e.id === exId);
+      row = ex?.sets.find((x) => !x.done && x.set_type !== 'warmup');
+    }
+    if (!row) return;
+    liveRecorded.current += 1;
+    await updateSet(db, row.id, { reps: count, done: true });
+    bump();
+    await reload();
+  };
+
   /** 실시간 횟수 세기 결과를 그 종목의 미완료 본 세트 횟수에 차례로 넣는다 (세트가 모자라면 추가) */
-  const applyLiveCount = async (exId: string, counts: number[]) => {
-    const ex = s.exercises.find((e) => e.id === exId);
-    if (!ex || !counts.length) return;
+  const applyLiveCount = async (exId: string, counts: number[], afterRecorded = false) => {
+    const fresh = await loadSession(db, sessionId); // 세트마다 이미 기록된 것이 있으니 최신 상태에서 시작
+    const ex = fresh?.exercises.find((e) => e.id === exId);
+    if (!ex || (!counts.length && !afterRecorded)) return;
     let free = ex.sets.filter((x) => !x.done && x.set_type !== 'warmup');
     const need = counts.length - free.length;
     for (let i = 0; i < need; i++) await addSet(db, ex.id, 'working');
@@ -986,8 +1007,9 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
         onList={() => setListOpen(true)} overlay={listSheet}
         minimized={liveMini} onMinimize={() => setLiveMini(true)} onExpand={() => setLiveMini(false)}
                 defaults={live ? { targetReps: live.target, totalSets: live.sets, restSec: live.restSec, focus: live.focus, tip: live.tip, source: live.source, exerciseName: live.name, prepSec, tempoSec, sound: voice, idleEndSec } : undefined}
-        onClose={() => { setLive(null); setLiveMini(false); }}
-        onUse={(counts) => { const l = live; setLive(null); setLiveMini(false); if (l) applyLiveCount(l.exId, counts); }}
+        onClose={() => { liveRecorded.current = 0; setLive(null); setLiveMini(false); }}
+        onSetDone={(_setNo, count) => { if (live) recordLiveSet(live.exId, count); }}
+        onUse={(counts) => { const l = live; const rec = liveRecorded.current; liveRecorded.current = 0; setLive(null); setLiveMini(false); if (l) applyLiveCount(l.exId, counts.slice(rec), rec > 0); }}
       />
       <ExercisePicker
         visible={picker}

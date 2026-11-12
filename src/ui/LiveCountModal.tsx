@@ -44,9 +44,9 @@ export type CountSource = 'camera' | 'tempo';
 export type LiveDefaults = FlowConfig & { focus?: Focus; tip?: string; source?: CountSource; tempoSec?: number; exerciseName?: string; sound?: boolean; idleEndSec?: number };
 
 export function LiveCountModal({
-  visible, onClose, onUse, defaults, onList, overlay, minimized, onMinimize, onExpand,
+  visible, onClose, onUse, onSetDone, defaults, onList, overlay, minimized, onMinimize, onExpand,
 }: {
-  overlay?: React.ReactNode; visible: boolean; defaults?: LiveDefaults; onClose: () => void; onUse: (counts: number[]) => void; onList?: () => void;
+  overlay?: React.ReactNode; visible: boolean; defaults?: LiveDefaults; onClose: () => void; onUse: (counts: number[]) => void; onSetDone?: (setNo: number, count: number) => void; onList?: () => void;
   /** 접힘: 화면은 숨기고 위쪽 작은 띠만 남긴 채 카메라·보이스 진행은 계속된다 */
   minimized?: boolean; onMinimize?: () => void; onExpand?: () => void;
 }) {
@@ -54,7 +54,7 @@ export function LiveCountModal({
   if (!visible) return null;
   // Modal이 아니라 화면 위에 덮는 방식: 접어도 카메라·박자가 계속 돌고, 아래 목록(무게 입력 등)을 쓸 수 있다
   return (
-    <LiveBody leave={leave} onList={onList} overlay={overlay} minimized={!!minimized} onMinimize={onMinimize} onExpand={onExpand} onClose={onClose} onUse={onUse} defaults={defaults ?? { targetReps: 10, totalSets: 3, restSec: 60 }} />
+    <LiveBody leave={leave} onSetDone={onSetDone} onList={onList} overlay={overlay} minimized={!!minimized} onMinimize={onMinimize} onExpand={onExpand} onClose={onClose} onUse={onUse} defaults={defaults ?? { targetReps: 10, totalSets: 3, restSec: 60 }} />
   );
 }
 
@@ -88,7 +88,7 @@ function FlipIcon({ size = 26 }: { size?: number }) {
   );
 }
 
-function LiveBody({ onClose, onUse, defaults, leave, onList, overlay, minimized, onMinimize, onExpand }: { minimized: boolean; onMinimize?: () => void; onExpand?: () => void; overlay?: React.ReactNode; onList?: () => void; leave: React.MutableRefObject<() => void>; onClose: () => void; onUse: (counts: number[]) => void; defaults: LiveDefaults }) {
+function LiveBody({ onClose, onUse, onSetDone, defaults, leave, onList, overlay, minimized, onMinimize, onExpand }: { minimized: boolean; onMinimize?: () => void; onExpand?: () => void; overlay?: React.ReactNode; onList?: () => void; leave: React.MutableRefObject<() => void>; onClose: () => void; onUse: (counts: number[]) => void; onSetDone?: (setNo: number, count: number) => void; defaults: LiveDefaults }) {
   useKeepAwake();
   const { db } = useApp();
   const { width: winW, height: winH } = useWindowDimensions();
@@ -257,6 +257,7 @@ function LiveBody({ onClose, onUse, defaults, leave, onList, overlay, minimized,
   /** 세트 완료 알림 (진동·소리) */
   function handleFlow(fe: FlowEvent | null) {
     if (fe?.kind !== 'setDone') return;
+    onSetDone?.(fe.setNo, fe.count);
     Vibration.vibrate([0, 300, 100, 300]);
     if (sound) speakText(fe.last ? '운동 끝, 수고했어요' : `${fe.setNo}세트 완료, ${cfg.restSec}초 쉬세요`, true);
     flowRender((x) => x + 1);
