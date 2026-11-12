@@ -202,7 +202,24 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
     }
   }, [rest?.done]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // 안전장치: 보이스코칭 자동 진행 중인데 어떤 이유로 화면·휴식이 모두 비어 멈춰 있으면 다음 세트를 이어서 시작한다
+  useEffect(() => {
+    if (!s || s.status !== 'active' || !autoRun.current || runMode !== 'manual' || coach || live || rest) return;
+    const t = setTimeout(() => {
+      if (!autoRun.current || coach || live || rest) return;
+      const nx = nextUndone();
+      if (nx) startCoach(nx.ex, nx.row); else autoRun.current = false;
+    }, 2500);
+    return () => clearTimeout(t);
+  }, [coach, live, rest, s]); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (!s) return <View style={{ flex: 1, backgroundColor: C.bg }}><Header title="불러오는 중" onBack={nav.close} /></View>;
+
+  /** 휴식 넘기기: 자동 진행 중이면 휴식을 끝낸 것으로 처리해 다음 세트/종목으로 바로 이어 간다 (접은 상태의 작은 줄과 휴식 화면이 같은 동작) */
+  const skipRest = () => {
+    if (rest && !rest.done && ((autoRun.current && runMode === 'manual') || (camAuto.current && runMode === 'camera'))) setRest({ ...rest, done: true });
+    else setRest(null);
+  };
 
   const listSheet = (
     <WorkoutListSheet
@@ -872,7 +889,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
               {!rest.done && <Btn label={rest.kind === 'exercise' ? '−30' : '−10'} kind="ghost" small onPress={() => adjustRest(rest.kind === 'exercise' ? -30 : -10)} />}
               {!rest.done && <Btn label={rest.kind === 'exercise' ? '+30' : '+10'} kind="ghost" small onPress={() => adjustRest(rest.kind === 'exercise' ? 30 : 10)} />}
               <Btn label="크게" kind="ghost" small onPress={() => setRestMini(false)} />
-              <Btn label={rest.done ? '닫기' : '건너뛰기'} kind="ghost" small onPress={() => setRest(null)} />
+              <Btn label={rest.done ? '닫기' : '건너뛰기'} kind="ghost" small onPress={skipRest} />
             </Row>
           )}
           <Btn
@@ -955,11 +972,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
           if (rest.kind === 'exercise') { setExRest(sec); setExerciseRest(db, sec); }
         }}
         onAdjust={adjustRest}
-        onStop={() => {
-          // 넘어가기: 자동 진행 중이면 휴식을 끝낸 것으로 처리해 다음 세트/종목으로 바로 이어 간다
-          if (rest && !rest.done && ((autoRun.current && runMode === 'manual') || (camAuto.current && runMode === 'camera'))) setRest({ ...rest, done: true });
-          else setRest(null);
-        }}
+        onStop={skipRest}
         onMini={() => setRestMini(true)}
         extra={rest ? (
           <Row>
