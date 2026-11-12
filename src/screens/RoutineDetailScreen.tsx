@@ -14,7 +14,8 @@ import {
 } from '../domain/routine.ts';
 import { moveItem } from '../domain/reorder.ts';
 import { Btn, Card, Header, Row, T, TextField } from '../ui/components.tsx';
-import { ReorderList } from '../ui/ReorderList.tsx';
+import { SlotEditor } from '../ui/SlotEditor.tsx';
+import { FS, R } from '../ui/theme.ts';
 import { C, S } from '../ui/theme.ts';
 
 type StepKey = 'type' | 'repeat' | 'tiles' | 'done';
@@ -24,14 +25,16 @@ const STEP_TITLE: Record<StepKey, string> = {
 const STEP_HINT: Record<StepKey, string> = {
   type: '루틴 이름을 정하고, 어떤 방식으로 돌릴지 고릅니다.',
   repeat: '며칠 동안 하고 다시 처음(Day 1)부터 할지 정합니다.',
-  tiles: '칸을 눌러 그 날 할 종목을 넣고, 세트·횟수·무게를 정합니다. 비워 두면 쉬는 날이에요.',
-  done: '정한 내용을 확인하고 저장합니다.',
+  tiles: '위에서 요일/Day를 고르면 그 날 종목이 아래에 나와요. 바로 고치면 자동 저장돼요.',
+  done: '요일/Day를 눌러 확인하고, 필요하면 바로 고칩니다.',
 };
 
 /** 화면을 다녀와도(날 편집 등) 보던 단계를 기억한다 */
 const lastStep = new Map<string, StepKey>();
 /** 방금 만든 새 루틴(완료하면 홈 화면으로 나간다). 운동 편집 화면을 다녀와도 기억한다 */
 const creatingIds = new Set<string>();
+/** 루틴별로 보던 칸(요일/Day) */
+const lastSlot = new Map<string, number>();
 
 const KIND_LABEL = { weights: '웨이트', cardio: '유산소', rest: '휴식' } as const;
 
@@ -46,6 +49,7 @@ export function RoutineDetailScreen({ routineId }: { routineId: string }) {
   const [sheet, setSheet] = useState<number | null>(null); // 복사할 칸을 고르는 시트: 복사하려는 칸 번호
   const [briefs, setBriefs] = useState<Record<string, TemplateBrief | null>>({});
   const [dragging, setDragging] = useState(false);
+  const [selState, setSelState] = useState<number | null>(lastSlot.get(routineId) ?? null);
   const scrollRef = useRef<ScrollView>(null);
   const scrollY = useRef(0);
 
@@ -125,6 +129,70 @@ export function RoutineDetailScreen({ routineId }: { routineId: string }) {
     bump();
   };
 
+  const sel = (() => {
+    const v = selState ?? (active ? order.find((i) => (r.mode === 'cycle' ? i + 1 === todayNo : i === weekdayOf(today))) : undefined) ?? order.find((i) => r.slots[i]) ?? order[0];
+    return order.includes(v) ? v : order[0];
+  })();
+  const pick = (i: number) => { lastSlot.set(routineId, i); setSelState(i); };
+  const isTodaySlot = (i: number) => active && (r.mode === 'cycle' ? i + 1 === todayNo : i === weekdayOf(today));
+  const shortLabel = (i: number) => (r.mode === 'cycle' ? `Day ${i + 1}` : WD_LABEL[i]);
+  const fullLabel = (i: number) => (r.mode === 'cycle' ? `Day ${i + 1}` : `${WD_LABEL[i]}요일`);
+
+  /** 위쪽 가로 막대(요일/Day) + 고른 칸의 종목 목록(바로 수정) */
+  const slotPanel = () => {
+    const id = r.slots[sel];
+    const nm = dayName(id);
+    const shared = id ? r.slots.filter((x) => x === id).length > 1 : false;
+    const emptySlots = order.filter((i) => r.slots[i] == null);
+    const pos = order.indexOf(sel);
+    const swap = async (to: number) => { if (to >= 0 && to < order.length) { await reorderSlots(pos, to); pick(order[to]); } };
+    return (
+      <>
+        {unplaced.length > 0 && (
+          <Card>
+            <T style={{ fontSize: 13 }}>칸에 놓이지 않은 운동: {unplaced.map((d) => d.name).join(', ')}</T>
+            <Btn label="빈 칸에 차례로 채우기" kind="ghost" small style={{ marginTop: S.sm }} onPress={async () => { await autoFillRoutine(db, today, r.id); bump(); }} />
+          </Card>
+        )}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginHorizontal: -S.lg, flexGrow: 0 }} contentContainerStyle={{ paddingHorizontal: S.lg, gap: 8, paddingBottom: S.md }}>
+          {order.map((i) => {
+            const on = i === sel;
+            const filled = !!r.slots[i];
+            return (
+              <Pressable key={i} onPress={() => pick(i)} accessibilityLabel={`slot-${i}`}
+                style={{ minWidth: r.mode === 'cycle' ? 64 : 52, paddingVertical: 10, paddingHorizontal: 12, borderRadius: R.lg, alignItems: 'center', backgroundColor: on ? C.accent : C.card, borderWidth: 1, borderColor: on ? C.accent : C.line }}>
+                <Text style={{ color: on ? C.bg : C.text, fontWeight: '800', fontSize: 15 }}>{shortLabel(i)}</Text>
+                <View style={{ marginTop: 5, height: 6, width: 6, borderRadius: 3, backgroundColor: filled ? (on ? C.bg : C.text) : 'transparent', borderWidth: filled ? 0 : 1, borderColor: on ? C.bg : C.muted }} />
+                {isTodaySlot(i) && <Text style={{ color: on ? C.bg : C.muted, fontSize: 10, fontWeight: '700', marginTop: 2 }}>오늘</Text>}
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+        <Row style={{ marginBottom: S.sm, alignItems: 'flex-end' }}>
+          <View style={{ flex: 1 }}>
+            <T muted style={{ fontSize: 12 }}>{fullLabel(sel)}{isTodaySlot(sel) ? ' · 오늘' : ''}</T>
+            <T bold style={{ fontSize: FS.heading }} numberOfLines={1}>{nm ?? '휴식'}</T>
+          </View>
+          <Pressable hitSlop={6} disabled={pos === 0} onPress={() => swap(pos - 1)} style={{ padding: 8, opacity: pos === 0 ? 0.25 : 1 }}><Text style={{ color: C.muted, fontSize: 12, fontWeight: '700' }}>◀ 앞으로</Text></Pressable>
+          <Pressable hitSlop={6} disabled={pos === order.length - 1} onPress={() => swap(pos + 1)} style={{ padding: 8, opacity: pos === order.length - 1 ? 0.25 : 1 }}><Text style={{ color: C.muted, fontSize: 12, fontWeight: '700' }}>뒤로 ▶</Text></Pressable>
+        </Row>
+        <SlotEditor key={`${sel}:${id ?? 'e'}`} db={db} today={today} routineId={r.id} slotIdx={sel} dayId={id} onSaved={bump} />
+        {id && (
+          <Row style={{ marginTop: S.md, gap: 6 }}>
+            <Btn label="다른 칸에 복사" kind="ghost" small style={{ flex: 1 }} onPress={() => { if (emptySlots.length === 0) Alert.alert('빈 칸이 없어요', '복사하려면 먼저 비어 있는 칸이 필요해요. 반복 일수를 늘리거나 다른 칸을 비워 주세요.'); else setSheet(sel); }} />
+            <Btn
+              label="이 칸 비우기" kind="ghost" small style={{ flex: 1 }}
+              onPress={() => Alert.alert('이 칸을 비울까요?', shared ? `‘${nm}’은(는) 다른 칸에도 놓여 있어서 이 칸만 비워져요.` : `‘${nm}’의 종목 구성이 삭제됩니다. 이미 완료한 기록은 유지돼요.`, [
+                { text: '취소' },
+                { text: '비우기', style: 'destructive', onPress: async () => { if (shared) await setSlot(db, today, r.id, sel, null); else await deleteDay(db, today, r.id, id); bump(); } },
+              ])}
+            />
+          </Row>
+        )}
+      </>
+    );
+  };
+
   /* ---------------- 단계별 내용 ---------------- */
   const body = () => {
     if (cur === 'type') {
@@ -183,69 +251,7 @@ export function RoutineDetailScreen({ routineId }: { routineId: string }) {
         </>
       );
     }
-    if (cur === 'tiles') {
-      const label = (slotIdx: number) => (r.mode === 'cycle' ? `Day ${slotIdx + 1}` : `${WD_LABEL[slotIdx]}요일`);
-      const summary = (id: string | null) => {
-        if (!id) return '눌러서 운동 추가';
-        const d = r.days.find((x) => x.id === id);
-        if (!d) return '';
-        if (d.kind !== 'weights') return KIND_LABEL[d.kind];
-        const b = briefs[id];
-        if (!b || b.count === 0) return '종목 없음 · 눌러서 추가';
-        return `${b.count}종목 · ${b.names.join(', ')}${b.count > b.names.length ? ' …' : ''}`;
-      };
-      const emptySlots = order.filter((i) => r.slots[i] == null);
-      return (
-        <>
-          <T muted style={{ fontSize: 12, marginBottom: S.sm }}>
-            오른쪽 ≡ 손잡이를 길게 누른 채 끌면 칸의 순서를 바꿔요.
-          </T>
-          {unplaced.length > 0 && (
-            <Card>
-              <T style={{ fontSize: 13 }}>칸에 놓이지 않은 운동: {unplaced.map((d) => d.name).join(', ')}</T>
-              <Btn label="빈 칸에 차례로 채우기" kind="ghost" small style={{ marginTop: S.sm }} onPress={async () => { await autoFillRoutine(db, today, r.id); bump(); }} />
-            </Card>
-          )}
-          <ReorderList<{ slotIdx: number; id: string | null }>
-            items={order.map((slotIdx) => ({ slotIdx, id: r.slots[slotIdx] }))}
-            keyOf={(x) => String(x.slotIdx)}
-            scroll={{ ref: scrollRef, offset: scrollY }}
-            onDragChange={setDragging}
-            onReorder={reorderSlots}
-            renderItem={({ slotIdx, id }, _pos, handle) => {
-              const nm = dayName(id);
-              const isToday = active && (r.mode === 'cycle' ? slotIdx + 1 === todayNo : slotIdx === weekdayOf(today));
-              const shared = id ? r.slots.filter((x) => x === id).length > 1 : false;
-              return (
-                <Card style={isToday ? { borderColor: C.accent, borderWidth: 2 } : undefined}>
-                  <Row>
-                    <Pressable style={{ flex: 1, minHeight: 64, justifyContent: 'center' }} onPress={() => nav.openDay(r.id, id, id ? null : slotIdx)}>
-                      <T muted style={{ fontSize: 12 }}>{label(slotIdx)}{isToday ? ' · 오늘' : ''}</T>
-                      <T bold style={{ fontSize: 17, opacity: nm ? 1 : 0.45 }}>{nm ?? '비어 있음 · 휴식'}</T>
-                      <T muted style={{ fontSize: 12 }} numberOfLines={1}>{summary(id)}</T>
-                    </Pressable>
-                    <Text style={{ color: C.muted, fontSize: 24, marginHorizontal: S.sm }}>›</Text>
-                    {handle}
-                  </Row>
-                  {id && (
-                    <Row style={{ marginTop: S.sm, gap: 6 }}>
-                      <Btn label="다른 칸에 복사" kind="ghost" small onPress={() => { if (emptySlots.length === 0) Alert.alert('빈 칸이 없어요', '복사하려면 먼저 비어 있는 칸이 필요해요. 반복 일수를 늘리거나 다른 칸을 비워 주세요.'); else setSheet(slotIdx); }} />
-                      <Btn
-                        label="비우기" kind="ghost" small
-                        onPress={() => Alert.alert('이 칸을 비울까요?', shared ? `‘${nm}’은(는) 다른 칸에도 놓여 있어서 이 칸만 비워져요.` : `‘${nm}’의 종목 구성이 삭제됩니다. 이미 완료한 기록은 유지돼요.`, [
-                          { text: '취소' },
-                          { text: '비우기', style: 'destructive', onPress: async () => { if (shared) await setSlot(db, today, r.id, slotIdx, null); else await deleteDay(db, today, r.id, id); bump(); } },
-                        ])}
-                      />
-                    </Row>
-                  )}
-                </Card>
-              );
-            }}
-          />
-        </>
-      );
-    }
+    if (cur === 'tiles') return <>{slotPanel()}</>;
     // done
     return (
       <>
@@ -256,14 +262,7 @@ export function RoutineDetailScreen({ routineId }: { routineId: string }) {
           </T>
           <T muted>운동하는 칸 {placed}개 · 쉬는 칸 {len - placed}개</T>
         </Card>
-        <Card>
-          {order.map((slotIdx) => (
-            <Row key={slotIdx} style={{ paddingVertical: 4 }}>
-              <T muted style={{ width: 72 }}>{r.mode === 'cycle' ? `Day ${slotIdx + 1}` : `${WD_LABEL[slotIdx]}요일`}</T>
-              <T bold={!!r.slots[slotIdx]} style={{ flex: 1, opacity: r.slots[slotIdx] ? 1 : 0.5 }}>{dayName(r.slots[slotIdx]) ?? '휴식'}</T>
-            </Row>
-          ))}
-        </Card>
+        {slotPanel()}
         {placed === 0 && <T style={{ marginBottom: S.md }}>아직 운동을 넣은 칸이 없어요. ‘운동 구성’ 단계에서 칸을 눌러 추가하세요.</T>}
         <T muted style={{ fontSize: 12, marginBottom: 6 }}>고치고 싶은 단계를 눌러 이동하세요.</T>
         <Row style={{ flexWrap: 'wrap', gap: 6, marginBottom: S.md }}>
