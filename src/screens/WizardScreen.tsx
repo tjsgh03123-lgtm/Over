@@ -118,9 +118,7 @@ export function WizardScreen() {
                   {d.exercises.map((e, ei) => (
                     <View key={ei} style={{ backgroundColor: C.card, borderRadius: R.lg, borderWidth: 1, borderColor: C.line, padding: S.md, gap: S.sm }}>
                       <Row style={{ gap: S.sm }}>
-                        <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: C.accent, alignItems: 'center', justifyContent: 'center' }}>
-                          <T bold style={{ color: C.bg, fontSize: 13 }}>{ei + 1}</T>
-                        </View>
+                        <T muted style={{ fontSize: 13, fontWeight: '700', width: 16 }}>{ei + 1}</T>
                         <T bold style={{ flex: 1, fontSize: 16 }} numberOfLines={2}>{e.name}</T>
                         <Pressable hitSlop={8} onPress={() => removeEx(di, ei)} style={{ padding: 6 }}><Icon name="trash" size={18} color={C.muted} /></Pressable>
                       </Row>

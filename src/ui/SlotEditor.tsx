@@ -95,9 +95,7 @@ export function SlotEditor({ db, today, routineId, slotIdx, dayId, onSaved }: {
         return (
           <View key={e.key} style={{ backgroundColor: C.card, borderRadius: R.lg, borderWidth: 1, borderColor: C.line, padding: S.md, gap: S.sm }}>
             <Row style={{ gap: S.sm }}>
-              <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: C.accent, alignItems: 'center', justifyContent: 'center' }}>
-                <T bold style={{ color: C.bg, fontSize: 13 }}>{i + 1}</T>
-              </View>
+              <T muted style={{ fontSize: 13, fontWeight: '700', width: 16 }}>{i + 1}</T>
               <T bold style={{ flex: 1, fontSize: 16 }} numberOfLines={2}>{e.name}</T>
               {[['up', -1], ['down', 1]].map(([ic, d]) => (
                 <Pressable key={ic as string} hitSlop={6} onPress={() => move(i, d as number)} style={{ padding: 6, opacity: (i === 0 && d === -1) || (i === list.length - 1 && d === 1) ? 0.25 : 1 }}>
