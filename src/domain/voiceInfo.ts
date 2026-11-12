@@ -29,8 +29,8 @@ export function setProgress(totalSets: number, workingNo: number): SetProgress {
 /** 종목을 시작할 때: 오늘 몇 종목 중 몇 종목 끝, 마지막 운동인지 */
 export function exerciseIntro(p: ExProgress): string {
   if (p.total <= 1) return '오늘은 이 운동 하나예요.';
-  const last = p.isLast ? '마지막 운동이에요.' : `${p.remaining}종목 남았어요.`;
-  return p.done === 0 ? `오늘 운동은 ${p.total}종목이에요. ${last}` : `오늘 ${p.total}종목 중 ${p.done}종목 끝났어요. ${last}`;
+  if (p.done === 0) return `오늘 운동은 ${p.total}종목이에요.`;
+  return `오늘 ${p.total}종목 중 ${p.done}종목 끝났어요. ${p.isLast ? '마지막 운동이에요.' : `${p.remaining}종목 남았어요.`}`;
 }
 
 /** 세트를 시작할 때: 몇 세트 중 몇 번째, 마지막 세트인지 */
