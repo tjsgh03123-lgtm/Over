@@ -27,6 +27,7 @@ import { RestSheet } from '../ui/RestSheet.tsx';
 import { CoachSheet } from '../ui/CoachSheet.tsx';
 import { Icon } from '../ui/icons.tsx';
 import * as vinfo from '../domain/voiceInfo.ts';
+import { pickCheer } from '../domain/cheer.ts';
 import { WorkoutListSheet } from '../ui/WorkoutListSheet.tsx';
 import { C, S } from '../ui/theme.ts';
 import { useElapsed } from '../ui/useElapsed.ts';
@@ -67,6 +68,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
   const [prepSec, setPrepSec] = useState(10);
   const [tempoSec, setTempoSec] = useState(3);
   const [tempoMap, setTempoMap] = useState<Record<string, number>>({}); // 종목마다 정한 보이스 속도(박자 초)
+  const [cheerOn, setCheerOn] = useState(true); // 응원 멘트 켬/끔(설정)
   const baseTempo = useRef(3); // 아직 속도를 정하지 않은 종목의 기본값
   const [voice, setVoice] = useState(false); // 보이스코칭 켬/끔 (직접 기록·카메라 공통)
   const [exPrepSec, setExPrepSec] = useState(20); // 새 종목 시작 전 준비 시간
@@ -121,6 +123,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
       setExRest(await getExerciseRest(db));
       const rm = await getSetting(db, 'run_mode');
       const vc = await getSetting(db, 'voice_coach');
+      setCheerOn((await getSetting(db, 'cheer_on')) !== '0');
       setRunMode(rm === 'camera' ? 'camera' : 'manual');
       setVoice(vc != null ? vc === '1' : rm === 'tempo'); // 예전 '보이스코칭' 진행 방식은 스위치 켬으로 옮긴다
       const xp = await getSetting(db, 'ex_prep_sec');
@@ -330,6 +333,8 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
       setOutro: row && row.set_type !== 'warmup' ? vinfo.setOutro(sp) : '',
       exOutro: vinfo.exerciseOutro(vinfo.exerciseProgress(doneEx, -1)),
       setBase: ex.sets.filter((x) => x.set_type !== 'warmup' && x.done).length, setAll: work.length,
+      lastSet: !!row && row.set_type !== 'warmup' && sp.isLast,
+      finalEx: vinfo.exerciseProgress(doneEx, -1).remaining === 0,
     };
   };
   const startCoach = (ex: SessionExRow, row: SetRow, justDoneExId?: string) => {
@@ -345,8 +350,8 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
     setCoach({ exId: ex.id, setId: row.id, phase: secs > 0 ? 'prep' : 'count', fresh, endAt: t + secs * 1000, total: secs, count: 0, target: info.target, nextAt: t + tp * 1000 });
     const vt = voiceTexts(ex, row);
     speakText(secs > 0
-      ? (fresh ? `${ex.exercise_name}. ${vt.exIntro} ${vt.setIntro} 준비하세요` : `${row.set_no}세트. ${vt.setIntro} 준비하세요`)
-      : `${row.set_no}세트 시작. ${vt.setIntro}`);
+      ? (fresh ? `${ex.exercise_name}. ${vt.exIntro} ${cheerOn ? pickCheer('start') : ''} ${vt.setIntro} 준비하세요` : `${row.set_no}세트. ${vt.setIntro} ${cheerOn && vt.lastSet ? pickCheer('lastSet') : ''} 준비하세요`)
+      : `${row.set_no}세트 시작. ${vt.setIntro} ${cheerOn && vt.lastSet ? pickCheer('lastSet') : ''}`);
   };
   const beginCoach = (ex: SessionExRow, row: SetRow) => { setCoachMini(false); startCoach(ex, row); };
   const beginLive = (ex: SessionExRow, source: CountSource = 'camera') => { setLiveMini(false); openLive(ex, source); };
@@ -362,7 +367,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
     if (!started && autoRun.current) {
       const nx = nextUndone(ex.id, row.id);
       if (nx) startCoach(nx.ex, nx.row, ex.id);
-      else { autoRun.current = false; setCoachMini(false); speakText('운동 끝, 수고했어요', true); }
+      else { autoRun.current = false; setCoachMini(false); speakText(`운동 끝. ${cheerOn ? pickCheer('end') : '수고했어요'}`, true); }
     }
   };
   const toggleCoachPause = () => {
@@ -551,7 +556,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
   const liveEx = live ? s.exercises.find((e) => e.id === live.exId) : null;
   const liveVoice = liveEx ? (() => {
     const vt = voiceTexts(liveEx, liveEx.sets.find((x) => !x.done && x.set_type !== 'warmup'));
-    return { exIntro: vt.exIntro, exOutro: vt.exOutro, setBase: vt.setBase, setAll: vt.setAll };
+    return { exIntro: vt.exIntro, exOutro: vt.exOutro, setBase: vt.setBase, setAll: vt.setAll, cheer: cheerOn, finalEx: vt.finalEx };
   })() : {};
 
   return (

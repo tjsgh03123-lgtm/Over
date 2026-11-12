@@ -25,6 +25,7 @@ export function SettingsScreen() {
   const [rest, setRest] = useState(90);
   const [busy, setBusy] = useState(false);
   const [exRest, setExRest] = useState(180);
+  const [cheerOn, setCheerOn] = useState(true);
   const [goal, setGoal] = useState(12);
   const [bar, setBar] = useState(20);
   const [prep, setPrep] = useState(10);
@@ -39,6 +40,7 @@ export function SettingsScreen() {
     getSetting(db, 'month_goal').then((v) => setGoal(Number(v) > 0 ? Number(v) : 12));
     const num = (k: string, d: number, set: (n: number) => void) => getSetting(db, k).then((v) => { const n = v == null ? NaN : Number(v); set(Number.isFinite(n) && n >= 0 ? n : d); });
     num('prep_sec', 10, setPrep); num('ex_prep_sec', 20, setExPrep); num('tempo_sec', 3, setTempo); num('idle_end_sec', 5, setIdle);
+    getSetting(db, 'cheer_on').then((v) => setCheerOn(v !== '0'));
     getSetting(db, 'bar_kg').then((v) => setBar(Number(v) > 0 ? Number(v) : 20));
   }, [db, version]);
 
@@ -89,6 +91,8 @@ export function SettingsScreen() {
         <Segmented options={EX_PREPS.map((v) => ({ key: String(v), label: `${v}초` }))} value={String(exPrep)} onChange={(k) => { setExPrep(Number(k)); setSetting(db, 'ex_prep_sec', k); }} />
         <T muted style={{ fontSize: 12, marginTop: S.md, marginBottom: S.sm }}>음성 속도 — 보이스코칭이 숫자를 읽는 빠르기 (1x = 한 회 3초 간격)</T>
         <Segmented options={SPEEDS.map((v) => ({ key: String(v), label: fmtSpeed(v) }))} value={String(nearestSpeed(speedOf(tempo)))} onChange={(k) => { const t = tempoOf(Number(k)); setTempo(t); setSetting(db, 'tempo_sec', String(t)); }} />
+        <T muted style={{ fontSize: 12, marginTop: S.md, marginBottom: S.sm }}>응원 멘트 — 종목 시작, 종목 마지막 세트, 운동이 끝날 때 힘이 나는 한마디 (음성 가이드가 켜져 있을 때)</T>
+        <Segmented options={[{ key: '1', label: '켬' }, { key: '0', label: '끔' }]} value={cheerOn ? '1' : '0'} onChange={(k) => { setCheerOn(k === '1'); setSetting(db, 'cheer_on', k); }} />
         <T muted style={{ fontSize: 12, marginTop: S.md, marginBottom: S.sm }}>카메라 — 동작이 이만큼 멈추면 세트 끝 (센 횟수 그대로 기록)</T>
         <Segmented options={IDLES.map((v) => ({ key: String(v), label: `${v}초` }))} value={String(idle)} onChange={(k) => { setIdle(Number(k)); setSetting(db, 'idle_end_sec', k); }} />
       </Card>

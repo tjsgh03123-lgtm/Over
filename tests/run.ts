@@ -1,5 +1,6 @@
 import * as vs from '../src/domain/voiceSpeed.ts';
 import * as vi from '../src/domain/voiceInfo.ts';
+import * as cheer from '../src/domain/cheer.ts';
 import assert from 'node:assert/strict';
 import { flattenSessions, resolveIntensity } from '../src/domain/intensity.ts';
 import {
@@ -1254,6 +1255,14 @@ test('보이스 안내: 종목·세트 진행과 마지막 안내', () => {
   assert(vi.setOutro(vi.setProgress(3, 3)).includes('마지막 세트였어요'), 'outro last');
   assert(vi.exerciseOutro(p).includes('2종목 남았어요'), 'ex outro');
   assert(vi.exDone({ sets: [{ done: true, set_type: 'warmup' }, w(true)] }) && !vi.exDone({ sets: [w(true), w(false)] }), 'exDone');
+});
+
+test('응원 멘트: 종류별 목록과 직전 반복 방지', () => {
+  for (const k of ['start', 'lastSet', 'end'] as const) {
+    assert(cheer.CHEER[k].length >= 5, k + ' 개수');
+    let prev = '';
+    for (let i = 0; i < 40; i++) { const l = cheer.pickCheer(k, () => 0); assert(l !== prev, '연속 반복 ' + k); assert(cheer.CHEER[k].includes(l), '목록 밖'); prev = l; }
+  }
 });
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);
