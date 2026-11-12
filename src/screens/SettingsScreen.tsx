@@ -4,7 +4,7 @@ import { Alert, Pressable, ScrollView, View } from 'react-native';
 import { useApp } from '../app/context.tsx';
 import { exportBackup, exportBodyCsv, exportWorkoutCsv, restoreBackup } from '../db/backup.ts';
 import { getExerciseRest, getRestDefault, getSetting, getWeightStep, setSetting } from '../db/repo.ts';
-import { initVoice, listKoVoices, speakText, setVoiceId } from '../services/speak.ts';
+import { initVoice, listKoVoices, speakText, setVoiceId, setPitch } from '../services/speak.ts';
 import type { VoiceInfo } from '../domain/voicePick.ts';
 import { pickTextFile, shareTextFile, stamp } from '../services/files.ts';
 import { GRAPH_KEYS, GRAPH_LABEL, GRAPH_PRESETS } from '../domain/themeModel.ts';
@@ -29,6 +29,7 @@ export function SettingsScreen() {
   const [exRest, setExRest] = useState(180);
   const [cheerOn, setCheerOn] = useState(true);
   const [voices, setVoices] = useState<VoiceInfo[]>([]);
+  const [pitchV, setPitchV] = useState('0.85');
   const [voiceId, setVid] = useState<string | undefined>();
   const [goal, setGoal] = useState(12);
   const [bar, setBar] = useState(20);
@@ -44,6 +45,7 @@ export function SettingsScreen() {
     getSetting(db, 'month_goal').then((v) => setGoal(Number(v) > 0 ? Number(v) : 12));
     const num = (k: string, d: number, set: (n: number) => void) => getSetting(db, k).then((v) => { const n = v == null ? NaN : Number(v); set(Number.isFinite(n) && n >= 0 ? n : d); });
     num('prep_sec', 10, setPrep); num('ex_prep_sec', 20, setExPrep); num('tempo_sec', 3, setTempo); num('idle_end_sec', 5, setIdle);
+    getSetting(db, 'voice_pitch').then((v) => v && setPitchV(v));
     getSetting(db, 'voice_id').then(async (v) => { setVid(await initVoice(v)); setVoices(await listKoVoices()); });
     getSetting(db, 'cheer_on').then((v) => setCheerOn(v !== '0'));
     getSetting(db, 'bar_kg').then((v) => setBar(Number(v) > 0 ? Number(v) : 20));
@@ -96,7 +98,7 @@ export function SettingsScreen() {
         <Segmented options={EX_PREPS.map((v) => ({ key: String(v), label: `${v}초` }))} value={String(exPrep)} onChange={(k) => { setExPrep(Number(k)); setSetting(db, 'ex_prep_sec', k); }} />
         <T muted style={{ fontSize: 12, marginTop: S.md, marginBottom: S.sm }}>음성 속도 — 보이스코칭이 숫자를 읽는 빠르기 (1x = 한 회 3초 간격)</T>
         <Segmented options={SPEEDS.map((v) => ({ key: String(v), label: fmtSpeed(v) }))} value={String(nearestSpeed(speedOf(tempo)))} onChange={(k) => { const t = tempoOf(Number(k)); setTempo(t); setSetting(db, 'tempo_sec', String(t)); }} />
-        <T muted style={{ fontSize: 12, marginTop: S.md, marginBottom: S.sm }}>목소리 — 눌러서 들어보고 고르세요. 'network'가 붙은 음성이 더 자연스러워요</T>
+        <T muted style={{ fontSize: 12, marginTop: S.md, marginBottom: S.sm }}>목소리 — 눌러서 들어보고 고르세요 (남자 목소리로 알려진 음성이 앞에 와요)</T>
         {voices.length === 0 ? (
           <T muted style={{ fontSize: 12 }}>이 기기에서 고를 수 있는 한국어 음성이 없어요. 폰 설정 → 텍스트 음성 변환에서 Google 음성을 설치/업데이트해 주세요.</T>
         ) : (
@@ -106,6 +108,8 @@ export function SettingsScreen() {
             onChange={(k) => { setVid(k); setVoiceId(k); setSetting(db, 'voice_id', k); speakText('안녕하세요, 이 목소리로 안내할게요. 하나, 둘, 셋'); }}
           />
         )}
+        <T muted style={{ fontSize: 12, marginTop: S.md, marginBottom: S.sm }}>목소리 톤 — 낮을수록 굵은 남자 목소리 느낌</T>
+        <Segmented options={[{ key: '0.7', label: '아주 낮게' }, { key: '0.85', label: '낮게' }, { key: '1', label: '보통' }]} value={pitchV} onChange={(k) => { setPitchV(k); setPitch(Number(k)); setSetting(db, 'voice_pitch', k); speakText('이 톤으로 안내할게요. 하나, 둘, 셋'); }} />
         <T muted style={{ fontSize: 12, marginTop: S.md, marginBottom: S.sm }}>응원 멘트 — 종목 시작, 종목 마지막 세트, 운동이 끝날 때 힘이 나는 한마디 (음성 가이드가 켜져 있을 때)</T>
         <Segmented options={[{ key: '1', label: '켬' }, { key: '0', label: '끔' }]} value={cheerOn ? '1' : '0'} onChange={(k) => { setCheerOn(k === '1'); setSetting(db, 'cheer_on', k); }} />
         <T muted style={{ fontSize: 12, marginTop: S.md, marginBottom: S.sm }}>카메라 — 동작이 이만큼 멈추면 세트 끝 (센 횟수 그대로 기록)</T>

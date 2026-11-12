@@ -4,19 +4,23 @@ export type VoiceInfo = { identifier: string; name?: string; language?: string; 
 const isKo = (v: VoiceInfo) => /^ko([-_]|$)/i.test(v.language ?? '') || /^ko[-_]/i.test(v.identifier);
 
 /** 높을수록 자연스러움: 신경망/네트워크/고품질 음성 우선, 오프라인 기본 음성은 뒤로 */
-export function voiceScore(v: VoiceInfo): number {
+/** 구글 한국어 음성 중 남성으로 알려진 코드(koc·kod). 기기마다 다를 수 있어 '추정' */
+export const isMaleLikely = (v: VoiceInfo) => /ko-kr-x-ko[cd]\b|ko-kr-x-ko[cd]-|male(?!.*female)/i.test(`${v.identifier} ${v.name ?? ''}`) && !/female/i.test(`${v.identifier} ${v.name ?? ''}`);
+
+export function voiceScore(v: VoiceInfo, maleFirst = true): number {
   const id = `${v.identifier} ${v.name ?? ''}`.toLowerCase();
   let s = 0;
   if (/enhanced|premium/.test(String(v.quality ?? '').toLowerCase())) s += 10;
   if (/neural|wavenet|studio/.test(id)) s += 8;
   if (/network/.test(id)) s += 6;
   if (/\bko-kr-x-ko[a-d]\b|x-ko[a-d]-/.test(id)) s += 1;
+  if (maleFirst && isMaleLikely(v)) s += 20;
   if (/embedded|compact|local|offline|espeak/.test(id)) s -= 3;
   return s;
 }
 
-export function koVoices(all: VoiceInfo[]): VoiceInfo[] {
-  return all.filter(isKo).sort((a, b) => voiceScore(b) - voiceScore(a) || a.identifier.localeCompare(b.identifier));
+export function koVoices(all: VoiceInfo[], maleFirst = true): VoiceInfo[] {
+  return all.filter(isKo).sort((a, b) => voiceScore(b, maleFirst) - voiceScore(a, maleFirst) || a.identifier.localeCompare(b.identifier));
 }
 
 /** 저장된 음성이 있으면 그대로, 없으면 가장 점수가 높은 한국어 음성. 없으면 undefined(기기 기본) */

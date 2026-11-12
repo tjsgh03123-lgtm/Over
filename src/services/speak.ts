@@ -5,6 +5,9 @@ import { koVoices, pickVoice, type VoiceInfo } from '../domain/voicePick.ts';
 
 let speed = 1;
 let voiceId: string | undefined;
+/** 목소리 높낮이: 남자 목소리 느낌을 위해 기본을 살짝 낮춤 (1이 보통) */
+let pitch = 0.85;
+export function setPitch(p: number): void { pitch = Math.min(1.5, Math.max(0.5, p)); }
 
 /** 설치된 한국어 음성 목록 (자연스러운 순) */
 export async function listKoVoices(): Promise<VoiceInfo[]> {
@@ -26,7 +29,7 @@ export function speakCount(n: number): void {
   if (!w) return;
   try {
     Speech.stop();
-    Speech.speak(w, { language: 'ko-KR', voice: voiceId, rate: voiceRate(speed, 1.15) });
+    Speech.speak(w, { language: 'ko-KR', voice: voiceId, pitch, rate: voiceRate(speed, 1.15) });
   } catch { /* 음성 기능이 없으면 무시 */ }
 }
 
@@ -38,6 +41,6 @@ export function stopSpeaking(): void {
 export function speakText(text: string, queue = false): void {
   try {
     if (!queue) Speech.stop();
-    Speech.speak(text, { language: 'ko-KR', voice: voiceId, rate: voiceRate(speed, 1.1) });
+    Speech.speak(text, { language: 'ko-KR', voice: voiceId, pitch, rate: voiceRate(speed, 1.1) });
   } catch { /* 무시 */ }
 }

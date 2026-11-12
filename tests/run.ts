@@ -1267,6 +1267,11 @@ test('응원 멘트: 종류별 목록과 직전 반복 방지', () => {
     for (let i = 0; i < 40; i++) { const l = cheer.pickCheer(k, () => 0); assert(l !== prev, '연속 반복 ' + k); assert(cheer.CHEER[k].includes(l), '목록 밖'); prev = l; }
   }
 });
+test('남자 음성 우선', () => {
+  const all = [{ identifier: 'ko-kr-x-koa-network', language: 'ko-KR' }, { identifier: 'ko-kr-x-koc-network', language: 'ko-KR' }, { identifier: 'ko-kr-x-kod-local', language: 'ko-KR' }];
+  assert.equal(pickVoice(all), 'ko-kr-x-koc-network');
+  assert.equal(pickVoice([{ identifier: 'ko-kr-x-koa-local', language: 'ko-KR' }, { identifier: 'ko-kr-x-kod-local', language: 'ko-KR' }]), 'ko-kr-x-kod-local');
+});
 test('자연스러운 한국어 음성 고르기', () => {
   const all = [
     { identifier: 'en-us-x-tpd-network', language: 'en-US' },
