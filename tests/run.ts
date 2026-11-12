@@ -1,6 +1,7 @@
 import * as vs from '../src/domain/voiceSpeed.ts';
 import * as vi from '../src/domain/voiceInfo.ts';
 import * as cheer from '../src/domain/cheer.ts';
+import { pickVoice } from '../src/domain/voicePick.ts';
 import assert from 'node:assert/strict';
 import { flattenSessions, resolveIntensity } from '../src/domain/intensity.ts';
 import {
@@ -1263,6 +1264,17 @@ test('응원 멘트: 종류별 목록과 직전 반복 방지', () => {
     let prev = '';
     for (let i = 0; i < 40; i++) { const l = cheer.pickCheer(k, () => 0); assert(l !== prev, '연속 반복 ' + k); assert(cheer.CHEER[k].includes(l), '목록 밖'); prev = l; }
   }
+});
+test('자연스러운 한국어 음성 고르기', () => {
+  const all = [
+    { identifier: 'en-us-x-tpd-network', language: 'en-US' },
+    { identifier: 'ko-kr-x-koc-local', language: 'ko-KR' },
+    { identifier: 'ko-kr-x-koc-network', language: 'ko-KR' },
+  ];
+  assert.equal(pickVoice(all), 'ko-kr-x-koc-network');
+  assert.equal(pickVoice(all, 'ko-kr-x-koc-local'), 'ko-kr-x-koc-local');
+  assert.equal(pickVoice(all, 'nope'), 'ko-kr-x-koc-network');
+  assert.equal(pickVoice([{ identifier: 'en', language: 'en-US' }]), undefined);
 });
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

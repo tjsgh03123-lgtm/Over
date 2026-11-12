@@ -1,8 +1,22 @@
 import * as Speech from 'expo-speech';
 import { countWord } from '../domain/liveCount.ts';
 import { speedOf, voiceRate } from '../domain/voiceSpeed.ts';
+import { koVoices, pickVoice, type VoiceInfo } from '../domain/voicePick.ts';
 
 let speed = 1;
+let voiceId: string | undefined;
+
+/** 설치된 한국어 음성 목록 (자연스러운 순) */
+export async function listKoVoices(): Promise<VoiceInfo[]> {
+  try { return koVoices((await Speech.getAvailableVoicesAsync()) as VoiceInfo[]); } catch { return []; }
+}
+/** 저장된 음성(또는 가장 자연스러운 음성)을 적용한다. 앱 시작·설정 변경 때 호출 */
+export async function initVoice(savedId?: string | null): Promise<string | undefined> {
+  try { voiceId = pickVoice((await Speech.getAvailableVoicesAsync()) as VoiceInfo[], savedId); } catch { voiceId = undefined; }
+  return voiceId;
+}
+export function setVoiceId(id: string | undefined): void { voiceId = id; }
+
 /** 보이스코칭 속도(한 회당 초 기준)를 목소리에도 적용한다 */
 export function setSpeechTempo(tempoSec: number): void { speed = speedOf(tempoSec); }
 
@@ -12,7 +26,7 @@ export function speakCount(n: number): void {
   if (!w) return;
   try {
     Speech.stop();
-    Speech.speak(w, { language: 'ko-KR', rate: voiceRate(speed, 1.15) });
+    Speech.speak(w, { language: 'ko-KR', voice: voiceId, rate: voiceRate(speed, 1.15) });
   } catch { /* 음성 기능이 없으면 무시 */ }
 }
 
@@ -24,6 +38,6 @@ export function stopSpeaking(): void {
 export function speakText(text: string, queue = false): void {
   try {
     if (!queue) Speech.stop();
-    Speech.speak(text, { language: 'ko-KR', rate: voiceRate(speed, 1.1) });
+    Speech.speak(text, { language: 'ko-KR', voice: voiceId, rate: voiceRate(speed, 1.1) });
   } catch { /* 무시 */ }
 }

@@ -22,6 +22,7 @@ import { SettingsScreen } from './src/screens/SettingsScreen.tsx';
 import { ProfileScreen } from './src/screens/ProfileScreen.tsx';
 import { Header } from './src/ui/components.tsx';
 import { Icon, type IconName } from './src/ui/icons.tsx';
+import { initVoice } from './src/services/speak.ts';
 import { findMissedRoutine, getActiveRoutine, getSetting, resolveMissed, setSetting, type MissedChoice, type MissedRoutine } from './src/db/repo.ts';
 import { MissedRoutineModal } from './src/ui/MissedRoutineModal.tsx';
 import { WebAlertHost } from './src/ui/webAlert.tsx';
@@ -70,6 +71,7 @@ export default function App() {
     (async () => {
       const d = await openDb();
       // 저장된 화면 모드·그래프 색상 복원 (없으면 다크 + 기본 색)
+      initVoice(await getSetting(d, 'voice_id'));
       const m = sanitizeMode(await getSetting(d, 'theme_mode'));
       applyTheme(m, sanitizeGraphColors(await getSetting(d, 'graph_colors')));
       SystemUI.setBackgroundColorAsync(C.bg).catch(() => {}); // 앱 창 배경을 화면 모드에 맞춰 깜빡임 방지
