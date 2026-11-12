@@ -28,7 +28,7 @@ import { useElapsed } from '../ui/useElapsed.ts';
 
 type Last = { weight: number | null; reps: number | null };
 type Focus = { setId: string; field: 'weight' | 'reps' } | null;
-type Coach = { exId: string; setId: string; phase: 'prep' | 'count'; fresh: boolean; endAt: number; total: number; count: number; target: number; nextAt: number } | null;
+type Coach = { exId: string; setId: string; phase: 'prep' | 'count'; fresh: boolean; endAt: number; total: number; count: number; target: number; nextAt: number; pausedAt?: number } | null;
 type Rest = { endAt: number; total: number; done: boolean; kind: 'set' | 'exercise'; exId?: string; next?: string; nextTip?: string; nextExId?: string } | null;
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -165,7 +165,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
     return () => clearInterval(id);
   }, [!!coach]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
-    if (!coach || !s) return;
+    if (!coach || !s || coach.pausedAt) return;
     if (coach.phase === 'prep') {
       const left = Math.max(0, Math.ceil((coach.endAt - now) / 1000));
       if (left === 0) { setCoach({ ...coach, phase: 'count', count: 0, nextAt: now + tempoSec * 1000 }); speakText('시작'); return; }
@@ -299,6 +299,13 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
       else { autoRun.current = false; speakText('운동 끝, 수고했어요', true); }
     }
   };
+  const toggleCoachPause = () => {
+    if (!coach) return;
+    const t = Date.now();
+    if (coach.pausedAt) { const d = t - coach.pausedAt; setNow(t); setCoach({ ...coach, pausedAt: undefined, endAt: coach.endAt + d, nextAt: coach.nextAt + d }); }
+    else { setNow(t); setCoach({ ...coach, pausedAt: t }); stopSpeaking(); }
+  };
+  const toggleVoice = () => { const v = !voice; setVoice(v); setSetting(db, 'voice_coach', v ? '1' : '0'); if (!v) stopSpeaking(); };
   const stopCoach = () => { autoRun.current = false; setCoach(null); stopSpeaking(); };
   const adjustPrep = (d: number) => {
     if (!coach || coach.phase !== 'prep') return;
@@ -855,6 +862,8 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
         next={restNext?.title ?? null}
         nextTip={restNext?.tip ?? null}
         stepSec={rest?.kind === 'exercise' ? 30 : 10}
+        title={s.exercises.find((e) => e.id === rest?.exId)?.exercise_name}
+        elapsed={fmtElapsed(elapsed)} guideOn={voice} onToggleGuide={toggleVoice}
         onPreset={(sec) => {
           if (!rest || rest.done) return;
           setRest({ ...rest, total: sec, endAt: Date.now() + sec * 1000 });
@@ -891,9 +900,14 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
           <CoachSheet
             visible
             phase={coach.phase} title={cex.exercise_name}
-            sub={`${crow.set_no}세트 · ${crow.weight != null && crow.weight > 0 ? `${crow.weight}kg × ` : ''}${coach.target}회`}
-            left={Math.max(0, Math.ceil((coach.endAt - now) / 1000))} total={coach.total}
+            sub={`${crow.weight != null && crow.weight > 0 ? `${crow.weight}kg x ` : ''}${coach.target}회`}
+            setNo={crow.set_no}
+            setLines={cex.sets.map((x) => `${x.set_no}세트  ${x.weight != null && x.weight > 0 ? `${x.weight}kg x ` : ''}${x.id === crow.id ? coach.target : x.reps ?? '-'}회`)}
+            curIdx={cex.sets.findIndex((x) => x.id === crow.id)}
+            left={Math.max(0, Math.ceil((coach.endAt - (coach.pausedAt ?? now)) / 1000))}
             count={coach.count} target={coach.target} tempoSec={tempoSec} exercisePrep={coach.fresh}
+            elapsed={fmtElapsed(elapsed)} paused={!!coach.pausedAt} guideOn={voice}
+            onTogglePause={toggleCoachPause} onToggleGuide={toggleVoice}
             onPrepAdjust={adjustPrep} onTempoAdjust={adjustTempo} onReady={readyCoach}
             onFinish={() => finishCoach(coach.count)} onStop={stopCoach}
           />
