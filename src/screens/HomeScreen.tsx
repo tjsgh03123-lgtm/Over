@@ -130,7 +130,7 @@ export function HomeScreen() {
             const done = doneSet.has(d);
             const isToday = d === today;
             return (
-              <View key={d} style={{ alignItems: 'center', flex: 1 }}>
+              <Pressable key={d} onPress={() => nav.openCalendar(d)} accessibilityRole="button" accessibilityLabel={`${d} 캘린더 열기`} style={{ alignItems: 'center', flex: 1 }}>
                 <T muted style={{ fontSize: 11, marginBottom: 4 }}>{WEEK_HEAD[i]}</T>
                 <View style={{
                   width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center',
@@ -138,7 +138,7 @@ export function HomeScreen() {
                 }}>
                   <Text style={{ color: done ? C.onAccent : C.muted, fontWeight: '800', fontSize: 13 }}>{Number(d.slice(8))}</Text>
                 </View>
-              </View>
+              </Pressable>
             );
           })}
         </Row>

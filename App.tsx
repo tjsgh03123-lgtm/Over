@@ -53,6 +53,7 @@ export default function App() {
   const [today, setToday] = useState(localDateStr());
   const [tab, setTab] = useState<Tab>('home');
   const [stack, setStack] = useState<Overlay[]>([]);
+  const [calDate, setCalDate] = useState<string | null>(null);
   const [mode, setModeState] = useState<ThemeMode>('dark');
   const [missed, setMissed] = useState<MissedRoutine | null>(null);
   const [cycleMode, setCycleMode] = useState(false);
@@ -120,7 +121,8 @@ export default function App() {
     openExercises: () => push({ name: 'exercises' }),
     openSetup: () => push({ name: 'setup' }),
     openSettings: () => push({ name: 'settings' }),
-    goTab: (t) => { setStack([]); setTab(t); },
+    goTab: (t) => { setStack([]); setCalDate(null); setTab(t); },
+    openCalendar: (date) => { setStack([]); setCalDate(date); setTab('calendar'); },
     close,
   }), [push, close]);
 
@@ -159,7 +161,7 @@ export default function App() {
       setSetting(db, 'graph_colors', JSON.stringify(next));
     },
   };
-  const ctx: AppCtx = { db, today, version, bump, nav, theme };
+  const ctx: AppCtx = { db, today, version, bump, calendarDate: calDate, nav, theme };
   const top = stack[stack.length - 1];
 
   const chooseMissed = async (choice: MissedChoice) => {
@@ -189,7 +191,7 @@ export default function App() {
               </View>
               <View style={{ flexDirection: 'row', backgroundColor: C.card, borderTopWidth: 1, borderTopColor: C.line }}>
                 {TABS.map((t) => (
-                  <Pressable key={t.key} onPress={() => setTab(t.key)} style={{ flex: 1, alignItems: 'center', paddingTop: 12, paddingBottom: 10 }}>
+                  <Pressable key={t.key} onPress={() => { setCalDate(null); setTab(t.key); }} style={{ flex: 1, alignItems: 'center', paddingTop: 12, paddingBottom: 10 }}>
                     <Text style={{ fontSize: 13, fontWeight: tab === t.key ? '800' : '500', color: tab === t.key ? C.text : C.muted }}>{t.label}</Text>
                     <View style={{ height: 3, width: 18, borderRadius: 2, marginTop: 5, backgroundColor: tab === t.key ? C.accent : 'transparent' }} />
                   </Pressable>

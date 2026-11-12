@@ -16,6 +16,8 @@ export interface Nav {
   openSetup(): void;
   openSettings(): void;
   goTab(t: Tab): void;
+  /** 해당 날짜를 선택한 상태로 캘린더 탭을 연다 */
+  openCalendar(date: string): void;
   close(): void;
 }
 
@@ -31,6 +33,8 @@ export interface AppCtx {
   /** DB가 바뀔 때마다 증가 — 화면은 이 값을 의존성으로 받아 자동 재조회한다 (그래프 자동 갱신) */
   version: number;
   bump(): void;
+  /** 캘린더 탭이 열릴 때 선택할 날짜 (탭을 직접 누르면 null) */
+  calendarDate: string | null;
   nav: Nav;
   theme: ThemeApi;
 }

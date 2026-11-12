@@ -9,10 +9,10 @@ import { fmtClock, fmtDuration } from '../domain/format.ts';
 const DAY = ['일', '월', '화', '수', '목', '금', '토'];
 
 export function CalendarScreen() {
-  const { db, today, version, nav, bump } = useApp();
-  const [ym, setYm] = useState(today.slice(0, 7));
+  const { db, today, version, nav, bump, calendarDate } = useApp();
+  const [ym, setYm] = useState((calendarDate ?? today).slice(0, 7));
   const [marks, setMarks] = useState<Record<string, { done: number; active: number; cardio: number }>>({});
-  const [sel, setSel] = useState(today);
+  const [sel, setSel] = useState(calendarDate ?? today);
   const [sessions, setSessions] = useState<SessionMeta[]>([]);
   const [cardio, setCardio] = useState<Awaited<ReturnType<typeof listCardio>>>([]);
 
