@@ -362,8 +362,8 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
     setCoach(null);
     if (!ex || !row) return;
     const info = setInfo(ex, row);
+    speakText(voiceTexts(ex, row).setOutro || `${row.set_no}세트 완료`, true); // 세트 완료 안내가 먼저, 그다음 휴식 안내
     const started = completeSet(ex, row, info.sugW, info.sugR, count, false); // 무게는 사용자가 정한 값 그대로(비어 있으면 비워 둠)
-    speakText(voiceTexts(ex, row).setOutro || `${row.set_no}세트 완료`, true);
     if (!started && autoRun.current) {
       const nx = nextUndone(ex.id, row.id);
       if (nx) startCoach(nx.ex, nx.row, ex.id);
