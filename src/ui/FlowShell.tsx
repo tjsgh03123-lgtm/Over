@@ -37,7 +37,7 @@ export function Pill({ label, onPress }: { label: string; onPress?: () => void }
 }
 
 export function FlowShell({
-  visible, elapsed, paused, guideOn, onBack, onToggleGuide, onPrev, onTogglePause, onNext, prevDisabled, nextDisabled, side, children, onClose,
+  visible, elapsed, paused, guideOn, onBack, onToggleGuide, onPrev, onTogglePause, onNext, prevDisabled, nextDisabled, side, children, onClose, overlay,
 }: {
   visible: boolean;
   elapsed: string;
@@ -52,6 +52,7 @@ export function FlowShell({
   nextDisabled?: boolean;
   side?: React.ReactNode; // 오른쪽 둥근 버튼 줄(⋯ 등)
   children: React.ReactNode;
+  overlay?: React.ReactNode; // 화면 전체를 덮는 시트(전체 목록 등)
   onClose: () => void;
 }) {
   const insets = useSafeAreaInsets();
@@ -86,6 +87,7 @@ export function FlowShell({
           {bar(paused ? 'play' : 'pause', onTogglePause, false, true)}
           {bar('next', onNext, nextDisabled)}
         </View>
+        {overlay}
       </View>
     </Modal>
   );

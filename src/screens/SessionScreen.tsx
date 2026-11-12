@@ -200,6 +200,16 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
 
   if (!s) return <View style={{ flex: 1, backgroundColor: C.bg }}><Header title="불러오는 중" onBack={nav.close} /></View>;
 
+  const listSheet = (
+    <WorkoutListSheet
+        visible={listOpen}
+        exercises={s.exercises}
+        currentExId={coach?.exId ?? live?.exId ?? null}
+        onWeight={async (id, v) => { await updateSet(db, id, { weight: v }); reload(); }}
+        onReps={async (id, v) => { await updateSet(db, id, { reps: v }); reload(); }}
+        onClose={() => setListOpen(false)}
+      />
+  );
   const editable = s.status === 'active';
   const allSets = s.exercises.flatMap((e) => e.sets);
   const allDone = allSets.length > 0 && allSets.every((x) => x.done);
@@ -929,7 +939,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
             left={Math.max(0, Math.ceil((coach.endAt - (coach.pausedAt ?? now)) / 1000))}
             count={coach.count} target={coach.target} tempoSec={tempoSec} exercisePrep={coach.fresh}
             elapsed={fmtElapsed(elapsed)} paused={!!coach.pausedAt} guideOn={voice}
-            onList={() => setListOpen(true)} onTogglePause={toggleCoachPause} onToggleGuide={toggleVoice}
+            onList={() => setListOpen(true)} overlay={listSheet} onTogglePause={toggleCoachPause} onToggleGuide={toggleVoice}
             onPrepAdjust={adjustPrep} onTempoCycle={cycleSpeed} onReady={readyCoach}
             onFinish={() => finishCoach(coach.count)} onStop={stopCoach}
           />
@@ -938,18 +948,10 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
       <SummaryModal data={summary} onClose={() => setSummary(null)} />
       <LiveCountModal
         visible={!!live}
-        onList={() => setListOpen(true)}
+        onList={() => setListOpen(true)} overlay={listSheet}
                 defaults={live ? { targetReps: live.target, totalSets: live.sets, restSec: live.restSec, focus: live.focus, tip: live.tip, source: live.source, exerciseName: live.name, prepSec, tempoSec, sound: voice, idleEndSec } : undefined}
         onClose={() => setLive(null)}
         onUse={(counts) => { const l = live; setLive(null); if (l) applyLiveCount(l.exId, counts); }}
-      />
-      <WorkoutListSheet
-        visible={listOpen}
-        exercises={s.exercises}
-        currentExId={coach?.exId ?? live?.exId ?? null}
-        onWeight={async (id, v) => { await updateSet(db, id, { weight: v }); reload(); }}
-        onReps={async (id, v) => { await updateSet(db, id, { reps: v }); reload(); }}
-        onClose={() => setListOpen(false)}
       />
       <ExercisePicker
         visible={picker}

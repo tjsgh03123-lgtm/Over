@@ -1,5 +1,5 @@
 import React from 'react';
-import { Modal, Pressable, ScrollView, View } from 'react-native';
+import { Pressable, ScrollView, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { SessionExRow } from '../db/repo.ts';
 import { FlowGlyph } from './FlowShell.tsx';
@@ -18,8 +18,10 @@ export function WorkoutListSheet({
   onClose: () => void;
 }) {
   const insets = useSafeAreaInsets();
+  if (!visible) return null;
+  // Modal 위에 Modal을 또 띄우면 기기에 따라 뒤에 가려지므로, 코칭 화면 안에 덮어씌우는 방식으로 그린다
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+    <View style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, zIndex: 50, elevation: 50 }}>
       <View style={{ flex: 1, backgroundColor: C.bg, paddingTop: insets.top + S.sm, paddingBottom: insets.bottom }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: S.lg, height: 52 }}>
           <Pressable onPress={onClose} hitSlop={12} accessibilityLabel="목록 닫기" style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
@@ -48,6 +50,6 @@ export function WorkoutListSheet({
           })}
         </ScrollView>
       </View>
-    </Modal>
+    </View>
   );
 }

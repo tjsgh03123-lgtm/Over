@@ -44,13 +44,13 @@ export type CountSource = 'camera' | 'tempo';
 export type LiveDefaults = FlowConfig & { focus?: Focus; tip?: string; source?: CountSource; tempoSec?: number; exerciseName?: string; sound?: boolean; idleEndSec?: number };
 
 export function LiveCountModal({
-  visible, onClose, onUse, defaults, onList,
-}: { visible: boolean; defaults?: LiveDefaults; onClose: () => void; onUse: (counts: number[]) => void; onList?: () => void }) {
+  visible, onClose, onUse, defaults, onList, overlay,
+}: { overlay?: React.ReactNode; visible: boolean; defaults?: LiveDefaults; onClose: () => void; onUse: (counts: number[]) => void; onList?: () => void }) {
   const leave = useRef<() => void>(() => {});
   if (!visible) return null;
   return (
     <Modal visible animationType="slide" onRequestClose={() => leave.current()}>
-      <LiveBody leave={leave} onList={onList} onClose={onClose} onUse={onUse} defaults={defaults ?? { targetReps: 10, totalSets: 3, restSec: 60 }} />
+      <LiveBody leave={leave} onList={onList} overlay={overlay} onClose={onClose} onUse={onUse} defaults={defaults ?? { targetReps: 10, totalSets: 3, restSec: 60 }} />
     </Modal>
   );
 }
@@ -85,7 +85,7 @@ function FlipIcon({ size = 26 }: { size?: number }) {
   );
 }
 
-function LiveBody({ onClose, onUse, defaults, leave, onList }: { onList?: () => void; leave: React.MutableRefObject<() => void>; onClose: () => void; onUse: (counts: number[]) => void; defaults: LiveDefaults }) {
+function LiveBody({ onClose, onUse, defaults, leave, onList, overlay }: { overlay?: React.ReactNode; onList?: () => void; leave: React.MutableRefObject<() => void>; onClose: () => void; onUse: (counts: number[]) => void; defaults: LiveDefaults }) {
   useKeepAwake();
   const { db } = useApp();
   const { width: winW, height: winH } = useWindowDimensions();
@@ -559,6 +559,7 @@ function LiveBody({ onClose, onUse, defaults, leave, onList }: { onList?: () => 
           </Card>
         )}
       </ScrollView>
+      {overlay}
     </View>
   );
 }

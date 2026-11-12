@@ -13,7 +13,7 @@ import { C, S } from './theme.ts';
 export function CoachSheet({
   visible, phase, title, sub, setNo, setLines, curIdx, left, count, target, tempoSec, exercisePrep,
   elapsed, paused, guideOn, onTogglePause, onToggleGuide,
-  onPrepAdjust, onTempoCycle, onReady, onList, onFinish, onStop,
+  onPrepAdjust, onTempoCycle, onReady, onList, overlay, onFinish, onStop,
 }: {
   visible: boolean;
   phase: 'prep' | 'count';
@@ -34,6 +34,7 @@ export function CoachSheet({
   onToggleGuide: () => void;
   onPrepAdjust: (deltaSec: number) => void;
   onList: () => void; // 전체 목록(무게 입력) 열기
+  overlay?: React.ReactNode;
   onTempoCycle: () => void; // 속도 칩을 누르면 다음 속도로 (0.5x → … → 2x → 0.5x)
   onReady: () => void; // 준비 건너뛰기
   onFinish: () => void; // 세트 끝(지금까지 센 횟수로 기록)
@@ -107,7 +108,7 @@ export function CoachSheet({
   return (
     <FlowShell
       visible={visible} elapsed={elapsed} paused={paused} guideOn={guideOn}
-      onBack={onStop} onClose={onStop} onToggleGuide={onToggleGuide} onTogglePause={onTogglePause}
+      overlay={overlay} onBack={onStop} onClose={onStop} onToggleGuide={onToggleGuide} onTogglePause={onTogglePause}
       onNext={phase === 'prep' ? onReady : onFinish} nextDisabled={phase === 'count' && count <= 0}
     >
       {body}
