@@ -30,7 +30,7 @@ export function RoundBtn({ label, onPress }: { label: string; onPress: () => voi
 
 export function Pill({ label, onPress }: { label: string; onPress?: () => void }) {
   return (
-    <Pressable onPress={onPress} style={{ paddingHorizontal: 16, height: 40, borderRadius: 20, backgroundColor: C.card2, alignItems: 'center', justifyContent: 'center' }}>
+    <Pressable onPress={onPress} hitSlop={10} style={{ paddingHorizontal: 18, minHeight: 48, borderRadius: 24, backgroundColor: C.card2, alignItems: 'center', justifyContent: 'center' }}>
       <T style={{ fontSize: 14 }}>{label}</T>
     </Pressable>
   );

@@ -351,16 +351,6 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
     if (rest.kind === 'exercise') { setExRest(total); setExerciseRest(db, total); }
   };
 
-  /** 세트 간 휴식 시간을 이 종목만 / 모든 종목에 저장 */
-  const saveSetRest = () => {
-    if (!rest) return;
-    const curEx = s.exercises.find((e) => e.id === rest.exId);
-    Alert.alert('휴식 시간 저장', `${fmtElapsed(rest.total)}을 어디에 쓸까요?`, [
-      { text: '취소', style: 'cancel' },
-      ...(curEx ? [{ text: '이 종목만', onPress: async () => { await setExerciseRestFor(db, curEx.exercise_id, rest.total); reload(); } }] : []),
-      { text: '모든 종목에', onPress: async () => { await setRestDefault(db, rest.total); reload(); } },
-    ]);
-  };
   /** 휴식 화면의 '다음' 안내: 세트 간이면 다음 세트와 무게·횟수, 종목 간이면 다음 종목 */
   const restNext = (() => {
     if (!rest) return null;
@@ -897,11 +887,14 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
           if (rest.kind === 'exercise') { setExRest(sec); setExerciseRest(db, sec); }
         }}
         onAdjust={adjustRest}
-        onStop={() => setRest(null)}
+        onStop={() => {
+          // 넘어가기: 자동 진행 중이면 휴식을 끝낸 것으로 처리해 다음 세트/종목으로 바로 이어 간다
+          if (rest && !rest.done && ((autoRun.current && runMode === 'manual') || (camAuto.current && runMode === 'camera'))) setRest({ ...rest, done: true });
+          else setRest(null);
+        }}
         onMini={() => setRestMini(true)}
         extra={rest ? (
           <Row>
-            {!rest.done && rest.kind === 'set' && <Btn label="이 시간 저장" kind="ghost" style={{ flex: 1 }} onPress={saveSetRest} />}
             {rest.kind === 'exercise' && rest.nextExId && (runMode === 'camera' || voice) && (
               <Btn
                 label={runMode === 'camera' ? '📷 카메라로 시작' : '🔊 보이스코칭 시작'} kind="ghost" style={{ flex: 1 }}
