@@ -65,6 +65,8 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
   const [runMode, setRunMode] = useState<RunMode>('manual'); // 진행 방식: 직접 기록 / 카메라 / 보이스코칭
   const [prepSec, setPrepSec] = useState(10);
   const [tempoSec, setTempoSec] = useState(3);
+  const [tempoMap, setTempoMap] = useState<Record<string, number>>({}); // 종목마다 정한 보이스 속도(박자 초)
+  const baseTempo = useRef(3); // 아직 속도를 정하지 않은 종목의 기본값
   const [voice, setVoice] = useState(false); // 보이스코칭 켬/끔 (직접 기록·카메라 공통)
   const [exPrepSec, setExPrepSec] = useState(20); // 새 종목 시작 전 준비 시간
   const [idleEndSec, setIdleEndSec] = useState(5);
@@ -129,6 +131,13 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
       setIdleEndSec(Number.isFinite(ie) && ie >= 2 ? ie : 5);
       const ts = Number(await getSetting(db, 'tempo_sec'));
       setTempoSec(Number.isFinite(ts) && ts >= 1 ? ts : 3);
+      baseTempo.current = Number.isFinite(ts) && ts >= 1 ? ts : 3;
+      const tm: Record<string, number> = {};
+      for (const e of full.exercises) {
+        const v = Number(await getSetting(db, `tempo_ex_${e.exercise_id}`));
+        if (Number.isFinite(v) && v >= 1) tm[e.exercise_id] = v;
+      }
+      setTempoMap(tm);
       if (full.template_id) {
         const t = await db.first<{ post_cardio_min: number | null }>('SELECT post_cardio_min FROM workout_templates WHERE id = ?', [full.template_id]);
         setPostCardioMin(t?.post_cardio_min ?? null);
@@ -246,7 +255,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
   const targetIdx = targetEx ? targetEx.sets.findIndex((x) => !x.done) : -1;
   const nameOf = (id: string) => s.exercises.find((e) => e.id === id)?.exercise_name ?? '';
 
-  const openLive = (ex: SessionExRow, source: CountSource = 'camera') => { liveRecorded.current = 0; setLive({
+  const openLive = (ex: SessionExRow, source: CountSource = 'camera') => { liveRecorded.current = 0; setTempoSec(tempoMap[ex.exercise_id] ?? baseTempo.current); setLive({
     source,
     exId: ex.id,
     target: ex.sets.find((x) => x.set_type !== 'warmup' && x.reps)?.reps ?? lasts[ex.id]?.reps ?? 10,
@@ -316,7 +325,9 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
     setNow(t); setFocus(null); setRest(null); setRestMini(false);
     autoRun.current = true;
     coachTick.current = -1;
-    setCoach({ exId: ex.id, setId: row.id, phase: secs > 0 ? 'prep' : 'count', fresh, endAt: t + secs * 1000, total: secs, count: 0, target: info.target, nextAt: t + tempoSec * 1000 });
+    const tp = tempoMap[ex.exercise_id] ?? baseTempo.current; // 이 종목에 정해 둔 속도로 진행
+    setTempoSec(tp);
+    setCoach({ exId: ex.id, setId: row.id, phase: secs > 0 ? 'prep' : 'count', fresh, endAt: t + secs * 1000, total: secs, count: 0, target: info.target, nextAt: t + tp * 1000 });
     speakText(secs > 0 ? (fresh ? `${ex.exercise_name}. 준비하세요` : `${row.set_no}세트 준비하세요`) : `${row.set_no}세트 시작`);
   };
   const beginCoach = (ex: SessionExRow, row: SetRow) => { setCoachMini(false); startCoach(ex, row); };
@@ -364,10 +375,16 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
     if (coach.fresh) { setExPrepSec(total); setSetting(db, 'ex_prep_sec', String(total)); }
     else { setPrepSec(total); setSetting(db, 'prep_sec', String(total)); }
   };
+  /** 속도를 바꾸면 이 종목의 속도로 저장한다(다음에도 같은 속도). 아직 정하지 않은 종목의 기본값도 같이 바꾼다 */
+  const saveTempo = (exId: string | null, t: number) => {
+    const ex = exId ? s?.exercises.find((e) => e.id === exId) : null;
+    if (ex) { setTempoMap((m) => ({ ...m, [ex.exercise_id]: t })); setSetting(db, `tempo_ex_${ex.exercise_id}`, String(t)); }
+    baseTempo.current = t; setSetting(db, 'tempo_sec', String(t));
+  };
   const cycleSpeed = () => {
     const t = cycleTempo(tempoSec);
     if (coach && coach.phase === 'count') setCoach({ ...coach, nextAt: coach.nextAt + (t - tempoSec) * 1000 });
-    setTempoSec(t); setSetting(db, 'tempo_sec', String(t));
+    setTempoSec(t); saveTempo(coach?.exId ?? live?.exId ?? null, t);
   };
   const readyCoach = () => {
     if (!coach || coach.phase !== 'prep') return;
@@ -1022,6 +1039,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
                 defaults={live ? { targetReps: live.target, totalSets: live.sets, restSec: live.restSec, focus: live.focus, tip: live.tip, source: live.source, exerciseName: live.name, prepSec, tempoSec, sound: voice, idleEndSec } : undefined}
         onClose={() => { liveRecorded.current = 0; setLive(null); setLiveMini(false); }}
         onSetDone={(_setNo, count) => { if (live) recordLiveSet(live.exId, count); }}
+        onTempo={(t) => { if (live) saveTempo(live.exId, t); }}
         onUse={(counts) => { const l = live; const rec = liveRecorded.current; liveRecorded.current = 0; setLive(null); setLiveMini(false); if (l) applyLiveCount(l.exId, counts.slice(rec), rec > 0); }}
       />
       <ExercisePicker

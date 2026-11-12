@@ -45,9 +45,9 @@ export type CountSource = 'camera' | 'tempo';
 export type LiveDefaults = FlowConfig & { focus?: Focus; tip?: string; source?: CountSource; tempoSec?: number; exerciseName?: string; sound?: boolean; idleEndSec?: number };
 
 export function LiveCountModal({
-  visible, onClose, onUse, onSetDone, defaults, onList, overlay, minimized, onMinimize, onExpand,
+  visible, onClose, onUse, onSetDone, onTempo, defaults, onList, overlay, minimized, onMinimize, onExpand,
 }: {
-  overlay?: React.ReactNode; visible: boolean; defaults?: LiveDefaults; onClose: () => void; onUse: (counts: number[]) => void; onSetDone?: (setNo: number, count: number) => void; onList?: () => void;
+  overlay?: React.ReactNode; visible: boolean; defaults?: LiveDefaults; onClose: () => void; onUse: (counts: number[]) => void; onSetDone?: (setNo: number, count: number) => void; onTempo?: (t: number) => void; onList?: () => void;
   /** 접힘: 화면은 숨기고 위쪽 작은 띠만 남긴 채 카메라·보이스 진행은 계속된다 */
   minimized?: boolean; onMinimize?: () => void; onExpand?: () => void;
 }) {
@@ -55,7 +55,7 @@ export function LiveCountModal({
   if (!visible) return null;
   // Modal이 아니라 화면 위에 덮는 방식: 접어도 카메라·박자가 계속 돌고, 아래 목록(무게 입력 등)을 쓸 수 있다
   return (
-    <LiveBody leave={leave} onSetDone={onSetDone} onList={onList} overlay={overlay} minimized={!!minimized} onMinimize={onMinimize} onExpand={onExpand} onClose={onClose} onUse={onUse} defaults={defaults ?? { targetReps: 10, totalSets: 3, restSec: 60 }} />
+    <LiveBody leave={leave} onSetDone={onSetDone} onTempo={onTempo} onList={onList} overlay={overlay} minimized={!!minimized} onMinimize={onMinimize} onExpand={onExpand} onClose={onClose} onUse={onUse} defaults={defaults ?? { targetReps: 10, totalSets: 3, restSec: 60 }} />
   );
 }
 
@@ -89,7 +89,7 @@ function FlipIcon({ size = 26 }: { size?: number }) {
   );
 }
 
-function LiveBody({ onClose, onUse, onSetDone, defaults, leave, onList, overlay, minimized, onMinimize, onExpand }: { minimized: boolean; onMinimize?: () => void; onExpand?: () => void; overlay?: React.ReactNode; onList?: () => void; leave: React.MutableRefObject<() => void>; onClose: () => void; onUse: (counts: number[]) => void; onSetDone?: (setNo: number, count: number) => void; defaults: LiveDefaults }) {
+function LiveBody({ onClose, onUse, onSetDone, onTempo, defaults, leave, onList, overlay, minimized, onMinimize, onExpand }: { minimized: boolean; onMinimize?: () => void; onExpand?: () => void; overlay?: React.ReactNode; onList?: () => void; leave: React.MutableRefObject<() => void>; onClose: () => void; onUse: (counts: number[]) => void; onSetDone?: (setNo: number, count: number) => void; onTempo?: (t: number) => void; defaults: LiveDefaults }) {
   useKeepAwake();
   const { db } = useApp();
   const { width: winW, height: winH } = useWindowDimensions();
@@ -453,7 +453,7 @@ function LiveBody({ onClose, onUse, onSetDone, defaults, leave, onList, overlay,
               {ph === 'resting' ? <T bold style={{ fontSize: 17, textAlign: 'center', marginTop: S.sm }}>{nextLine}</T> : null}
               <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: S.sm, marginTop: S.lg }}>
                 {ph === 'counting' && source === 'tempo' ? (
-                  <Pill label={`속도 ${fmtSpeed(speedOf(tempoSec))}`} onPress={() => { const t = cycleTempo(tempoSec); setTempoSec(t); setSetting(db, 'tempo_sec', String(t)); }} />
+                  <Pill label={`속도 ${fmtSpeed(speedOf(tempoSec))}`} onPress={() => { const t = cycleTempo(tempoSec); setTempoSec(t); onTempo?.(t); }} />
                 ) : ph === 'counting' ? (
                   <>
                     <Pill label="− 1" onPress={() => adjustCount(-1)} />
@@ -540,7 +540,7 @@ function LiveBody({ onClose, onUse, onSetDone, defaults, leave, onList, overlay,
                 {source === 'tempo' && (
                   <>
                     <Label>음성 속도</Label>
-                    <Segmented<string> options={SPEEDS.map((v) => ({ key: String(v), label: fmtSpeed(v) }))} value={String(nearestSpeed(speedOf(tempoSec)))} onChange={(k) => { const t = tempoOf(Number(k)); setTempoSec(t); setSetting(db, 'tempo_sec', String(t)); }} />
+                    <Segmented<string> options={SPEEDS.map((v) => ({ key: String(v), label: fmtSpeed(v) }))} value={String(nearestSpeed(speedOf(tempoSec)))} onChange={(k) => { const t = tempoOf(Number(k)); setTempoSec(t); onTempo?.(t); }} />
                   </>
                 )}
                 <T muted style={{ fontSize: 12, marginTop: 4 }}>준비 시간이 끝나기 전 3·2·1로 알려 주고 “시작”이라고 말합니다. 목표 횟수를 채우면 쉬는 시간을 알려 주고, 쉬고 나면 다시 준비 → 시작으로 이어져요.</T>
