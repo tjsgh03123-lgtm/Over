@@ -122,17 +122,18 @@ export function WizardScreen() {
                         <T bold style={{ flex: 1, fontSize: 16 }} numberOfLines={2}>{e.name}</T>
                         <Pressable hitSlop={8} onPress={() => removeEx(di, ei)} style={{ padding: 6 }}><Icon name="trash" size={18} color={C.muted} /></Pressable>
                       </Row>
-                      <Row style={{ gap: 8 }}>
+                      <Row style={{ gap: 6 }}>
                         {([
                           ['세트', String(e.sets), () => patchEx(di, ei, { sets: Math.max(1, e.sets - 1) }), () => patchEx(di, ei, { sets: Math.min(10, e.sets + 1) })],
                           ['횟수', e.repsMax && e.reps ? `${e.reps}-${e.repsMax}` : String(e.reps ?? '-'), () => patchEx(di, ei, { reps: Math.max(1, (e.reps ?? 10) - 1) }), () => patchEx(di, ei, { reps: Math.min(100, (e.reps ?? 10) + 1) })],
+                          ['휴식', e.restSec ? `${e.restSec}초` : '기본', () => patchEx(di, ei, { restSec: Math.max(15, (e.restSec ?? 90) - 15) }), () => patchEx(di, ei, { restSec: Math.min(600, (e.restSec ?? 90) + 15) })],
                         ] as [string, string, () => void, () => void][]).map(([lb, val, dec, inc]) => (
                           <View key={lb} style={{ flex: 1, backgroundColor: C.card2, borderRadius: R.md, borderWidth: 1, borderColor: C.line, padding: 8 }}>
                             <T muted style={{ fontSize: 12, marginBottom: 4 }}>{lb}</T>
                             <Row style={{ justifyContent: 'space-between' }}>
-                              <Pressable hitSlop={6} onPress={dec} style={{ padding: 8 }}><Icon name="minus" size={18} color={C.text} /></Pressable>
-                              <T bold style={{ fontSize: 18 }}>{val}</T>
-                              <Pressable hitSlop={6} onPress={inc} style={{ padding: 8 }}><Icon name="plus" size={18} color={C.text} /></Pressable>
+                              <Pressable hitSlop={6} onPress={dec} style={{ padding: 4 }}><Icon name="minus" size={16} color={C.text} /></Pressable>
+                              <T bold style={{ fontSize: 16 }}>{val}</T>
+                              <Pressable hitSlop={6} onPress={inc} style={{ padding: 4 }}><Icon name="plus" size={16} color={C.text} /></Pressable>
                             </Row>
                           </View>
                         ))}
