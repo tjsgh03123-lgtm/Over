@@ -25,6 +25,7 @@ import { Btn, Card, Chip, Header, NumInput, Row, T, TextField } from '../ui/comp
 import { ExercisePicker } from '../ui/ExercisePicker.tsx';
 import { RestSheet } from '../ui/RestSheet.tsx';
 import { CoachSheet } from '../ui/CoachSheet.tsx';
+import { WorkoutListSheet } from '../ui/WorkoutListSheet.tsx';
 import { C, S } from '../ui/theme.ts';
 import { useElapsed } from '../ui/useElapsed.ts';
 
@@ -70,6 +71,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
   const autoRun = useRef(false); // 직접 기록 보이스코칭이 세트를 이어서 자동 진행 중
   const camAuto = useRef(false); // 카메라가 종목을 이어서 자동 진행 중
   const coachTick = useRef(-1);
+  const [listOpen, setListOpen] = useState(false); // 보이스코칭·카메라 중 전체 목록(무게 입력)
   useEffect(() => { setSpeechTempo(tempoSec); }, [tempoSec]);
   const [restMini, setRestMini] = useState(false); // 휴식 화면을 작게(아래 줄) 보기
   const insets = useSafeAreaInsets();
@@ -927,7 +929,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
             left={Math.max(0, Math.ceil((coach.endAt - (coach.pausedAt ?? now)) / 1000))}
             count={coach.count} target={coach.target} tempoSec={tempoSec} exercisePrep={coach.fresh}
             elapsed={fmtElapsed(elapsed)} paused={!!coach.pausedAt} guideOn={voice}
-            onTogglePause={toggleCoachPause} onToggleGuide={toggleVoice}
+            onList={() => setListOpen(true)} onTogglePause={toggleCoachPause} onToggleGuide={toggleVoice}
             onPrepAdjust={adjustPrep} onTempoCycle={cycleSpeed} onReady={readyCoach}
             onFinish={() => finishCoach(coach.count)} onStop={stopCoach}
           />
@@ -936,9 +938,18 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
       <SummaryModal data={summary} onClose={() => setSummary(null)} />
       <LiveCountModal
         visible={!!live}
+        onList={() => setListOpen(true)}
                 defaults={live ? { targetReps: live.target, totalSets: live.sets, restSec: live.restSec, focus: live.focus, tip: live.tip, source: live.source, exerciseName: live.name, prepSec, tempoSec, sound: voice, idleEndSec } : undefined}
         onClose={() => setLive(null)}
         onUse={(counts) => { const l = live; setLive(null); if (l) applyLiveCount(l.exId, counts); }}
+      />
+      <WorkoutListSheet
+        visible={listOpen}
+        exercises={s.exercises}
+        currentExId={coach?.exId ?? live?.exId ?? null}
+        onWeight={async (id, v) => { await updateSet(db, id, { weight: v }); reload(); }}
+        onReps={async (id, v) => { await updateSet(db, id, { reps: v }); reload(); }}
+        onClose={() => setListOpen(false)}
       />
       <ExercisePicker
         visible={picker}

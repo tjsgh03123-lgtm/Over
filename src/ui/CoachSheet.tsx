@@ -13,7 +13,7 @@ import { C, S } from './theme.ts';
 export function CoachSheet({
   visible, phase, title, sub, setNo, setLines, curIdx, left, count, target, tempoSec, exercisePrep,
   elapsed, paused, guideOn, onTogglePause, onToggleGuide,
-  onPrepAdjust, onTempoCycle, onReady, onFinish, onStop,
+  onPrepAdjust, onTempoCycle, onReady, onList, onFinish, onStop,
 }: {
   visible: boolean;
   phase: 'prep' | 'count';
@@ -33,6 +33,7 @@ export function CoachSheet({
   onTogglePause: () => void;
   onToggleGuide: () => void;
   onPrepAdjust: (deltaSec: number) => void;
+  onList: () => void; // 전체 목록(무게 입력) 열기
   onTempoCycle: () => void; // 속도 칩을 누르면 다음 속도로 (0.5x → … → 2x → 0.5x)
   onReady: () => void; // 준비 건너뛰기
   onFinish: () => void; // 세트 끝(지금까지 센 횟수로 기록)
@@ -43,6 +44,11 @@ export function CoachSheet({
       <Pill label={a} onPress={aP} />
       <T muted style={{ minWidth: 80, textAlign: 'center' }}>{mid}</T>
       <Pill label={b} onPress={bP} />
+    </View>
+  );
+  const listBtn = (
+    <View style={{ flexDirection: 'row', justifyContent: 'center', marginTop: S.md }}>
+      <Pill label="전체 목록 · 무게" onPress={onList} />
     </View>
   );
   const next = `다음 세트 | ${setNo}세트, ${sub}`;
@@ -63,6 +69,7 @@ export function CoachSheet({
           <T bold style={{ fontSize: 44, lineHeight: 52 }}>{fmtElapsed(left)}</T>
         </View>
         {chips('− 5초', () => onPrepAdjust(-5), '준비 시간', '+ 5초', () => onPrepAdjust(5))}
+        {listBtn}
       </ScrollView>
     );
   } else if (phase === 'prep') {
@@ -75,6 +82,7 @@ export function CoachSheet({
         </View>
         <T bold style={{ fontSize: 20, textAlign: 'center' }}>{next}</T>
         {chips('− 5초', () => onPrepAdjust(-5), '준비 시간', '+ 5초', () => onPrepAdjust(5))}
+        {listBtn}
         <View style={{ height: S.xl }} />
       </View>
     );
@@ -91,6 +99,7 @@ export function CoachSheet({
         <View style={{ flexDirection: 'row', justifyContent: 'center', marginTop: S.lg }}>
           <Pill label={`속도 ${fmtSpeed(speedOf(tempoSec))}`} onPress={onTempoCycle} />
         </View>
+        {listBtn}
         <View style={{ height: S.xl }} />
       </View>
     );
