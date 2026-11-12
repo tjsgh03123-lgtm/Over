@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Alert, Modal, PermissionsAndroid, Platform, Pressable, ScrollView, Text, Vibration, View, useWindowDimensions } from 'react-native';
+import { Alert, BackHandler, Modal, PermissionsAndroid, Platform, Pressable, ScrollView, Text, Vibration, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { requireNativeView } from 'expo';
 import { useKeepAwake } from 'expo-keep-awake';
@@ -44,14 +44,17 @@ export type CountSource = 'camera' | 'tempo';
 export type LiveDefaults = FlowConfig & { focus?: Focus; tip?: string; source?: CountSource; tempoSec?: number; exerciseName?: string; sound?: boolean; idleEndSec?: number };
 
 export function LiveCountModal({
-  visible, onClose, onUse, defaults, onList, overlay,
-}: { overlay?: React.ReactNode; visible: boolean; defaults?: LiveDefaults; onClose: () => void; onUse: (counts: number[]) => void; onList?: () => void }) {
+  visible, onClose, onUse, defaults, onList, overlay, minimized, onMinimize, onExpand,
+}: {
+  overlay?: React.ReactNode; visible: boolean; defaults?: LiveDefaults; onClose: () => void; onUse: (counts: number[]) => void; onList?: () => void;
+  /** 접힘: 화면은 숨기고 위쪽 작은 띠만 남긴 채 카메라·보이스 진행은 계속된다 */
+  minimized?: boolean; onMinimize?: () => void; onExpand?: () => void;
+}) {
   const leave = useRef<() => void>(() => {});
   if (!visible) return null;
+  // Modal이 아니라 화면 위에 덮는 방식: 접어도 카메라·박자가 계속 돌고, 아래 목록(무게 입력 등)을 쓸 수 있다
   return (
-    <Modal visible animationType="slide" onRequestClose={() => leave.current()}>
-      <LiveBody leave={leave} onList={onList} overlay={overlay} onClose={onClose} onUse={onUse} defaults={defaults ?? { targetReps: 10, totalSets: 3, restSec: 60 }} />
-    </Modal>
+    <LiveBody leave={leave} onList={onList} overlay={overlay} minimized={!!minimized} onMinimize={onMinimize} onExpand={onExpand} onClose={onClose} onUse={onUse} defaults={defaults ?? { targetReps: 10, totalSets: 3, restSec: 60 }} />
   );
 }
 
@@ -85,7 +88,7 @@ function FlipIcon({ size = 26 }: { size?: number }) {
   );
 }
 
-function LiveBody({ onClose, onUse, defaults, leave, onList, overlay }: { overlay?: React.ReactNode; onList?: () => void; leave: React.MutableRefObject<() => void>; onClose: () => void; onUse: (counts: number[]) => void; defaults: LiveDefaults }) {
+function LiveBody({ onClose, onUse, defaults, leave, onList, overlay, minimized, onMinimize, onExpand }: { minimized: boolean; onMinimize?: () => void; onExpand?: () => void; overlay?: React.ReactNode; onList?: () => void; leave: React.MutableRefObject<() => void>; onClose: () => void; onUse: (counts: number[]) => void; defaults: LiveDefaults }) {
   useKeepAwake();
   const { db } = useApp();
   const { width: winW, height: winH } = useWindowDimensions();
@@ -324,11 +327,32 @@ function LiveBody({ onClose, onUse, defaults, leave, onList, overlay }: { overla
   const finalCounts = () => (mode === 'sets' && flow.current ? flow.current.finish(count) : count > 0 ? [count] : []);
   const leaveNow = () => { const c = finalCounts(); if (c.length) onUse(c); else onClose(); };
   leave.current = leaveNow;
+  // 안드로이드 뒤로 가기: 펼쳐 있으면 접기만 한다 (진행은 계속)
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (minimized || !onMinimize) return false;
+      onMinimize();
+      return true;
+    });
+    return () => sub.remove();
+  }, [minimized, onMinimize]);
 
-  return (
+  const fl = flow.current;
+  const miniText = (() => {
+    const who = defaults.exerciseName ? `${defaults.exerciseName} · ` : '';
+    if (mode === 'sets' && fl) {
+      const left = fl.secLeft(Date.now());
+      if (fl.phase === 'preparing') return `${who}${fl.setNo}세트 준비 ${left}초`;
+      if (fl.phase === 'resting') return `${who}휴식 ${left}초`;
+      if (fl.phase === 'done') return `${who}운동 끝`;
+      return `${who}${fl.setNo}/${cfg.totalSets}세트 · ${count}/${cfg.targetReps}회`;
+    }
+    return `${who}${count}회`;
+  })();
+  const body = (
     <View style={{ flex: 1, backgroundColor: C.bg, paddingTop: insets.top }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: S.lg, height: 52 }}>
-        <Pressable onPress={leaveNow} hitSlop={12} accessibilityLabel="뒤로" style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+        <Pressable onPress={onMinimize ?? leaveNow} hitSlop={12} accessibilityLabel="뒤로" style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
           <FlowGlyph kind="back" color={C.text} />
           <T bold style={{ fontSize: 18 }}>{source === 'tempo' ? '보이스코칭' : '카메라로 세기'}</T>
         </Pressable>
@@ -484,7 +508,8 @@ function LiveBody({ onClose, onUse, defaults, leave, onList, overlay }: { overla
           </View>
         )}
 
-        <T muted style={{ marginTop: S.lg, textAlign: 'center', fontSize: 12 }}>끝나면 뒤로 가기를 누르세요. 센 횟수가 자동으로 기록돼요.</T>
+        <T muted style={{ marginTop: S.lg, textAlign: 'center', fontSize: 12 }}>뒤로 가기는 화면만 접고 진행은 계속돼요. 다 끝나면 ‘종료하고 기록’을 누르세요.</T>
+        <Btn label="종료하고 기록" kind="ghost" style={{ marginTop: S.sm }} onPress={leaveNow} />
         <Row style={{ marginTop: S.sm }}>
           <Btn label={showSettings ? '설정 닫기' : '설정'} kind="ghost" style={{ flex: 1 }} onPress={() => setShowSettings((v) => !v)} />
         </Row>
@@ -560,6 +585,21 @@ function LiveBody({ onClose, onUse, defaults, leave, onList, overlay }: { overla
         )}
       </ScrollView>
       {overlay}
+    </View>
+  );
+  // 같은 구조를 유지해 접고 펼 때 카메라가 다시 켜지지 않게 한다
+  return (
+    <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, zIndex: 100, elevation: 100 }}>
+      <View pointerEvents={minimized ? 'none' : 'auto'} style={minimized ? { position: 'absolute', left: 0, top: 0, width: 1, height: 1, overflow: 'hidden', opacity: 0.01 } : { flex: 1 }}>
+        <View style={minimized ? { width: winW, height: winH } : { flex: 1 }}>{body}</View>
+      </View>
+      {minimized ? (
+        <View style={{ position: 'absolute', left: 12, right: 12, top: insets.top + 60, flexDirection: 'row', alignItems: 'center', gap: 8, padding: S.md, borderRadius: 16, backgroundColor: C.card2, borderWidth: 1, borderColor: C.line }}>
+          <T bold style={{ flex: 1, fontSize: 15 }} numberOfLines={1}>{source === 'camera' ? '📷 ' : '🔊 '}{miniText}</T>
+          <Btn label="열기" kind="ghost" small onPress={onExpand} />
+          <Btn label="종료" kind="ghost" small onPress={leaveNow} />
+        </View>
+      ) : null}
     </View>
   );
 }

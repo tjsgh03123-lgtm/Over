@@ -71,6 +71,8 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
   const autoRun = useRef(false); // 직접 기록 보이스코칭이 세트를 이어서 자동 진행 중
   const camAuto = useRef(false); // 카메라가 종목을 이어서 자동 진행 중
   const coachTick = useRef(-1);
+  const [coachMini, setCoachMini] = useState(false); // 보이스코칭 화면을 접고 목록으로 나가 있음 (진행은 계속)
+  const [liveMini, setLiveMini] = useState(false); // 카메라·보이스 세기 화면을 접음
   const [listOpen, setListOpen] = useState(false); // 보이스코칭·카메라 중 전체 목록(무게 입력)
   useEffect(() => { setSpeechTempo(tempoSec); }, [tempoSec]);
   const [restMini, setRestMini] = useState(false); // 휴식 화면을 작게(아래 줄) 보기
@@ -298,6 +300,8 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
     setCoach({ exId: ex.id, setId: row.id, phase: secs > 0 ? 'prep' : 'count', fresh, endAt: t + secs * 1000, total: secs, count: 0, target: info.target, nextAt: t + tempoSec * 1000 });
     speakText(secs > 0 ? (fresh ? `${ex.exercise_name}. 준비하세요` : `${row.set_no}세트 준비하세요`) : `${row.set_no}세트 시작`);
   };
+  const beginCoach = (ex: SessionExRow, row: SetRow) => { setCoachMini(false); startCoach(ex, row); };
+  const beginLive = (ex: SessionExRow, source: CountSource = 'camera') => { setLiveMini(false); openLive(ex, source); };
   const finishCoach = (count: number) => {
     if (!coach) return;
     const ex = s.exercises.find((e) => e.id === coach.exId);
@@ -310,7 +314,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
     if (!started && autoRun.current) {
       const nx = nextUndone(ex.id, row.id);
       if (nx) startCoach(nx.ex, nx.row, ex.id);
-      else { autoRun.current = false; speakText('운동 끝, 수고했어요', true); }
+      else { autoRun.current = false; setCoachMini(false); speakText('운동 끝, 수고했어요', true); }
     }
   };
   const toggleCoachPause = () => {
@@ -329,11 +333,11 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
     if (!v) { autoRun.current = false; setCoach(null); stopSpeaking(); return; }
     if (editable && runMode === 'manual' && !coach && !live) {
       const nx = nextUndone(openEx ?? undefined);
-      if (nx) startCoach(nx.ex, nx.row);
+      if (nx) beginCoach(nx.ex, nx.row);
     }
   };
   const toggleVoice = () => setVoiceOn(!voice);
-  const stopCoach = () => { autoRun.current = false; setCoach(null); stopSpeaking(); };
+  const stopCoach = () => { autoRun.current = false; setCoach(null); setCoachMini(false); stopSpeaking(); };
   const adjustPrep = (d: number) => {
     if (!coach || coach.phase !== 'prep') return;
     const total = Math.max(5, coach.total + d);
@@ -482,6 +486,20 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
           <SumStat label="종목" value={`${s.exercises.filter((e) => doneWorkingCount(e.sets) > 0).length}/${s.exercises.length}`} />
         </Row>
       )}
+      {editable && coach && coachMini && (() => {
+        const cex = s.exercises.find((e) => e.id === coach.exId);
+        const crow = cex?.sets.find((x) => x.id === coach.setId);
+        const left = Math.max(0, Math.ceil((coach.endAt - (coach.pausedAt ?? now)) / 1000));
+        const txt = coach.phase === 'prep' ? `${crow?.set_no ?? ''}세트 준비 ${left}초` : `${crow?.set_no ?? ''}세트 · ${coach.count}/${coach.target}회`;
+        return (
+          <Row style={{ margin: S.md, marginBottom: 0, padding: S.md, borderRadius: 16, backgroundColor: C.card2, borderWidth: 1, borderColor: C.line }}>
+            <T bold style={{ flex: 1, fontSize: 15 }} numberOfLines={1}>{'🔊 '}{cex?.exercise_name} · {coach.pausedAt ? '일시정지' : txt}</T>
+            <Btn label={coach.pausedAt ? '재개' : '일시정지'} kind="ghost" small onPress={toggleCoachPause} />
+            <Btn label="열기" kind="ghost" small onPress={() => setCoachMini(false)} />
+            <Btn label="종료" kind="ghost" small onPress={stopCoach} />
+          </Row>
+        );
+      })()}
       <ScrollView contentContainerStyle={{ padding: S.lg, paddingBottom: 240 }} keyboardShouldPersistTaps="handled">
         {editable && s.exercises.length > 0 && (
           <Row style={{ marginBottom: S.sm, flexWrap: 'wrap' }}>
@@ -501,8 +519,8 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
               label={`${runMode === 'camera' ? '📷 ' : ''}${started ? '이어서 운동하기' : '운동 시작'}`}
               style={{ marginBottom: S.md, height: 56 }}
               onPress={() => {
-                if (runMode === 'camera') { camAuto.current = true; return openLive(nx.ex, 'camera'); }
-                startCoach(nx.ex, nx.row);
+                if (runMode === 'camera') { camAuto.current = true; return beginLive(nx.ex, 'camera'); }
+                beginCoach(nx.ex, nx.row);
               }}
             />
           );
@@ -522,9 +540,9 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
                 onPress={() => {
                   const ex = s.exercises.find((e) => e.id === cur.exId);
                   if (!ex) return;
-                  if (runMode === 'camera') return openLive(ex, 'camera');
+                  if (runMode === 'camera') return beginLive(ex, 'camera');
                   const row = ex.sets.find((x) => !x.done);
-                  if (row) startCoach(ex, row);
+                  if (row) beginCoach(ex, row);
                 }}
               />
             )}
@@ -593,8 +611,8 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
                   )}
                   {editable && (
                     <Row style={{ marginBottom: S.sm }}>
-                      {!cur && <Btn label="📷 카메라로 세기" kind="ghost" small style={{ flex: 1 }} onPress={() => openLive(ex, 'camera')} />}
-                      {!cur && <Btn label="🔊 보이스코칭" kind="ghost" small style={{ flex: 1 }} onPress={() => openLive(ex, 'tempo')} />}
+                      {!cur && <Btn label="📷 카메라로 세기" kind="ghost" small style={{ flex: 1 }} onPress={() => beginLive(ex, 'camera')} />}
+                      {!cur && <Btn label="🔊 보이스코칭" kind="ghost" small style={{ flex: 1 }} onPress={() => beginLive(ex, 'tempo')} />}
                       {prevSets.length > 0 && (
                         <Btn label="불러오기" kind="ghost" small onPress={async () => {
                           const free = ex.sets.filter((x) => !x.done && x.set_type !== 'warmup');
@@ -807,7 +825,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
 
       {editable && (
         <View style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: S.lg, backgroundColor: C.bg, borderTopWidth: 1, borderTopColor: C.line }}>
-          {rest && restMini && (
+          {rest && (restMini || coachMini || liveMini) && (
             <Row style={{ marginBottom: S.sm, padding: S.md, borderRadius: 12, backgroundColor: C.card2, borderWidth: 1, borderColor: rest.done ? C.accent : C.line }}>
               <View style={{ flex: 1 }}>
                 <T bold style={{ fontSize: 16 }}>{rest.done ? (rest.kind === 'exercise' ? '휴식 끝 · 다음 종목' : '휴식 끝 · 다음 세트') : `${rest.kind === 'exercise' ? '종목 간 휴식' : '휴식'} ${fmtElapsed(restLeft)}`}</T>
@@ -828,8 +846,8 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
             onPress={() => {
               if (!targetEx || targetIdx < 0) return;
               const row = targetEx.sets[targetIdx];
-              if (runMode === 'camera') return openLive(targetEx, 'camera');
-              if (voice) return startCoach(targetEx, row);
+              if (runMode === 'camera') return beginLive(targetEx, 'camera');
+              if (voice) return beginCoach(targetEx, row);
               const inf = setInfo(targetEx, row);
               completeSet(targetEx, row, inf.sugW, inf.sugR);
             }}
@@ -881,7 +899,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
         );
       })()}
       <RestSheet
-        visible={!!rest && !restMini}
+        visible={!!rest && !restMini && !coachMini && !liveMini}
         kind={rest?.kind ?? 'set'}
         left={restLeft}
         total={rest?.total ?? 0}
@@ -914,9 +932,9 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
                   const ex = s.exercises.find((e) => e.id === rest.nextExId);
                   if (!ex) return;
                   setRest(null);
-                  if (runMode === 'camera') return openLive(ex, 'camera');
+                  if (runMode === 'camera') return beginLive(ex, 'camera');
                   const row = ex.sets.find((x) => !x.done);
-                  if (row) startCoach(ex, row);
+                  if (row) beginCoach(ex, row);
                 }}
               />
             )}
@@ -930,7 +948,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
         const inf = setInfo(cex, crow);
         return (
           <CoachSheet
-            visible
+            visible={!coachMini}
             phase={coach.phase} title={cex.exercise_name}
             sub={`${crow.weight != null && crow.weight > 0 ? `${crow.weight}kg x ` : ''}${coach.target}회`}
             setNo={crow.set_no}
@@ -939,7 +957,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
             left={Math.max(0, Math.ceil((coach.endAt - (coach.pausedAt ?? now)) / 1000))}
             count={coach.count} target={coach.target} tempoSec={tempoSec} exercisePrep={coach.fresh}
             elapsed={fmtElapsed(elapsed)} paused={!!coach.pausedAt} guideOn={voice}
-            onList={() => setListOpen(true)} overlay={listSheet} onTogglePause={toggleCoachPause} onToggleGuide={toggleVoice}
+            onList={() => setListOpen(true)} overlay={listSheet} onMinimize={() => setCoachMini(true)} onTogglePause={toggleCoachPause} onToggleGuide={toggleVoice}
             onPrepAdjust={adjustPrep} onTempoCycle={cycleSpeed} onReady={readyCoach}
             onFinish={() => finishCoach(coach.count)} onStop={stopCoach}
           />
@@ -949,9 +967,10 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
       <LiveCountModal
         visible={!!live}
         onList={() => setListOpen(true)} overlay={listSheet}
+        minimized={liveMini} onMinimize={() => setLiveMini(true)} onExpand={() => setLiveMini(false)}
                 defaults={live ? { targetReps: live.target, totalSets: live.sets, restSec: live.restSec, focus: live.focus, tip: live.tip, source: live.source, exerciseName: live.name, prepSec, tempoSec, sound: voice, idleEndSec } : undefined}
-        onClose={() => setLive(null)}
-        onUse={(counts) => { const l = live; setLive(null); if (l) applyLiveCount(l.exId, counts); }}
+        onClose={() => { setLive(null); setLiveMini(false); }}
+        onUse={(counts) => { const l = live; setLive(null); setLiveMini(false); if (l) applyLiveCount(l.exId, counts); }}
       />
       <ExercisePicker
         visible={picker}
