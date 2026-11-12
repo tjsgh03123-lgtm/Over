@@ -307,7 +307,20 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
     if (coach.pausedAt) { const d = t - coach.pausedAt; setNow(t); setCoach({ ...coach, pausedAt: undefined, endAt: coach.endAt + d, nextAt: coach.nextAt + d }); }
     else { setNow(t); setCoach({ ...coach, pausedAt: t }); stopSpeaking(); }
   };
-  const toggleVoice = () => { const v = !voice; setVoice(v); setSetting(db, 'voice_coach', v ? '1' : '0'); if (!v) stopSpeaking(); };
+  /**
+   * 보이스 켬/끔. 직접 기록(카메라 끔) 중에 켜면 지금 해야 할 종목·세트에 맞춰 보이스 진행을 시작하고,
+   * 끄면 진행을 멈추고 수동 체크로 돌아간다. 껐다 다시 켜도 같은 방식으로 이어진다.
+   * 카메라가 켜져 있으면 카메라가 센 횟수에 맞춰 소리를 내는 설정만 바뀐다.
+   */
+  const setVoiceOn = (v: boolean) => {
+    setVoice(v); setSetting(db, 'voice_coach', v ? '1' : '0');
+    if (!v) { autoRun.current = false; setCoach(null); stopSpeaking(); return; }
+    if (editable && runMode === 'manual' && !coach && !live) {
+      const nx = nextUndone(openEx ?? undefined);
+      if (nx) startCoach(nx.ex, nx.row);
+    }
+  };
+  const toggleVoice = () => setVoiceOn(!voice);
   const stopCoach = () => { autoRun.current = false; setCoach(null); stopSpeaking(); };
   const adjustPrep = (d: number) => {
     if (!coach || coach.phase !== 'prep') return;
@@ -474,10 +487,10 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
               <Chip key={m} label={RUN_LABEL[m]} active={runMode === m} onPress={() => { setRunMode(m); setSetting(db, 'run_mode', m); }} />
             ))}
             <View style={{ width: 8 }} />
-            <Chip label={voice ? '🔊 보이스코칭 켬' : '🔇 보이스코칭 끔'} active={voice} onPress={() => { const v = !voice; setVoice(v); setSetting(db, 'voice_coach', v ? '1' : '0'); if (!v) { autoRun.current = false; setCoach(null); stopSpeaking(); } }} />
+            <Chip label={voice ? '🔊 보이스코칭 켬' : '🔇 보이스코칭 끔'} active={voice} onPress={toggleVoice} />
           </Row>
         )}
-        {editable && !coach && !live && (() => {
+        {editable && !coach && !live && (runMode === 'camera' || voice) && (() => {
           const nx = nextUndone();
           if (!nx) return null;
           const started = s.exercises.some((e) => e.sets.some((x) => x.done));
