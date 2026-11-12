@@ -126,7 +126,7 @@ export function WizardScreen() {
                         {([
                           ['세트', String(e.sets), () => patchEx(di, ei, { sets: Math.max(1, e.sets - 1) }), () => patchEx(di, ei, { sets: Math.min(10, e.sets + 1) })],
                           ['횟수', e.repsMax && e.reps ? `${e.reps}-${e.repsMax}` : String(e.reps ?? '-'), () => patchEx(di, ei, { reps: Math.max(1, (e.reps ?? 10) - 1) }), () => patchEx(di, ei, { reps: Math.min(100, (e.reps ?? 10) + 1) })],
-                          ['휴식', e.restSec ? `${e.restSec}초` : '기본', () => patchEx(di, ei, { restSec: Math.max(15, (e.restSec ?? 90) - 15) }), () => patchEx(di, ei, { restSec: Math.min(600, (e.restSec ?? 90) + 15) })],
+                          ['휴식(초)', e.restSec ? String(e.restSec) : '기본', () => patchEx(di, ei, { restSec: Math.max(15, (e.restSec ?? 90) - 15) }), () => patchEx(di, ei, { restSec: Math.min(600, (e.restSec ?? 90) + 15) })],
                         ] as [string, string, () => void, () => void][]).map(([lb, val, dec, inc]) => (
                           <View key={lb} style={{ flex: 1, backgroundColor: C.card2, borderRadius: R.md, borderWidth: 1, borderColor: C.line, padding: 8 }}>
                             <T muted style={{ fontSize: 12, marginBottom: 4 }}>{lb}</T>
