@@ -1,6 +1,7 @@
 import React from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
 import { fmtElapsed } from '../domain/format.ts';
+import { fmtSpeed, speedOf } from '../domain/voiceSpeed.ts';
 import { FlowShell, Pill } from './FlowShell.tsx';
 import { T } from './components.tsx';
 import { C, S } from './theme.ts';
@@ -32,7 +33,7 @@ export function CoachSheet({
   onTogglePause: () => void;
   onToggleGuide: () => void;
   onPrepAdjust: (deltaSec: number) => void;
-  onTempoAdjust: (deltaSec: number) => void;
+  onTempoAdjust: (dir: 1 | -1) => void; // 속도 한 단계 느리게(-1)/빠르게(+1)
   onReady: () => void; // 준비 건너뛰기
   onFinish: () => void; // 세트 끝(지금까지 센 횟수로 기록)
   onStop: () => void; // 코칭 중단
@@ -87,7 +88,7 @@ export function CoachSheet({
           <T bold style={{ fontSize: 34, marginLeft: 12, marginTop: 70 }}>{`/ ${target}회`}</T>
         </View>
         <T bold style={{ fontSize: 20, textAlign: 'center' }}>{`${setNo}세트 진행중 | ${sub}`}</T>
-        {chips('− 0.5초', () => onTempoAdjust(-0.5), `한 회 ${tempoSec}초`, '+ 0.5초', () => onTempoAdjust(0.5))}
+        {chips('느리게', () => onTempoAdjust(-1), `속도 ${fmtSpeed(speedOf(tempoSec))}`, '빠르게', () => onTempoAdjust(1))}
         <View style={{ height: S.xl }} />
       </View>
     );

@@ -1,3 +1,4 @@
+import * as vs from '../src/domain/voiceSpeed.ts';
 import assert from 'node:assert/strict';
 import { flattenSessions, resolveIntensity } from '../src/domain/intensity.ts';
 import {
@@ -1225,5 +1226,13 @@ test('기본 종목 목록: 이름이 겹치지 않고, 새로 넣은 종목이 
 
 
 
+test('보이스 속도: 3초 간격이 1x, 한 단계씩 바뀌고 끝에서 멈춘다', () => {
+  assert.equal(vs.speedOf(3), 1);
+  assert.equal(vs.fmtSpeed(vs.speedOf(2)), '1.5x');
+  assert.ok(Math.abs(vs.stepTempo(3, 1) - 3 / 1.25) < 1e-9);
+  assert.ok(Math.abs(vs.stepTempo(3, -1) - 4) < 1e-9);
+  assert.equal(vs.stepTempo(1.5, 1), 1.5);
+  assert.equal(vs.stepTempo(6, -1), 6);
+});
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

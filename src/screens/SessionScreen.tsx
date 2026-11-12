@@ -11,6 +11,8 @@ import { warmupPlan } from '../domain/warmup.ts';
 import { bestE1rm, doneWorkingCount, e1rm, recommendNext, streakWeeks, volumeOf } from '../domain/workoutStats.ts';
 import { SetSheet } from '../ui/SetSheet.tsx';
 import { SummaryModal, type SummaryData } from '../ui/SummaryModal.tsx';
+import { stepTempo } from '../domain/voiceSpeed.ts';
+import { setSpeechTempo } from '../services/speak.ts';
 import { currentOf, restAfter, type GEx } from '../domain/guided.ts';
 import type { Focus as LiveFocus } from '../domain/liveCount.ts';
 import { speakCount, speakText, stopSpeaking } from '../services/speak.ts';
@@ -68,6 +70,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
   const autoRun = useRef(false); // 직접 기록 보이스코칭이 세트를 이어서 자동 진행 중
   const camAuto = useRef(false); // 카메라가 종목을 이어서 자동 진행 중
   const coachTick = useRef(-1);
+  useEffect(() => { setSpeechTempo(tempoSec); }, [tempoSec]);
   const [restMini, setRestMini] = useState(false); // 휴식 화면을 작게(아래 줄) 보기
   const insets = useSafeAreaInsets();
 
@@ -313,8 +316,8 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
     if (coach.fresh) { setExPrepSec(total); setSetting(db, 'ex_prep_sec', String(total)); }
     else { setPrepSec(total); setSetting(db, 'prep_sec', String(total)); }
   };
-  const adjustTempo = (d: number) => {
-    const t = Math.max(1, Math.min(10, Math.round((tempoSec + d) * 2) / 2));
+  const adjustTempo = (dir: 1 | -1) => {
+    const t = stepTempo(tempoSec, dir);
     if (coach && coach.phase === 'count') setCoach({ ...coach, nextAt: coach.nextAt + (t - tempoSec) * 1000 });
     setTempoSec(t); setSetting(db, 'tempo_sec', String(t));
   };

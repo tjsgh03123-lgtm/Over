@@ -1,5 +1,10 @@
 import * as Speech from 'expo-speech';
 import { countWord } from '../domain/liveCount.ts';
+import { speedOf, voiceRate } from '../domain/voiceSpeed.ts';
+
+let speed = 1;
+/** 보이스코칭 속도(한 회당 초 기준)를 목소리에도 적용한다 */
+export function setSpeechTempo(tempoSec: number): void { speed = speedOf(tempoSec); }
 
 /** 횟수를 소리 내어 읽어 준다 (하나, 둘, 셋…). 앞의 소리가 남아 있으면 끊고 새로 읽는다. */
 export function speakCount(n: number): void {
@@ -7,7 +12,7 @@ export function speakCount(n: number): void {
   if (!w) return;
   try {
     Speech.stop();
-    Speech.speak(w, { language: 'ko-KR', rate: 1.15 });
+    Speech.speak(w, { language: 'ko-KR', rate: voiceRate(speed, 1.15) });
   } catch { /* 음성 기능이 없으면 무시 */ }
 }
 
@@ -19,6 +24,6 @@ export function stopSpeaking(): void {
 export function speakText(text: string, queue = false): void {
   try {
     if (!queue) Speech.stop();
-    Speech.speak(text, { language: 'ko-KR', rate: 1.1 });
+    Speech.speak(text, { language: 'ko-KR', rate: voiceRate(speed, 1.1) });
   } catch { /* 무시 */ }
 }

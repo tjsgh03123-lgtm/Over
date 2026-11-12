@@ -13,7 +13,8 @@ import { buildPoseLog, LOG_SECONDS, type LogEvent, type LogFrame } from '../doma
 import { shareTextFile, stamp } from '../services/files.ts';
 import { AutoRepCounter, countWord, FOCUS_LABEL, type Focus, rangeText, STRICT_LABEL, type Strictness } from '../domain/liveCount.ts';
 import { SetFlow, type FlowConfig, type FlowEvent } from '../domain/setFlow.ts';
-import { speakCount, speakText, stopSpeaking } from '../services/speak.ts';
+import { speakCount, speakText, stopSpeaking, setSpeechTempo } from '../services/speak.ts';
+import { fmtSpeed, nearestSpeed, SPEEDS, speedOf, tempoOf } from '../domain/voiceSpeed.ts';
 import { Btn, Card, Chip, Header, Row, Segmented, T } from './components.tsx';
 import { FlowGlyph, Pill } from './FlowShell.tsx';
 import { C, GC, S } from './theme.ts';
@@ -95,7 +96,8 @@ function LiveBody({ onClose, onUse, defaults, leave }: { leave: React.MutableRef
   const [mode, setMode] = useState<'free' | 'sets'>('sets'); // 세트 자동 진행 / 자유 카운트
   const [cfg, setCfg] = useState<FlowConfig>({ targetReps: defaults.targetReps, totalSets: defaults.totalSets, restSec: defaults.restSec, prepSec: defaults.prepSec ?? 10, idleEndSec: (defaults.source ?? 'camera') === 'camera' ? (defaults.idleEndSec ?? 5) : undefined });
   const [source, setSource] = useState<CountSource>(defaults.source ?? 'camera'); // 카메라로 세기 / 박자에 맞춰 세기
-  const [tempoSec, setTempoSec] = useState(defaults.tempoSec ?? 3); // 박자: 한 회당 초
+  const [tempoSec, setTempoSec] = useState(defaults.tempoSec ?? 3); // 박자: 한 회당 초 (화면에는 배속으로 보여 줌)
+  useEffect(() => { setSpeechTempo(tempoSec); }, [tempoSec]);
   const nextAt = useRef(0);
   const flow = useRef<SetFlow | null>(null);
   const [, flowRender] = useState(0);
@@ -456,7 +458,7 @@ function LiveBody({ onClose, onUse, defaults, leave }: { leave: React.MutableRef
         )}
         <T muted style={{ textAlign: 'center' }}>
           {source === 'tempo'
-            ? (count === 0 ? '준비가 끝나면 음성으로 세기 시작해요' : `${tempoSec}초 간격 · 음성에 맞춰 동작하세요`)
+            ? (count === 0 ? '준비가 끝나면 음성으로 세기 시작해요' : `속도 ${fmtSpeed(speedOf(tempoSec))} · 음성에 맞춰 동작하세요`)
             : count === 0
             ? '폰을 세워 두고 운동을 시작하면 자동으로 셉니다'
             : `${cnt.jointLabel ?? ''} 움직임 감지${lastMs != null ? ` · 마지막 ${fmtRep(lastMs)}` : ''}${cnt.avgRepMs != null ? ` · 평균 ${fmtRep(cnt.avgRepMs)}` : ''}`}
@@ -502,7 +504,10 @@ function LiveBody({ onClose, onUse, defaults, leave }: { leave: React.MutableRef
                   <Stepper label="동작이 멈추면 세트 끝 (초)" value={cfg.idleEndSec ?? 5} unit="초" step={1} min={2} max={20} onChange={(v) => { setCfg((c) => ({ ...c, idleEndSec: v })); setSetting(db, 'idle_end_sec', String(v)); }} />
                 )}
                 {source === 'tempo' && (
-                  <Stepper label="음성 간격 (한 회당)" value={tempoSec} unit="초" step={0.5} min={1} max={10} onChange={(v) => { setTempoSec(v); setSetting(db, 'tempo_sec', String(v)); }} />
+                  <>
+                    <Label>음성 속도</Label>
+                    <Segmented<string> options={SPEEDS.map((v) => ({ key: String(v), label: fmtSpeed(v) }))} value={String(nearestSpeed(speedOf(tempoSec)))} onChange={(k) => { const t = tempoOf(Number(k)); setTempoSec(t); setSetting(db, 'tempo_sec', String(t)); }} />
+                  </>
                 )}
                 <T muted style={{ fontSize: 12, marginTop: 4 }}>준비 시간이 끝나기 전 3·2·1로 알려 주고 “시작”이라고 말합니다. 목표 횟수를 채우면 쉬는 시간을 알려 주고, 쉬고 나면 다시 준비 → 시작으로 이어져요.</T>
               </>

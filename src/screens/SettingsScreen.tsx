@@ -1,3 +1,4 @@
+import { fmtSpeed, nearestSpeed, SPEEDS, speedOf, tempoOf } from '../domain/voiceSpeed.ts';
 import React, { useEffect, useState } from 'react';
 import { Alert, Pressable, ScrollView, View } from 'react-native';
 import { useApp } from '../app/context.tsx';
@@ -14,7 +15,6 @@ const EX_RESTS = [90, 120, 180, 240, 300];
 const GOALS = [8, 12, 16, 20];
 const PREPS = [0, 5, 10, 15, 20, 30];
 const EX_PREPS = [5, 10, 20, 30, 45, 60];
-const TEMPOS = [1.5, 2, 3, 4, 5];
 const IDLES = [3, 5, 7, 10];
 const BARS = [15, 20];
 const restLabel = (v: number) => (v === 0 ? '끄기' : v % 60 === 0 ? `${v / 60}분` : `${v}초`);
@@ -87,8 +87,8 @@ export function SettingsScreen() {
         <Segmented options={PREPS.map((v) => ({ key: String(v), label: v === 0 ? '없음' : `${v}초` }))} value={String(prep)} onChange={(k) => { setPrep(Number(k)); setSetting(db, 'prep_sec', k); }} />
         <T muted style={{ fontSize: 12, marginTop: S.md, marginBottom: S.sm }}>종목 준비 — 다음 종목으로 넘어갈 때 준비 시간 (‘준비 끝’을 누르면 5초 뒤 시작)</T>
         <Segmented options={EX_PREPS.map((v) => ({ key: String(v), label: `${v}초` }))} value={String(exPrep)} onChange={(k) => { setExPrep(Number(k)); setSetting(db, 'ex_prep_sec', k); }} />
-        <T muted style={{ fontSize: 12, marginTop: S.md, marginBottom: S.sm }}>박자 — 보이스코칭이 한 회를 세는 간격</T>
-        <Segmented options={TEMPOS.map((v) => ({ key: String(v), label: `${v}초` }))} value={String(tempo)} onChange={(k) => { setTempo(Number(k)); setSetting(db, 'tempo_sec', k); }} />
+        <T muted style={{ fontSize: 12, marginTop: S.md, marginBottom: S.sm }}>음성 속도 — 보이스코칭이 숫자를 읽는 빠르기 (1x = 한 회 3초 간격)</T>
+        <Segmented options={SPEEDS.map((v) => ({ key: String(v), label: fmtSpeed(v) }))} value={String(nearestSpeed(speedOf(tempo)))} onChange={(k) => { const t = tempoOf(Number(k)); setTempo(t); setSetting(db, 'tempo_sec', String(t)); }} />
         <T muted style={{ fontSize: 12, marginTop: S.md, marginBottom: S.sm }}>카메라 — 동작이 이만큼 멈추면 세트 끝 (센 횟수 그대로 기록)</T>
         <Segmented options={IDLES.map((v) => ({ key: String(v), label: `${v}초` }))} value={String(idle)} onChange={(k) => { setIdle(Number(k)); setSetting(db, 'idle_end_sec', k); }} />
       </Card>
