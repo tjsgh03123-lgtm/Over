@@ -69,6 +69,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
   const [exPrepSec, setExPrepSec] = useState(20); // 새 종목 시작 전 준비 시간
   const [idleEndSec, setIdleEndSec] = useState(5);
   const [coach, setCoach] = useState<Coach>(null); // 보이스코칭 진행(직접 기록)
+  const liveRecorded = useRef(0); // 이번 보이스·카메라 진행에서 세트마다 바로 기록한 세트 수
   const autoRun = useRef(false); // 직접 기록 보이스코칭이 세트를 이어서 자동 진행 중
   const camAuto = useRef(false); // 카메라가 종목을 이어서 자동 진행 중
   const coachTick = useRef(-1);
@@ -411,7 +412,6 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
   };
 
   /** 보이스·카메라 진행 중 세트가 끝나는 즉시 목록에 ✓로 기록한다 (마지막에 ‘종료하고 기록’을 기다리지 않는다) */
-  const liveRecorded = useRef(0);
   const recordLiveSet = async (exId: string, count: number) => {
     let full = await loadSession(db, sessionId);
     let ex = full?.exercises.find((e) => e.id === exId);
