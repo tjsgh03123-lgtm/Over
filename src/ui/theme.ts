@@ -59,4 +59,10 @@ export function themed<T extends Record<string, ViewStyle | TextStyle>>(make: ()
   });
 }
 
-export const S = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24 };
+export const S = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, xxl: 32 };
+
+/** 디자인 토큰 — 글자 크기·모서리·숫자 서식은 화면에서 직접 쓰지 말고 여기 값을 쓴다 */
+export const FS = { display: 56, title: 28, heading: 20, body: 15, caption: 12, label: 11 } as const;
+export const R = { sm: 8, md: 12, lg: 16, xl: 24, pill: 999 } as const;
+/** 타이머·횟수·무게처럼 자릿수가 바뀌어도 폭이 흔들리지 않는 숫자 */
+export const NUM: TextStyle = { fontVariant: ['tabular-nums'] };

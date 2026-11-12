@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, AppState, BackHandler, Pressable, Text, View } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Animated, AppState, BackHandler, Pressable, Text, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import * as SystemUI from 'expo-system-ui';
@@ -21,6 +21,7 @@ import { SetupScreen } from './src/screens/SetupScreen.tsx';
 import { SettingsScreen } from './src/screens/SettingsScreen.tsx';
 import { ProfileScreen } from './src/screens/ProfileScreen.tsx';
 import { Header } from './src/ui/components.tsx';
+import { Icon, type IconName } from './src/ui/icons.tsx';
 import { findMissedRoutine, getActiveRoutine, getSetting, resolveMissed, setSetting, type MissedChoice, type MissedRoutine } from './src/db/repo.ts';
 import { MissedRoutineModal } from './src/ui/MissedRoutineModal.tsx';
 import { WebAlertHost } from './src/ui/webAlert.tsx';
@@ -38,12 +39,12 @@ type Overlay =
   | { name: 'setup' }
   | { name: 'settings' };
 
-const TABS: { key: Tab; label: string }[] = [
-  { key: 'home', label: '운동' },
-  { key: 'routine', label: '루틴' },
-  { key: 'calendar', label: '캘린더' },
-  { key: 'growth', label: '분석' },
-  { key: 'profile', label: '프로필' },
+const TABS: { key: Tab; label: string; icon: IconName }[] = [
+  { key: 'home', label: '운동', icon: 'dumbbell' },
+  { key: 'routine', label: '루틴', icon: 'routine' },
+  { key: 'calendar', label: '캘린더', icon: 'calendar' },
+  { key: 'growth', label: '분석', icon: 'chart' },
+  { key: 'profile', label: '프로필', icon: 'user' },
 ];
 
 export default function App() {
@@ -53,6 +54,8 @@ export default function App() {
   const [today, setToday] = useState(localDateStr());
   const [tab, setTab] = useState<Tab>('home');
   const [stack, setStack] = useState<Overlay[]>([]);
+  const fade = useRef(new Animated.Value(1)).current;
+  useEffect(() => { fade.setValue(0); Animated.timing(fade, { toValue: 1, duration: 180, useNativeDriver: true }).start(); }, [tab, fade]);
   const [calDate, setCalDate] = useState<string | null>(null);
   const [mode, setModeState] = useState<ThemeMode>('dark');
   const [missed, setMissed] = useState<MissedRoutine | null>(null);
@@ -182,20 +185,25 @@ export default function App() {
             <Overlay o={top} key={stack.length + (top.name === 'session' || top.name === 'routine' ? top.id : top.name === 'day' ? `${top.routineId}${top.dayId}` : top.name)} />
           ) : (
             <>
-              <View style={{ flex: 1 }}>
+              <Animated.View style={{ flex: 1, opacity: fade }}>
                 {tab === 'home' && <HomeScreen />}
                 {tab === 'routine' && <RoutineScreen />}
                 {tab === 'calendar' && <CalendarScreen />}
                 {tab === 'growth' && <GrowthScreen />}
                 {tab === 'profile' && <ProfileScreen />}
-              </View>
-              <View style={{ flexDirection: 'row', backgroundColor: C.card, borderTopWidth: 1, borderTopColor: C.line }}>
-                {TABS.map((t) => (
-                  <Pressable key={t.key} onPress={() => { setCalDate(null); setTab(t.key); }} style={{ flex: 1, alignItems: 'center', paddingTop: 12, paddingBottom: 10 }}>
-                    <Text style={{ fontSize: 13, fontWeight: tab === t.key ? '800' : '500', color: tab === t.key ? C.text : C.muted }}>{t.label}</Text>
-                    <View style={{ height: 3, width: 18, borderRadius: 2, marginTop: 5, backgroundColor: tab === t.key ? C.accent : 'transparent' }} />
-                  </Pressable>
-                ))}
+              </Animated.View>
+              <View style={{ flexDirection: 'row', backgroundColor: C.card, borderTopWidth: 1, borderTopColor: C.line, paddingTop: 6 }}>
+                {TABS.map((t) => {
+                  const on = tab === t.key;
+                  return (
+                    <Pressable key={t.key} onPress={() => { setCalDate(null); setTab(t.key); }} accessibilityRole="tab" accessibilityState={{ selected: on }} style={({ pressed }) => ({ flex: 1, alignItems: 'center', paddingTop: 6, paddingBottom: 8, opacity: pressed ? 0.7 : 1 })}>
+                      <View style={{ width: 52, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center', backgroundColor: on ? C.card2 : 'transparent' }}>
+                        <Icon name={t.icon} size={22} color={on ? C.text : C.muted} strokeWidth={on ? 2.1 : 1.8} />
+                      </View>
+                      <Text style={{ fontSize: 11, marginTop: 3, fontWeight: on ? '800' : '500', color: on ? C.text : C.muted, letterSpacing: -0.1 }}>{t.label}</Text>
+                    </Pressable>
+                  );
+                })}
               </View>
             </>
           )}

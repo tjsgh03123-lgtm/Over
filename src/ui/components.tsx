@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Pressable, Text, TextInput, View, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
-import { C, S, themed } from './theme.ts';
+import { Icon } from './icons.tsx';
+import { C, FS, R, S, themed } from './theme.ts';
 
 export function Card({ children, style }: { children: React.ReactNode; style?: StyleProp<ViewStyle> }) {
   return <View style={[st.card, style]}>{children}</View>;
@@ -23,16 +24,16 @@ export function Btn({
     <Pressable
       onPress={onPress}
       disabled={disabled}
-      style={({ pressed }) => [st.btn, small && st.btnSm, { backgroundColor: bg, opacity: disabled ? 0.4 : pressed ? 0.8 : 1 }, style]}
+      style={({ pressed }) => [st.btn, small && st.btnSm, { backgroundColor: bg, opacity: disabled ? 0.4 : pressed ? 0.85 : 1, transform: [{ scale: pressed && !disabled ? 0.97 : 1 }] }, style]}
     >
-      <Text style={{ color: fg, fontWeight: '700', fontSize: small ? 13 : 15 }}>{label}</Text>
+      <Text style={{ color: fg, fontWeight: '700', fontSize: small ? 13 : FS.body, letterSpacing: -0.2 }}>{label}</Text>
     </Pressable>
   );
 }
 
 export function Chip({ label, active, onPress }: { label: string; active?: boolean; onPress?: () => void; color?: string }) {
   return (
-    <Pressable onPress={onPress} style={[st.chip, active && { backgroundColor: C.accent, borderColor: C.accent }]}>
+    <Pressable onPress={onPress} style={({ pressed }) => [st.chip, active && { backgroundColor: C.accent, borderColor: C.accent }, pressed && { opacity: 0.8 }]}>
       <Text style={{ color: active ? C.onAccent : C.muted, fontSize: 13, fontWeight: '600' }}>{label}</Text>
     </Pressable>
   );
@@ -136,28 +137,28 @@ export function Header({ title, onBack, right }: { title: string; onBack?: () =>
     <View style={st.header}>
       {onBack ? (
         <Pressable onPress={onBack} hitSlop={8} accessibilityLabel="뒤로" style={{ width: 40, height: 40, marginLeft: -8, marginRight: 4, alignItems: 'center', justifyContent: 'center' }}>
-          <Text style={{ color: C.text, fontSize: 26, lineHeight: 30 }}>‹</Text>
+          <Icon name="back" size={24} />
         </Pressable>
       ) : null}
-      <Text style={[st.h, { flex: 1 }]} numberOfLines={1}>{title}</Text>
+      <Text style={[st.h, { flex: 1, fontSize: FS.heading + 2, letterSpacing: -0.4 }]} numberOfLines={1}>{title}</Text>
       {right}
     </View>
   );
 }
 
 const st = themed(() => ({
-  card: { backgroundColor: C.card, borderRadius: 14, padding: S.lg, marginBottom: S.md, borderWidth: 1, borderColor: C.line },
-  h: { color: C.text, fontSize: 18, fontWeight: '800' },
+  card: { backgroundColor: C.card, borderRadius: R.lg, padding: S.lg, marginBottom: S.md, borderWidth: 1, borderColor: C.line },
+  h: { color: C.text, fontSize: 18, fontWeight: '800', letterSpacing: -0.3 },
   t: { color: C.text, fontSize: 14 },
-  btn: { minHeight: 46, paddingHorizontal: 16, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-  btnSm: { minHeight: 38, paddingHorizontal: 14, borderRadius: 10 },
-  chip: { minHeight: 34, paddingHorizontal: 13, paddingVertical: 6, borderRadius: 18, borderWidth: 1, borderColor: C.line, backgroundColor: C.card2, justifyContent: 'center' },
-  seg: { flexDirection: 'row', backgroundColor: C.card2, borderRadius: 12, padding: 3 },
-  segItem: { flex: 1, paddingVertical: 10, alignItems: 'center', justifyContent: 'center', borderRadius: 10 },
+  btn: { minHeight: 50, paddingHorizontal: 18, borderRadius: R.lg, alignItems: 'center', justifyContent: 'center' },
+  btnSm: { minHeight: 40, paddingHorizontal: 14, borderRadius: R.md },
+  chip: { minHeight: 36, paddingHorizontal: 14, paddingVertical: 6, borderRadius: R.pill, borderWidth: 1, borderColor: C.line, backgroundColor: C.card2, justifyContent: 'center' },
+  seg: { flexDirection: 'row', backgroundColor: C.card2, borderRadius: R.lg, padding: 4 },
+  segItem: { flex: 1, paddingVertical: 10, alignItems: 'center', justifyContent: 'center', borderRadius: R.md },
   input: {
-    height: 44, borderRadius: 10, backgroundColor: C.card2, color: C.text, textAlign: 'center',
-    fontSize: 16, fontWeight: '700', borderWidth: 1, borderColor: C.line,
+    height: 46, borderRadius: R.md, backgroundColor: C.card2, color: C.text, textAlign: 'center',
+    fontSize: 16, fontWeight: '700', borderWidth: 1, borderColor: C.line, fontVariant: ['tabular-nums'],
   },
-  textField: { backgroundColor: C.card2, color: C.text, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, borderWidth: 1, borderColor: C.line },
+  textField: { backgroundColor: C.card2, color: C.text, borderRadius: R.md, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14, borderWidth: 1, borderColor: C.line },
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: S.lg, paddingVertical: S.sm, minHeight: 52 },
 }));
