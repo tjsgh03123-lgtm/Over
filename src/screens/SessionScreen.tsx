@@ -26,6 +26,7 @@ import { ExercisePicker } from '../ui/ExercisePicker.tsx';
 import { RestSheet } from '../ui/RestSheet.tsx';
 import { CoachSheet } from '../ui/CoachSheet.tsx';
 import { Icon } from '../ui/icons.tsx';
+import * as vinfo from '../domain/voiceInfo.ts';
 import { WorkoutListSheet } from '../ui/WorkoutListSheet.tsx';
 import { C, S } from '../ui/theme.ts';
 import { useElapsed } from '../ui/useElapsed.ts';
@@ -290,7 +291,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
       const t = Date.now(); setNow(t); setRestMini(false);
       const nx = nextExId ? nameOf(nextExId) : undefined;
       setRest({ endAt: t + sec * 1000, total: sec, done: false, kind, exId: ex.id, next: nx, nextTip: nx ? matchProfile(nx)?.tip : undefined, nextExId });
-      if (kind === 'exercise' && nx) speakText(`종목 끝. ${sec}초 쉬세요. 다음은 ${nx}`);
+      if (kind === 'exercise' && nx) speakText(`${voiceTexts(ex, null).exOutro} ${sec}초 쉬세요. 다음은 ${nx}`);
     }
     // ✓: 칸에 들어 있는(또는 흐리게 보이던) 숫자를 그대로 이 세트의 기록으로 확정
     patchSet(ex, row, {
@@ -317,6 +318,20 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
     }
     return null;
   };
+  /** 보이스 안내 문구: 오늘 종목 진행·세트 진행·마지막 안내 */
+  const voiceTexts = (ex: SessionExRow, row?: SetRow | null) => {
+    const idx = s.exercises.findIndex((e) => e.id === ex.id);
+    const work = ex.sets.filter((x) => x.set_type !== 'warmup');
+    const sp = vinfo.setProgress(work.length, row ? work.findIndex((x) => x.id === row.id) + 1 : 1);
+    const doneEx: vinfo.VEx[] = s.exercises.map((e, i) => (i === idx ? { sets: e.sets.map((x) => ({ done: 1, set_type: x.set_type })) } : e));
+    return {
+      exIntro: vinfo.exerciseIntro(vinfo.exerciseProgress(s.exercises, idx)),
+      setIntro: row && row.set_type !== 'warmup' ? vinfo.setIntro(sp) : '',
+      setOutro: row && row.set_type !== 'warmup' ? vinfo.setOutro(sp) : '',
+      exOutro: vinfo.exerciseOutro(vinfo.exerciseProgress(doneEx, -1)),
+      setBase: ex.sets.filter((x) => x.set_type !== 'warmup' && x.done).length, setAll: work.length,
+    };
+  };
   const startCoach = (ex: SessionExRow, row: SetRow, justDoneExId?: string) => {
     const info = setInfo(ex, row);
     const fresh = ex.sets.every((x) => !x.done) && ex.id !== justDoneExId;
@@ -328,7 +343,10 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
     const tp = tempoMap[ex.exercise_id] ?? baseTempo.current; // 이 종목에 정해 둔 속도로 진행
     setTempoSec(tp);
     setCoach({ exId: ex.id, setId: row.id, phase: secs > 0 ? 'prep' : 'count', fresh, endAt: t + secs * 1000, total: secs, count: 0, target: info.target, nextAt: t + tp * 1000 });
-    speakText(secs > 0 ? (fresh ? `${ex.exercise_name}. 준비하세요` : `${row.set_no}세트 준비하세요`) : `${row.set_no}세트 시작`);
+    const vt = voiceTexts(ex, row);
+    speakText(secs > 0
+      ? (fresh ? `${ex.exercise_name}. ${vt.exIntro} ${vt.setIntro} 준비하세요` : `${row.set_no}세트. ${vt.setIntro} 준비하세요`)
+      : `${row.set_no}세트 시작. ${vt.setIntro}`);
   };
   const beginCoach = (ex: SessionExRow, row: SetRow) => { setCoachMini(false); startCoach(ex, row); };
   const beginLive = (ex: SessionExRow, source: CountSource = 'camera') => { setLiveMini(false); openLive(ex, source); };
@@ -340,7 +358,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
     if (!ex || !row) return;
     const info = setInfo(ex, row);
     const started = completeSet(ex, row, info.sugW, info.sugR, count, false); // 무게는 사용자가 정한 값 그대로(비어 있으면 비워 둠)
-    speakText(`${row.set_no}세트 완료`, true);
+    speakText(voiceTexts(ex, row).setOutro || `${row.set_no}세트 완료`, true);
     if (!started && autoRun.current) {
       const nx = nextUndone(ex.id, row.id);
       if (nx) startCoach(nx.ex, nx.row, ex.id);
@@ -485,7 +503,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
       if (nx && exRest > 0) {
         const t = Date.now(); setNow(t); setRestMini(false); camAuto.current = true;
         setRest({ endAt: t + exRest * 1000, total: exRest, done: false, kind: 'exercise', exId, next: nx.exercise_name, nextTip: matchProfile(nx.exercise_name)?.tip, nextExId: nx.id });
-        speakText(`종목 끝. ${exRest}초 쉬세요. 다음은 ${nx.exercise_name}`);
+        speakText(`${voiceTexts(ex, null).exOutro} ${exRest}초 쉬세요. 다음은 ${nx.exercise_name}`);
       }
     }
   };
@@ -528,6 +546,13 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
       ]);
     } else await go();
   };
+
+  // 보이스코칭(카운트 화면)에 넘길 안내 문구: 오늘 종목 진행, 이 종목의 세트 위치
+  const liveEx = live ? s.exercises.find((e) => e.id === live.exId) : null;
+  const liveVoice = liveEx ? (() => {
+    const vt = voiceTexts(liveEx, liveEx.sets.find((x) => !x.done && x.set_type !== 'warmup'));
+    return { exIntro: vt.exIntro, exOutro: vt.exOutro, setBase: vt.setBase, setAll: vt.setAll };
+  })() : {};
 
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
@@ -1036,7 +1061,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
         visible={!!live}
         onList={() => setListOpen(true)} overlay={listSheet}
         minimized={liveMini} onMinimize={() => setLiveMini(true)} onExpand={() => setLiveMini(false)}
-                defaults={live ? { targetReps: live.target, totalSets: live.sets, restSec: live.restSec, focus: live.focus, tip: live.tip, source: live.source, exerciseName: live.name, prepSec, tempoSec, sound: voice, idleEndSec } : undefined}
+                defaults={live ? { targetReps: live.target, totalSets: live.sets, restSec: live.restSec, focus: live.focus, tip: live.tip, source: live.source, exerciseName: live.name, ...liveVoice, prepSec, tempoSec, sound: voice, idleEndSec } : undefined}
         onClose={() => { liveRecorded.current = 0; setLive(null); setLiveMini(false); }}
         onSetDone={(_setNo, count) => { if (live) recordLiveSet(live.exId, count); }}
         onTempo={(t) => { if (live) saveTempo(live.exId, t); }}

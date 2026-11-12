@@ -13,6 +13,7 @@ import { buildPoseLog, LOG_SECONDS, type LogEvent, type LogFrame } from '../doma
 import { shareTextFile, stamp } from '../services/files.ts';
 import { AutoRepCounter, countWord, FOCUS_LABEL, type Focus, rangeText, STRICT_LABEL, type Strictness } from '../domain/liveCount.ts';
 import { SetFlow, type FlowConfig, type FlowEvent } from '../domain/setFlow.ts';
+import * as vinfo from '../domain/voiceInfo.ts';
 import { speakCount, speakText, stopSpeaking, setSpeechTempo } from '../services/speak.ts';
 import { cycleTempo, fmtSpeed, nearestSpeed, SPEEDS, speedOf, tempoOf } from '../domain/voiceSpeed.ts';
 import { Btn, Card, Chip, Header, Row, Segmented, T } from './components.tsx';
@@ -42,7 +43,7 @@ function fmtRep(ms: number) { return `${(ms / 1000).toFixed(1)}초`; }
  * ‘이 횟수 사용’을 누르면 onUse(횟수)로 돌려준다.
  */
 export type CountSource = 'camera' | 'tempo';
-export type LiveDefaults = FlowConfig & { focus?: Focus; tip?: string; source?: CountSource; tempoSec?: number; exerciseName?: string; sound?: boolean; idleEndSec?: number };
+export type LiveDefaults = FlowConfig & { focus?: Focus; tip?: string; source?: CountSource; tempoSec?: number; exerciseName?: string; sound?: boolean; idleEndSec?: number; exIntro?: string; exOutro?: string; setBase?: number; setAll?: number };
 
 export function LiveCountModal({
   visible, onClose, onUse, onSetDone, onTempo, defaults, onList, overlay, minimized, onMinimize, onExpand,
@@ -103,6 +104,8 @@ function LiveBody({ onClose, onUse, onSetDone, onTempo, defaults, leave, onList,
   const [source, setSource] = useState<CountSource>(defaults.source ?? 'camera'); // 카메라로 세기 / 박자에 맞춰 세기
   const [tempoSec, setTempoSec] = useState(defaults.tempoSec ?? 3); // 박자: 한 회당 초 (화면에는 배속으로 보여 줌)
   useEffect(() => { setSpeechTempo(tempoSec); }, [tempoSec]);
+  // 보이스 안내: 이 종목의 전체 세트 중 몇 번째인지(이미 끝낸 세트는 이어서 센다)
+  const setProg = (n: number) => vinfo.setProgress(defaults.setAll ?? cfg.totalSets, (defaults.setBase ?? 0) + n);
   const nextAt = useRef(0);
   const flow = useRef<SetFlow | null>(null);
   const [, flowRender] = useState(0);
@@ -164,12 +167,12 @@ function LiveBody({ onClose, onUse, onSetDone, onTempo, defaults, leave, onList,
       if (ev?.kind === 'prep') {
         counter.current.reset(); setCount(0); setLastMs(null);
         Vibration.vibrate(120);
-        if (sound) speakText(`${ev.setNo}세트 준비하세요`);
+        if (sound) speakText(`${setProg(ev.setNo).no}세트. ${vinfo.setIntro(setProg(ev.setNo))} 준비하세요`);
       }
       if (ev?.kind === 'start') {
         counter.current.reset(); setCount(0); setLastMs(null); nextAt.current = 0;
         Vibration.vibrate([0, 200, 100, 200]);
-        if (sound) speakText(`${ev.setNo}세트 시작`);
+        if (sound) speakText(`${setProg(ev.setNo).no}세트 시작`);
       }
       flowRender((n) => n + 1);
     }, 250);
@@ -253,7 +256,7 @@ function LiveBody({ onClose, onUse, onSetDone, onTempo, defaults, leave, onList,
   /** 세트 흐름 시작: 준비 시간이 있으면 준비부터 (소리로 알림) */
   function newFlow(c: FlowConfig): SetFlow {
     const f = new SetFlow(c);
-    if (f.beginPrep(Date.now()) && sound) speakText('준비하세요');
+    if (f.beginPrep(Date.now()) && sound) speakText(`${defaults.exIntro ?? ''} ${vinfo.setIntro(setProg(1))} 준비하세요`);
     return f;
   }
   /** 세트 완료 알림 (진동·소리) */
@@ -261,7 +264,7 @@ function LiveBody({ onClose, onUse, onSetDone, onTempo, defaults, leave, onList,
     if (fe?.kind !== 'setDone') return;
     onSetDone?.(fe.setNo, fe.count);
     Vibration.vibrate([0, 300, 100, 300]);
-    if (sound) speakText(fe.last ? '운동 끝, 수고했어요' : `${fe.setNo}세트 완료, ${cfg.restSec}초 쉬세요`, true);
+    if (sound) speakText(fe.last ? `${vinfo.setOutro(setProg(fe.setNo))} ${defaults.exOutro ?? '운동 끝, 수고했어요'}` : `${vinfo.setOutro(setProg(fe.setNo))} ${cfg.restSec}초 쉬세요`, true);
     flowRender((x) => x + 1);
   }
   /** 박자 한 번: 횟수를 하나 올리고 소리 내어 센다 */

@@ -1,4 +1,5 @@
 import * as vs from '../src/domain/voiceSpeed.ts';
+import * as vi from '../src/domain/voiceInfo.ts';
 import assert from 'node:assert/strict';
 import { flattenSessions, resolveIntensity } from '../src/domain/intensity.ts';
 import {
@@ -1235,6 +1236,24 @@ test('보이스 속도: 3초 간격이 1x, 한 단계씩 바뀌고 끝에서 멈
   assert.equal(vs.stepTempo(6, -1), 6);
   assert.equal(vs.speedOf(vs.cycleTempo(3)), 1.25);
   assert.equal(vs.speedOf(vs.cycleTempo(1.5)), 0.5);
+});
+
+test('보이스 안내: 종목·세트 진행과 마지막 안내', () => {
+  const w = (d: boolean) => ({ done: d, set_type: 'working' });
+  const exs = [{ sets: [w(true), w(true)] }, { sets: [w(false), w(false), w(false)] }, { sets: [w(false)] }];
+  const p = vi.exerciseProgress(exs, 1);
+  assert(p.total === 3 && p.done === 1 && p.remaining === 2 && !p.isLast, 'progress');
+  assert(vi.exerciseIntro(p) === '오늘 3종목 중 1종목 끝났어요. 2종목 남았어요.', vi.exerciseIntro(p));
+  const last = vi.exerciseProgress([{ sets: [w(true)] }, { sets: [w(false)] }], 1);
+  assert(last.isLast && vi.exerciseIntro(last).includes('마지막 운동'), 'last ex');
+  assert(vi.exerciseIntro(vi.exerciseProgress([{ sets: [w(false)] }, { sets: [w(false)] }], 0)).startsWith('오늘 운동은 2종목'), 'first');
+  assert(vi.setIntro(vi.setProgress(3, 2)) === '3세트 중 2번째예요.', 'set intro');
+  assert(vi.setIntro(vi.setProgress(3, 3)) === '마지막 세트예요.', 'set last');
+  assert(vi.setIntro(vi.setProgress(1, 1)) === '', 'single set');
+  assert(vi.setOutro(vi.setProgress(3, 1)) === '1세트 완료. 2세트 남았어요.', 'outro');
+  assert(vi.setOutro(vi.setProgress(3, 3)).includes('마지막 세트였어요'), 'outro last');
+  assert(vi.exerciseOutro(p).includes('2종목 남았어요'), 'ex outro');
+  assert(vi.exDone({ sets: [{ done: true, set_type: 'warmup' }, w(true)] }) && !vi.exDone({ sets: [w(true), w(false)] }), 'exDone');
 });
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);
