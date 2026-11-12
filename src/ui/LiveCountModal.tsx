@@ -15,6 +15,7 @@ import { AutoRepCounter, countWord, FOCUS_LABEL, type Focus, rangeText, STRICT_L
 import { SetFlow, type FlowConfig, type FlowEvent } from '../domain/setFlow.ts';
 import { speakCount, speakText, stopSpeaking } from '../services/speak.ts';
 import { Btn, Card, Chip, Header, Row, Segmented, T } from './components.tsx';
+import { FlowGlyph, Pill } from './FlowShell.tsx';
 import { C, GC, S } from './theme.ts';
 
 interface PoseEvent { nativeEvent: { lm: number[]; w: number; h: number; t: number } }
@@ -324,14 +325,17 @@ function LiveBody({ onClose, onUse, defaults, leave }: { leave: React.MutableRef
 
   return (
     <View style={{ flex: 1, backgroundColor: C.bg, paddingTop: insets.top }}>
-      <Header title={source === 'tempo' ? '보이스코칭' : '실시간 횟수 세기'} onBack={leaveNow} />
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: S.lg, height: 52 }}>
+        <Pressable onPress={leaveNow} hitSlop={12} accessibilityLabel="뒤로" style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <FlowGlyph kind="back" color={C.text} />
+          <T bold style={{ fontSize: 18 }}>{source === 'tempo' ? '보이스코칭' : '카메라로 세기'}</T>
+        </Pressable>
+        <Pressable onPress={() => { if (sound) stopSpeaking(); setSound((v) => !v); }} style={{ paddingHorizontal: 14, height: 40, borderRadius: 20, backgroundColor: C.card2, alignItems: 'center', justifyContent: 'center' }}>
+          <T bold style={{ fontSize: 14 }}>{sound ? '음성 가이드 끄기' : '음성 가이드 켜기'}</T>
+        </Pressable>
+      </View>
       <ScrollView contentContainerStyle={{ padding: S.lg, paddingBottom: insets.bottom + 40 }}>
-        {source === 'tempo' ? (
-          <View style={{ padding: S.md, borderRadius: 12, backgroundColor: C.card2, alignItems: 'center' }}>
-            <T bold>보이스코칭 · 한 회당 {tempoSec}초</T>
-            <T muted style={{ fontSize: 12, marginTop: 2, textAlign: 'center' }}>카메라를 쓰지 않아요. 앱이 소리로 박자를 불러 주는 대로 동작하세요.</T>
-          </View>
-        ) : (
+        {source === 'tempo' ? null : (
         <View style={{ width: boxW, height: boxH, alignSelf: 'center', backgroundColor: '#000', borderRadius: 10, overflow: 'hidden' }}>
           {ready && CameraView ? (
             <>
@@ -387,44 +391,69 @@ function LiveBody({ onClose, onUse, defaults, leave }: { leave: React.MutableRef
             <T muted style={{ fontSize: 11, marginTop: 4 }}>카메라 방향: {VIEW_LABEL[guess.view]}{guess.note ? ` · ${guess.note}` : ''}</T>
           </View>
         )}
-        {mode === 'sets' && flow.current && (
-          <View style={{ marginTop: S.md, padding: S.md, borderRadius: 12, backgroundColor: C.card2, alignItems: 'center' }}>
-            {flow.current.phase === 'preparing' ? (
-              <>
-                <T muted>{flow.current.setNo}세트 준비 · 목표 {cfg.targetReps}회</T>
-                <T bold style={{ fontSize: 56, lineHeight: 64 }}>{flow.current.secLeft(Date.now())}</T>
-                <Btn label="바로 시작" kind="ghost" small onPress={() => {
-                  const e = flow.current?.skipPrep();
-                  if (e) { counter.current.reset(); setCount(0); setLastMs(null); nextAt.current = 0; if (sound) speakText(`${e.setNo}세트 시작`); flowRender((n) => n + 1); }
-                }} />
-              </>
-            ) : flow.current.phase === 'resting' ? (
-              <>
-                <T muted>{flow.current.setNo}세트 완료 · 쉬는 중</T>
-                <T bold style={{ fontSize: 40 }}>{flow.current.secLeft(Date.now())}초</T>
-                <T muted style={{ fontSize: 12 }}>다음 세트 {flow.current.setNo + 1} / {cfg.totalSets} · 목표 {cfg.targetReps}회</T>
-                <Btn label="쉬기 건너뛰기" kind="ghost" small onPress={() => {
-                  const e = flow.current?.skipRest(Date.now());
-                  if (e) {
-                    counter.current.reset(); setCount(0); setLastMs(null); nextAt.current = 0;
-                    if (sound) speakText(e.kind === 'prep' ? `${e.setNo}세트 준비하세요` : `${e.setNo}세트 시작`);
-                    flowRender((n) => n + 1);
-                  }
-                }} />
-              </>
-            ) : flow.current.phase === 'done' ? (
-              <T bold>운동 끝 · {flow.current.counts.join(' / ')}회</T>
-            ) : (
-              <T bold>{flow.current.setNo} / {cfg.totalSets}세트 · 목표 {cfg.targetReps}회</T>
-            )}
-          </View>
-        )}
+        {mode === 'sets' && flow.current ? (() => {
+          const f = flow.current;
+          const ph = f.phase;
+          const left = f.secLeft(Date.now());
+          const mmss = `${String(Math.floor(left / 60)).padStart(2, '0')}:${String(left % 60).padStart(2, '0')}`;
+          const nextLine = `다음 세트 | ${f.setNo}세트, 목표 ${cfg.targetReps}회`;
+          return (
+            <View style={{ marginTop: S.md }}>
+              <T muted style={{ fontSize: 16 }}>{`${Math.min(f.setNo, cfg.totalSets)} / ${cfg.totalSets}세트`}</T>
+              {defaults.exerciseName ? <T bold style={{ fontSize: 26, marginTop: 2 }}>{defaults.exerciseName}</T> : null}
+              <View style={{ alignItems: 'center', justifyContent: 'center', minHeight: 230 }}>
+                {ph === 'preparing' ? (
+                  <T bold style={{ fontSize: 170, lineHeight: 190 }}>{left}</T>
+                ) : ph === 'resting' ? (
+                  <>
+                    <T bold style={{ fontSize: 88, lineHeight: 100 }}>{mmss}</T>
+                    <T muted style={{ fontSize: 16 }}>휴식 시간</T>
+                  </>
+                ) : ph === 'done' ? (
+                  <T bold style={{ fontSize: 40, lineHeight: 52 }}>운동 끝</T>
+                ) : (
+                  <View style={{ flexDirection: 'row', alignItems: 'flex-end' }}>
+                    <T bold style={{ fontSize: 130, lineHeight: 146 }}>{count}</T>
+                    <T bold style={{ fontSize: 30, marginLeft: 10, marginBottom: 22 }}>{`/ ${cfg.targetReps}회`}</T>
+                  </View>
+                )}
+              </View>
+              <T bold style={{ fontSize: 19, textAlign: 'center' }}>
+                {ph === 'preparing' ? nextLine : ph === 'resting' ? `${f.setNo}세트 끝, 쉬는 시간` : ph === 'done' ? f.counts.join(' / ') + '회' : `${f.setNo}세트 진행중 | 목표 ${cfg.targetReps}회`}
+              </T>
+              {ph === 'resting' ? <T bold style={{ fontSize: 17, textAlign: 'center', marginTop: S.sm }}>{nextLine}</T> : null}
+              <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: S.sm, marginTop: S.lg }}>
+                {ph === 'counting' ? (
+                  <>
+                    <Pill label="− 1" onPress={() => adjustCount(-1)} />
+                    <Pill label="+ 1" onPress={() => adjustCount(1)} />
+                  </>
+                ) : ph === 'preparing' ? (
+                  <Pill label="바로 시작" onPress={() => {
+                    const e = flow.current?.skipPrep();
+                    if (e) { counter.current.reset(); setCount(0); setLastMs(null); nextAt.current = 0; if (sound) speakText(`${e.setNo}세트 시작`); flowRender((n) => n + 1); }
+                  }} />
+                ) : ph === 'resting' ? (
+                  <Pill label="쉬기 건너뛰기" onPress={() => {
+                    const e = flow.current?.skipRest(Date.now());
+                    if (e) {
+                      counter.current.reset(); setCount(0); setLastMs(null); nextAt.current = 0;
+                      if (sound) speakText(e.kind === 'prep' ? `${e.setNo}세트 준비하세요` : `${e.setNo}세트 시작`);
+                      flowRender((n) => n + 1);
+                    }
+                  }} />
+                ) : null}
+              </View>
+            </View>
+          );
+        })() : (
         <Row style={{ justifyContent: 'center', alignItems: 'flex-end', marginTop: S.md }}>
           <Btn label="−1" kind="ghost" small onPress={() => adjustCount(-1)} />
           <T bold style={{ fontSize: 64, lineHeight: 70, marginHorizontal: S.md }}>{count}</T>
           <T muted style={{ fontSize: 20, marginBottom: 10, marginRight: S.md }}>회</T>
           <Btn label="+1" kind="ghost" small onPress={() => adjustCount(1)} />
         </Row>
+        )}
         <T muted style={{ textAlign: 'center' }}>
           {source === 'tempo'
             ? (count === 0 ? '준비가 끝나면 음성으로 세기 시작해요' : `${tempoSec}초 간격 · 음성에 맞춰 동작하세요`)
