@@ -6,6 +6,7 @@ import { WD_LABEL } from '../domain/routine.ts';
 import { buildPlan, GEAR_LABEL, GOAL_LABEL, type Gear, type Goal } from '../domain/routineWizard.ts';
 import type { ParsedDay } from '../domain/parser.ts';
 import { Btn, Card, Chip, Header, Row, T } from '../ui/components.tsx';
+import { ExercisePicker } from '../ui/ExercisePicker.tsx';
 import { C, S } from '../ui/theme.ts';
 
 const DAYS = [2, 3, 4, 5, 6];
@@ -19,6 +20,7 @@ export function WizardScreen() {
   const [gear, setGear] = useState<Gear>('gym');
   const [minutes, setMinutes] = useState(60);
   const [draft, setDraft] = useState<ParsedDay[] | null>(null);
+  const [pickDay, setPickDay] = useState<number | null>(null); // 종목을 추가할 날(초안 인덱스)
   const [info, setInfo] = useState<{ name: string; summary: string; warnings: string[] } | null>(null);
 
   const make = () => {
@@ -28,6 +30,11 @@ export function WizardScreen() {
   };
   const removeEx = (di: number, ei: number) =>
     setDraft((d) => (d ? d.map((x, k) => (k !== di ? x : { ...x, exercises: x.exercises.filter((_, m) => m !== ei) })) : d));
+
+  const patchEx = (di: number, ei: number, patch: { sets?: number; reps?: number }) =>
+    setDraft((d) => (d ? d.map((x, k) => (k !== di ? x : { ...x, exercises: x.exercises.map((e, m) => (m !== ei ? e : { ...e, ...patch, ...(patch.reps != null ? { repsMax: null } : {}) })) })) : d));
+  const addEx = (di: number, name: string, category: string | null) =>
+    setDraft((d) => (d ? d.map((x, k) => (k !== di ? x : { ...x, exercises: [...x.exercises, { name, sets: 3, reps: 10, repsMax: null, weight: null, intensity: null, restSec: null, ...(category ? { category } : {}) }] })) : d));
 
   const total = useMemo(() => (draft ? draft.reduce((n, d) => n + d.exercises.length, 0) : 0), [draft]);
 
@@ -57,7 +64,11 @@ export function WizardScreen() {
       <ScrollView contentContainerStyle={{ padding: S.lg, paddingBottom: 100 }} keyboardShouldPersistTaps="handled">
         {!draft ? (
           <>
-            <T muted style={{ marginBottom: S.md }}>질문 4개에 답하면 루틴 초안을 만들어요. AI를 쓰지 않고 정해진 규칙으로 고르며, 저장하기 전에 마음대로 고칠 수 있어요.</T>
+            <Card>
+              <T bold>간단한 루틴만 만들 수 있어요</T>
+              <T muted style={{ fontSize: 12, marginTop: 4 }}>도우미는 질문 4개로 기본 분할 루틴(요일별 종목·세트·횟수)만 뽑아요. 슈퍼세트·사이클·무게 지정 같은 세밀한 루틴은 저장한 뒤 루틴 탭에서 고치거나 ‘AI로 가져오기’를 이용하세요.</T>
+            </Card>
+            <T muted style={{ marginBottom: S.md }}>AI를 쓰지 않고 정해진 규칙으로 고르며, 저장하기 전에 종목을 추가·삭제하고 세트·횟수도 고칠 수 있어요.</T>
             <Q title="1. 목표가 뭐예요?">
               {(Object.keys(GOAL_LABEL) as Goal[]).map((g) => <Chip key={g} label={GOAL_LABEL[g]} active={goal === g} onPress={() => setGoal(g)} />)}
             </Q>
@@ -83,19 +94,38 @@ export function WizardScreen() {
               <Card key={di}>
                 <T bold>{d.weekday != null ? `${WD_LABEL[d.weekday]}요일 · ` : ''}{d.title}</T>
                 {d.exercises.map((e, ei) => (
-                  <Row key={ei} style={{ marginTop: 6 }}>
-                    <T style={{ flex: 1 }}>{e.name}</T>
-                    <T muted style={{ fontSize: 12, marginRight: 8 }}>{e.sets}세트 × {e.reps}회</T>
-                    <Btn label="✕" kind="danger" small onPress={() => removeEx(di, ei)} />
-                  </Row>
+                  <View key={ei} style={{ marginTop: S.sm, paddingTop: S.sm, borderTopWidth: ei ? 1 : 0, borderTopColor: C.line }}>
+                    <Row>
+                      <T bold style={{ flex: 1 }}>{e.name}</T>
+                      <Btn label="✕" kind="danger" small onPress={() => removeEx(di, ei)} />
+                    </Row>
+                    <Row style={{ marginTop: 6 }}>
+                      <T muted style={{ flex: 1 }}>세트</T>
+                      <Btn label="−" kind="ghost" small onPress={() => patchEx(di, ei, { sets: Math.max(1, e.sets - 1) })} />
+                      <T bold style={{ width: 48, textAlign: 'center' }}>{e.sets}</T>
+                      <Btn label="+" kind="ghost" small onPress={() => patchEx(di, ei, { sets: Math.min(10, e.sets + 1) })} />
+                    </Row>
+                    <Row style={{ marginTop: 6 }}>
+                      <T muted style={{ flex: 1 }}>횟수</T>
+                      <Btn label="−" kind="ghost" small onPress={() => patchEx(di, ei, { reps: Math.max(1, (e.reps ?? 10) - 1) })} />
+                      <T bold style={{ width: 48, textAlign: 'center' }}>{e.repsMax && e.reps ? `${e.reps}-${e.repsMax}` : e.reps ?? '-'}</T>
+                      <Btn label="+" kind="ghost" small onPress={() => patchEx(di, ei, { reps: Math.min(100, (e.reps ?? 10) + 1) })} />
+                    </Row>
+                  </View>
                 ))}
+                <Btn label="+ 종목 추가" kind="ghost" small style={{ marginTop: S.md }} onPress={() => setPickDay(di)} />
                 {!d.exercises.length && <T muted style={{ marginTop: 6 }}>운동이 없어요. 저장하면 이 날은 빠져요.</T>}
               </Card>
             ))}
-            <T muted style={{ fontSize: 12 }}>저장한 뒤 루틴 탭에서 종목을 추가하거나 바꿀 수 있어요. 무게는 첫 운동 때 정해요.</T>
+            <T muted style={{ fontSize: 12 }}>저장한 뒤에도 루틴 탭에서 고칠 수 있어요. 무게는 첫 운동 때 정해요.</T>
           </>
         )}
       </ScrollView>
+      <ExercisePicker
+        visible={pickDay != null}
+        onClose={() => setPickDay(null)}
+        onPick={(e) => { if (pickDay != null) addEx(pickDay, e.name, e.category); setPickDay(null); }}
+      />
       {draft && (
         <View style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: S.lg, backgroundColor: C.bg, borderTopWidth: 1, borderTopColor: C.line, flexDirection: 'row', gap: 8 }}>
           <Btn label="다시 고르기" kind="ghost" style={{ flex: 1 }} onPress={() => setDraft(null)} />
