@@ -17,6 +17,7 @@ import { speakCount, speakText, stopSpeaking, setSpeechTempo } from '../services
 import { cycleTempo, fmtSpeed, nearestSpeed, SPEEDS, speedOf, tempoOf } from '../domain/voiceSpeed.ts';
 import { Btn, Card, Chip, Header, Row, Segmented, T } from './components.tsx';
 import { FlowGlyph, Pill } from './FlowShell.tsx';
+import { useFit } from './fit.ts';
 import { C, GC, S } from './theme.ts';
 
 interface PoseEvent { nativeEvent: { lm: number[]; w: number; h: number; t: number } }
@@ -92,6 +93,7 @@ function LiveBody({ onClose, onUse, onSetDone, defaults, leave, onList, overlay,
   useKeepAwake();
   const { db } = useApp();
   const { width: winW, height: winH } = useWindowDimensions();
+  const fit = useFit();
   const insets = useSafeAreaInsets();
   const [strict, setStrict] = useState<Strictness>('normal');
   const [sound, setSound] = useState(defaults.sound ?? true); // 횟수를 소리로 읽기
@@ -428,20 +430,20 @@ function LiveBody({ onClose, onUse, onSetDone, defaults, leave, onList, overlay,
             <View style={{ marginTop: S.md }}>
               <T muted style={{ fontSize: 16 }}>{`${Math.min(f.setNo, cfg.totalSets)} / ${cfg.totalSets}세트`}</T>
               {defaults.exerciseName ? <T bold style={{ fontSize: 26, marginTop: 2 }}>{defaults.exerciseName}</T> : null}
-              <View style={{ alignItems: 'center', justifyContent: 'center', minHeight: 230 }}>
+              <View style={{ alignItems: 'center', justifyContent: 'center', minHeight: fit(230) }}>
                 {ph === 'preparing' ? (
-                  <T bold style={{ fontSize: 170, lineHeight: 190 }}>{left}</T>
+                  <T bold style={{ fontSize: fit(170), lineHeight: fit(190) }}>{left}</T>
                 ) : ph === 'resting' ? (
                   <>
-                    <T bold style={{ fontSize: 88, lineHeight: 100 }}>{mmss}</T>
+                    <T bold style={{ fontSize: fit(88), lineHeight: fit(100) }}>{mmss}</T>
                     <T muted style={{ fontSize: 16 }}>휴식 시간</T>
                   </>
                 ) : ph === 'done' ? (
-                  <T bold style={{ fontSize: 40, lineHeight: 52 }}>운동 끝</T>
+                  <T bold style={{ fontSize: fit(40), lineHeight: fit(52) }}>운동 끝</T>
                 ) : (
                   <View style={{ flexDirection: 'row', alignItems: 'flex-end' }}>
-                    <T bold style={{ fontSize: 130, lineHeight: 146 }}>{count}</T>
-                    <T bold style={{ fontSize: 30, marginLeft: 10, marginBottom: 22 }}>{`/ ${cfg.targetReps}회`}</T>
+                    <T bold style={{ fontSize: fit(130), lineHeight: fit(146) }}>{count}</T>
+                    <T bold style={{ fontSize: fit(30), marginLeft: 10, marginBottom: fit(22) }}>{`/ ${cfg.targetReps}회`}</T>
                   </View>
                 )}
               </View>
@@ -483,7 +485,7 @@ function LiveBody({ onClose, onUse, onSetDone, defaults, leave, onList, overlay,
         })() : (
         <Row style={{ justifyContent: 'center', alignItems: 'flex-end', marginTop: S.md }}>
           <Btn label="−1" kind="ghost" small onPress={() => adjustCount(-1)} />
-          <T bold style={{ fontSize: 64, lineHeight: 70, marginHorizontal: S.md }}>{count}</T>
+          <T bold style={{ fontSize: fit(64), lineHeight: fit(70), marginHorizontal: S.md }}>{count}</T>
           <T muted style={{ fontSize: 20, marginBottom: 10, marginRight: S.md }}>회</T>
           <Btn label="+1" kind="ghost" small onPress={() => adjustCount(1)} />
         </Row>

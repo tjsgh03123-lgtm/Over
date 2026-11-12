@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Alert, Pressable, View } from 'react-native';
+import { Alert, Pressable, View, useWindowDimensions } from 'react-native';
 import { getDayDetail, upsertDay, type TemplateExerciseInput } from '../db/repo.ts';
 import type { DayKind } from '../domain/routine.ts';
 import { Btn, NumField, NumInput, Row, T, TextField } from './components.tsx';
@@ -15,6 +15,8 @@ const nk = () => `se${++seq}`;
 export function SlotEditor({ db, today, routineId, slotIdx, dayId, onSaved }: {
   db: any; today: string; routineId: string; slotIdx: number; dayId: string | null; onSaved: () => void;
 }) {
+  const { width: winW } = useWindowDimensions();
+  const narrow = winW < 380;
   const [name, setName] = useState('');
   const [kind, setKind] = useState<DayKind>('weights');
   const [post, setPost] = useState<number | null>(null);
@@ -115,12 +117,20 @@ export function SlotEditor({ db, today, routineId, slotIdx, dayId, onSaved }: {
                 <T style={{ fontSize: 12, color: linked ? C.text : C.muted }}>{linked ? '⛓ 위 종목과 슈퍼세트 · 눌러서 해제' : '위 종목과 슈퍼세트로 묶기'}</T>
               </Pressable>
             )}
-            <Row style={{ alignItems: 'stretch', gap: 6 }}>
-              <NumField label="세트" value={e.targetSets ?? 3} decimal={false} placeholder="3" onCommit={(v) => patch(i, { targetSets: Math.max(1, v ?? 3) })} />
-              <NumField label="횟수" value={e.targetReps ?? null} decimal={false} placeholder="없음" onCommit={(v) => patch(i, { targetReps: v })} />
-              <NumField label="무게" unit="kg" value={e.targetWeight ?? null} placeholder="없음" onCommit={(v) => patch(i, { targetWeight: v })} />
-              <NumField label="휴식" unit="초" value={e.restSec ?? null} decimal={false} placeholder="기본" onCommit={(v) => patch(i, { restSec: v })} />
-            </Row>
+            <View style={{ gap: 6 }}>
+              <Row style={{ alignItems: 'stretch', gap: 6 }}>
+                <NumField label="세트" value={e.targetSets ?? 3} decimal={false} placeholder="3" onCommit={(v) => patch(i, { targetSets: Math.max(1, v ?? 3) })} />
+                <NumField label="횟수" value={e.targetReps ?? null} decimal={false} placeholder="없음" onCommit={(v) => patch(i, { targetReps: v })} />
+                {!narrow && <NumField label="무게" unit="kg" value={e.targetWeight ?? null} placeholder="없음" onCommit={(v) => patch(i, { targetWeight: v })} />}
+                {!narrow && <NumField label="휴식" unit="초" value={e.restSec ?? null} decimal={false} placeholder="기본" onCommit={(v) => patch(i, { restSec: v })} />}
+              </Row>
+              {narrow && (
+                <Row style={{ alignItems: 'stretch', gap: 6 }}>
+                  <NumField label="무게" unit="kg" value={e.targetWeight ?? null} placeholder="없음" onCommit={(v) => patch(i, { targetWeight: v })} />
+                  <NumField label="휴식" unit="초" value={e.restSec ?? null} decimal={false} placeholder="기본" onCommit={(v) => patch(i, { restSec: v })} />
+                </Row>
+              )}
+            </View>
           </View>
         );
       })}

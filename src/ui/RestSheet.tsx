@@ -3,6 +3,7 @@ import { Pressable, ScrollView, View } from 'react-native';
 import { fmtElapsed } from '../domain/format.ts';
 import { FlowShell, Pill } from './FlowShell.tsx';
 import { T } from './components.tsx';
+import { useFit } from './fit.ts';
 import { C, S } from './theme.ts';
 
 /** 휴식 화면(전체 화면): 큰 시간 → 휴식 시간 설정(±) → 빠른 선택 → 다음 안내. 아래 '다음' 버튼이 휴식 중단/닫기. */
@@ -30,6 +31,7 @@ export function RestSheet({
   onToggleGuide: () => void;
   extra?: React.ReactNode; // 저장·카메라로 시작 등 추가 버튼 줄
 }) {
+  const fit = useFit();
   const list = Array.from(new Set([defaultSec, ...presets])).filter((n) => n > 0);
   return (
     <FlowShell
@@ -40,10 +42,10 @@ export function RestSheet({
         {title ? <T bold style={{ fontSize: 26, marginTop: S.xl, marginRight: 60 }}>{title}</T> : null}
         <View style={{ alignItems: 'center', marginTop: S.xl * 2 }}>
           {done ? (
-            <T bold style={{ fontSize: 56, lineHeight: 70 }}>휴식 끝</T>
+            <T bold style={{ fontSize: fit(56), lineHeight: fit(70) }}>휴식 끝</T>
           ) : (
             <>
-              <T bold style={{ fontSize: 96, lineHeight: 110 }}>{fmtElapsed(left)}</T>
+              <T bold style={{ fontSize: fit(96), lineHeight: fit(110) }}>{fmtElapsed(left)}</T>
               <T muted style={{ fontSize: 16, marginTop: 2 }}>{kind === 'exercise' ? '종목 간 휴식 시간 설정' : '휴식 시간 설정'}</T>
               <View style={{ flexDirection: 'row', gap: S.md, marginTop: S.lg }}>
                 <Pill label={`− ${stepSec}초`} onPress={() => onAdjust(-stepSec)} />

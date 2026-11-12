@@ -4,6 +4,7 @@ import { fmtElapsed } from '../domain/format.ts';
 import { fmtSpeed, speedOf } from '../domain/voiceSpeed.ts';
 import { FlowShell, Pill } from './FlowShell.tsx';
 import { T } from './components.tsx';
+import { useFit } from './fit.ts';
 import { C, S } from './theme.ts';
 
 /**
@@ -41,6 +42,7 @@ export function CoachSheet({
   onFinish: () => void; // 세트 끝(지금까지 센 횟수로 기록)
   onStop: () => void; // 코칭 중단
 }) {
+  const fit = useFit();
   const chips = (a: string, aP: () => void, mid: string, b: string, bP: () => void) => (
     <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: S.sm, marginTop: S.lg }}>
       <Pill label={a} onPress={aP} />
@@ -70,7 +72,7 @@ export function CoachSheet({
         </View>
         <View style={{ marginTop: S.xl, borderRadius: 20, backgroundColor: C.card, padding: S.lg, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
           <T bold style={{ fontSize: 17 }}>준비 시간 수정</T>
-          <T bold style={{ fontSize: 44, lineHeight: 52 }}>{fmtElapsed(left)}</T>
+          <T bold style={{ fontSize: fit(44), lineHeight: fit(52) }}>{fmtElapsed(left)}</T>
         </View>
         {chips('− 5초', () => onPrepAdjust(-5), '준비 시간', '+ 5초', () => onPrepAdjust(5))}
         {listBtn}
@@ -82,7 +84,7 @@ export function CoachSheet({
         <T muted style={{ fontSize: 16, marginTop: S.xl }}>{`${setNo} / ${setLines.length}`}</T>
         <T bold style={{ fontSize: 26, marginTop: 4, marginRight: 60 }}>{title}</T>
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-          <T bold style={{ fontSize: 200, lineHeight: 220 }}>{left}</T>
+          <T bold style={{ fontSize: fit(200), lineHeight: fit(220) }}>{left}</T>
         </View>
         <T bold style={{ fontSize: 20, textAlign: 'center' }}>{next}</T>
         {chips('− 5초', () => onPrepAdjust(-5), '준비 시간', '+ 5초', () => onPrepAdjust(5))}
@@ -96,8 +98,8 @@ export function CoachSheet({
         <T muted style={{ fontSize: 16, marginTop: S.xl }}>{`${setNo} / ${setLines.length}`}</T>
         <T bold style={{ fontSize: 26, marginTop: 4, marginRight: 60 }}>{title}</T>
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', flexDirection: 'row' }}>
-          <T bold style={{ fontSize: 150, lineHeight: 170 }}>{count}</T>
-          <T bold style={{ fontSize: 34, marginLeft: 12, marginTop: 70 }}>{`/ ${target}회`}</T>
+          <T bold style={{ fontSize: fit(150), lineHeight: fit(170) }}>{count}</T>
+          <T bold style={{ fontSize: fit(34), marginLeft: 12, marginTop: fit(70) }}>{`/ ${target}회`}</T>
         </View>
         <T bold style={{ fontSize: 20, textAlign: 'center' }}>{`${setNo}세트 진행중 | ${sub}`}</T>
         <View style={{ flexDirection: 'row', justifyContent: 'center', marginTop: S.lg }}>

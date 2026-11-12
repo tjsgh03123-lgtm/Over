@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Animated, AppState, BackHandler, Pressable, Text, View } from 'react-native';
+import { ActivityIndicator, Animated, AppState, BackHandler, Pressable, Text, TextInput, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import * as SystemUI from 'expo-system-ui';
@@ -27,6 +27,9 @@ import { MissedRoutineModal } from './src/ui/MissedRoutineModal.tsx';
 import { WebAlertHost } from './src/ui/webAlert.tsx';
 import { sanitizeGraphColors, sanitizeMode, type GraphKey, type ThemeMode } from './src/domain/themeModel.ts';
 import { applyTheme, C, GC } from './src/ui/theme.ts';
+
+// 폰의 '글자 크기' 설정을 크게 해도 화면이 깨지지 않도록 확대 한도를 둔다 (1.25배까지만 따라간다)
+for (const C0 of [Text, TextInput] as any[]) C0.defaultProps = { ...(C0.defaultProps ?? {}), maxFontSizeMultiplier: 1.25 };
 
 type Overlay =
   | { name: 'session'; id: string }
