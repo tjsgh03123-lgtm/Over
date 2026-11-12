@@ -14,7 +14,7 @@ import { shareTextFile, stamp } from '../services/files.ts';
 import { AutoRepCounter, countWord, FOCUS_LABEL, type Focus, rangeText, STRICT_LABEL, type Strictness } from '../domain/liveCount.ts';
 import { SetFlow, type FlowConfig, type FlowEvent } from '../domain/setFlow.ts';
 import { speakCount, speakText, stopSpeaking, setSpeechTempo } from '../services/speak.ts';
-import { fmtSpeed, nearestSpeed, SPEEDS, speedOf, tempoOf } from '../domain/voiceSpeed.ts';
+import { cycleTempo, fmtSpeed, nearestSpeed, SPEEDS, speedOf, tempoOf } from '../domain/voiceSpeed.ts';
 import { Btn, Card, Chip, Header, Row, Segmented, T } from './components.tsx';
 import { FlowGlyph, Pill } from './FlowShell.tsx';
 import { C, GC, S } from './theme.ts';
@@ -102,7 +102,7 @@ function LiveBody({ onClose, onUse, defaults, leave }: { leave: React.MutableRef
   const flow = useRef<SetFlow | null>(null);
   const [, flowRender] = useState(0);
   const [model, setModel] = useState<'lite' | 'full'>('lite');
-  const [showSettings, setShowSettings] = useState(false);
+  const [showSettings, setShowSettings] = useState((defaults.source ?? 'camera') === 'tempo'); // 보이스코칭은 설정을 열어 둔 채로 시작
   const [front, setFront] = useState(true); // 기본은 전면. 바꾸려면 미리보기 오른쪽 위 아이콘
   const [ready, setReady] = useState(false); // 카메라 권한 확인 끝, 카메라 켜짐
   const [perm, setPerm] = useState<boolean | null>(null);
@@ -425,7 +425,9 @@ function LiveBody({ onClose, onUse, defaults, leave }: { leave: React.MutableRef
               </T>
               {ph === 'resting' ? <T bold style={{ fontSize: 17, textAlign: 'center', marginTop: S.sm }}>{nextLine}</T> : null}
               <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: S.sm, marginTop: S.lg }}>
-                {ph === 'counting' ? (
+                {ph === 'counting' && source === 'tempo' ? (
+                  <Pill label={`속도 ${fmtSpeed(speedOf(tempoSec))}`} onPress={() => { const t = cycleTempo(tempoSec); setTempoSec(t); setSetting(db, 'tempo_sec', String(t)); }} />
+                ) : ph === 'counting' ? (
                   <>
                     <Pill label="− 1" onPress={() => adjustCount(-1)} />
                     <Pill label="+ 1" onPress={() => adjustCount(1)} />
@@ -479,7 +481,6 @@ function LiveBody({ onClose, onUse, defaults, leave }: { leave: React.MutableRef
 
         <T muted style={{ marginTop: S.lg, textAlign: 'center', fontSize: 12 }}>끝나면 뒤로 가기를 누르세요. 센 횟수가 자동으로 기록돼요.</T>
         <Row style={{ marginTop: S.sm }}>
-          <Btn label="처음부터" kind="ghost" style={{ flex: 1 }} onPress={reset} />
           <Btn label={showSettings ? '설정 닫기' : '설정'} kind="ghost" style={{ flex: 1 }} onPress={() => setShowSettings((v) => !v)} />
         </Row>
         {defaults.tip ? <T muted style={{ marginTop: S.md, fontSize: 12 }}>📍 {defaults.tip}</T> : null}

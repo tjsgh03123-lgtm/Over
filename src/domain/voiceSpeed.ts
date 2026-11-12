@@ -19,3 +19,8 @@ export function stepTempo(tempoSec: number, dir: 1 | -1): number {
 export const fmtSpeed = (speed: number): string => `${Number(speed.toFixed(2))}x`;
 /** 목소리 빠르기(TTS rate): 배속에 맞춰 조금 더 빠르게/느리게 */
 export const voiceRate = (speed: number, base: number): number => Math.max(0.6, Math.min(2, base * (0.5 + speed * 0.5)));
+/** 속도 칩을 누를 때: 다음 단계로 (맨 끝에서는 처음으로 돌아감) */
+export function cycleTempo(tempoSec: number): number {
+  const i = SPEEDS.indexOf(nearestSpeed(speedOf(tempoSec)));
+  return tempoOf(SPEEDS[(i + 1) % SPEEDS.length]);
+}

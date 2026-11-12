@@ -13,7 +13,7 @@ import { C, S } from './theme.ts';
 export function CoachSheet({
   visible, phase, title, sub, setNo, setLines, curIdx, left, count, target, tempoSec, exercisePrep,
   elapsed, paused, guideOn, onTogglePause, onToggleGuide,
-  onPrepAdjust, onTempoAdjust, onReady, onFinish, onStop,
+  onPrepAdjust, onTempoCycle, onReady, onFinish, onStop,
 }: {
   visible: boolean;
   phase: 'prep' | 'count';
@@ -33,7 +33,7 @@ export function CoachSheet({
   onTogglePause: () => void;
   onToggleGuide: () => void;
   onPrepAdjust: (deltaSec: number) => void;
-  onTempoAdjust: (dir: 1 | -1) => void; // 속도 한 단계 느리게(-1)/빠르게(+1)
+  onTempoCycle: () => void; // 속도 칩을 누르면 다음 속도로 (0.5x → … → 2x → 0.5x)
   onReady: () => void; // 준비 건너뛰기
   onFinish: () => void; // 세트 끝(지금까지 센 횟수로 기록)
   onStop: () => void; // 코칭 중단
@@ -88,7 +88,9 @@ export function CoachSheet({
           <T bold style={{ fontSize: 34, marginLeft: 12, marginTop: 70 }}>{`/ ${target}회`}</T>
         </View>
         <T bold style={{ fontSize: 20, textAlign: 'center' }}>{`${setNo}세트 진행중 | ${sub}`}</T>
-        {chips('느리게', () => onTempoAdjust(-1), `속도 ${fmtSpeed(speedOf(tempoSec))}`, '빠르게', () => onTempoAdjust(1))}
+        <View style={{ flexDirection: 'row', justifyContent: 'center', marginTop: S.lg }}>
+          <Pill label={`속도 ${fmtSpeed(speedOf(tempoSec))}`} onPress={onTempoCycle} />
+        </View>
         <View style={{ height: S.xl }} />
       </View>
     );

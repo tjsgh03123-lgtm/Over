@@ -11,7 +11,7 @@ import { warmupPlan } from '../domain/warmup.ts';
 import { bestE1rm, doneWorkingCount, e1rm, recommendNext, streakWeeks, volumeOf } from '../domain/workoutStats.ts';
 import { SetSheet } from '../ui/SetSheet.tsx';
 import { SummaryModal, type SummaryData } from '../ui/SummaryModal.tsx';
-import { stepTempo } from '../domain/voiceSpeed.ts';
+import { cycleTempo } from '../domain/voiceSpeed.ts';
 import { setSpeechTempo } from '../services/speak.ts';
 import { currentOf, restAfter, type GEx } from '../domain/guided.ts';
 import type { Focus as LiveFocus } from '../domain/liveCount.ts';
@@ -329,8 +329,8 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
     if (coach.fresh) { setExPrepSec(total); setSetting(db, 'ex_prep_sec', String(total)); }
     else { setPrepSec(total); setSetting(db, 'prep_sec', String(total)); }
   };
-  const adjustTempo = (dir: 1 | -1) => {
-    const t = stepTempo(tempoSec, dir);
+  const cycleSpeed = () => {
+    const t = cycleTempo(tempoSec);
     if (coach && coach.phase === 'count') setCoach({ ...coach, nextAt: coach.nextAt + (t - tempoSec) * 1000 });
     setTempoSec(t); setSetting(db, 'tempo_sec', String(t));
   };
@@ -928,7 +928,7 @@ export function SessionScreen({ sessionId }: { sessionId: string }) {
             count={coach.count} target={coach.target} tempoSec={tempoSec} exercisePrep={coach.fresh}
             elapsed={fmtElapsed(elapsed)} paused={!!coach.pausedAt} guideOn={voice}
             onTogglePause={toggleCoachPause} onToggleGuide={toggleVoice}
-            onPrepAdjust={adjustPrep} onTempoAdjust={adjustTempo} onReady={readyCoach}
+            onPrepAdjust={adjustPrep} onTempoCycle={cycleSpeed} onReady={readyCoach}
             onFinish={() => finishCoach(coach.count)} onStop={stopCoach}
           />
         );

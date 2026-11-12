@@ -1233,6 +1233,8 @@ test('보이스 속도: 3초 간격이 1x, 한 단계씩 바뀌고 끝에서 멈
   assert.ok(Math.abs(vs.stepTempo(3, -1) - 4) < 1e-9);
   assert.equal(vs.stepTempo(1.5, 1), 1.5);
   assert.equal(vs.stepTempo(6, -1), 6);
+  assert.equal(vs.speedOf(vs.cycleTempo(3)), 1.25);
+  assert.equal(vs.speedOf(vs.cycleTempo(1.5)), 0.5);
 });
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);
